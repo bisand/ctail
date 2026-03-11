@@ -69,7 +69,7 @@ func DefaultProfile() Profile {
 			{ID: "error", Name: "Error", Pattern: `(?i)\bERROR\b`, MatchType: "line", Foreground: "#ff6b6b", Background: "#3d1f1f", Bold: true, Enabled: true, Priority: 100},
 			{ID: "fatal", Name: "Fatal", Pattern: `(?i)\bFATAL\b`, MatchType: "line", Foreground: "#ffffff", Background: "#cc0000", Bold: true, Enabled: true, Priority: 110},
 			{ID: "warn", Name: "Warning", Pattern: `(?i)\bWARN(ING)?\b`, MatchType: "line", Foreground: "#ffd93d", Background: "#3d3520", Bold: false, Enabled: true, Priority: 90},
-			{ID: "info", Name: "Info", Pattern: `(?i)\bINFO\b`, MatchType: "match", Foreground: "#6bcbff", Background: "", Bold: false, Enabled: true, Priority: 50},
+			{ID: "info", Name: "Info", Pattern: `(?i)\bINFO?\b`, MatchType: "match", Foreground: "#6bcbff", Background: "", Bold: false, Enabled: true, Priority: 50},
 			{ID: "debug", Name: "Debug", Pattern: `(?i)\bDEBUG\b`, MatchType: "match", Foreground: "#888888", Background: "", Bold: false, Enabled: true, Priority: 40},
 			{ID: "timestamp", Name: "Timestamp", Pattern: `\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}`, MatchType: "match", Foreground: "#88cc88", Background: "", Bold: false, Enabled: true, Priority: 30},
 		},
