@@ -1,4 +1,13 @@
 /**
+ * Strip Go-style inline flags (e.g. (?i), (?s), (?m)) from a regex pattern.
+ * JavaScript RegExp doesn't support inline flags — they're passed as the
+ * second argument instead. The highlight functions already use 'i' and 'gi'.
+ */
+function stripInlineFlags(pattern) {
+  return pattern.replace(/\(\?[ismUu]+\)/g, '');
+}
+
+/**
  * Apply highlighting rules to a text line.
  * Returns an array of segments: { text, style }
  */
@@ -14,7 +23,7 @@ export function highlightLine(text, rules) {
   for (const rule of sortedRules) {
     if (rule.matchType === 'line') {
       try {
-        const re = new RegExp(rule.pattern, 'i');
+        const re = new RegExp(stripInlineFlags(rule.pattern), 'i');
         if (re.test(text)) {
           lineStyle = {
             color: rule.foreground || undefined,
@@ -42,7 +51,7 @@ export function highlightLine(text, rules) {
   let allMatches = [];
   for (const rule of matchRules) {
     try {
-      const re = new RegExp(rule.pattern, 'gi');
+      const re = new RegExp(stripInlineFlags(rule.pattern), 'gi');
       let m;
       while ((m = re.exec(text)) !== null) {
         if (m[0].length === 0) break; // prevent infinite loop on zero-width matches
