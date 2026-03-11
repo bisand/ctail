@@ -20,13 +20,14 @@ type Tailer struct {
 	pollInterval time.Duration
 	bufferSize   int
 
-	mu       sync.RWMutex
-	lines    []Line
-	lineNum  int64
-	offset   int64
-	fileSize int64
-	running  bool
-	stopCh   chan struct{}
+	mu          sync.RWMutex
+	lines       []Line
+	lineNum     int64
+	offset      int64
+	fileSize    int64
+	lineOffsets []int64 // byte offset of each line start (0-indexed: lineOffsets[0] = line 1)
+	running     bool
+	stopCh      chan struct{}
 
 	onLines     func([]Line)
 	onTruncated func()
@@ -46,6 +47,7 @@ func New(filePath string, pollInterval time.Duration, bufferSize int) *Tailer {
 		pollInterval: pollInterval,
 		bufferSize:   bufferSize,
 		lines:        make([]Line, 0, bufferSize),
+		lineOffsets:  make([]int64, 0, 1024),
 		stopCh:       make(chan struct{}),
 	}
 }
@@ -98,6 +100,57 @@ func (t *Tailer) GetLines() []Line {
 	return result
 }
 
+// GetTotalLines returns the total number of lines known in the file
+func (t *Tailer) GetTotalLines() int64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.lineNum
+}
+
+// ReadRange reads lines from the file starting at startLine (1-based), returning up to count lines.
+func (t *Tailer) ReadRange(startLine int64, count int) []Line {
+	if startLine < 1 || count < 1 {
+		return nil
+	}
+
+	t.mu.RLock()
+	totalLines := t.lineNum
+	offsets := t.lineOffsets
+	t.mu.RUnlock()
+
+	if startLine > totalLines {
+		return nil
+	}
+
+	idx := int(startLine - 1)
+	if idx >= len(offsets) {
+		return nil
+	}
+
+	byteOffset := offsets[idx]
+
+	f, err := os.Open(t.filePath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(byteOffset, io.SeekStart); err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	var lines []Line
+	lineNo := startLine
+	for scanner.Scan() && len(lines) < count {
+		lines = append(lines, Line{Number: lineNo, Text: scanner.Text()})
+		lineNo++
+	}
+	return lines
+}
+
 // SetPollInterval updates the poll interval
 func (t *Tailer) SetPollInterval(d time.Duration) {
 	t.mu.Lock()
@@ -122,21 +175,41 @@ func (t *Tailer) initialRead() error {
 
 	t.fileSize = info.Size()
 
-	// Read all lines (for initial load we scan the whole file but only keep last N)
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB max line
+	// Build line offset index and read all lines (keep last N in buffer)
+	reader := bufio.NewReader(f)
 	var allLines []Line
 	var num int64
-	for scanner.Scan() {
-		num++
-		allLines = append(allLines, Line{Number: num, Text: scanner.Text()})
-		// Keep ring buffer bounded during scanning
-		if len(allLines) > t.bufferSize*2 {
-			allLines = allLines[len(allLines)-t.bufferSize:]
+	var bytePos int64
+
+	t.lineOffsets = t.lineOffsets[:0]
+
+	for {
+		t.lineOffsets = append(t.lineOffsets, bytePos)
+		lineBytes, err := reader.ReadBytes('\n')
+		if len(lineBytes) > 0 {
+			num++
+			text := string(lineBytes)
+			// Strip trailing newline/carriage return
+			if len(text) > 0 && text[len(text)-1] == '\n' {
+				text = text[:len(text)-1]
+			}
+			if len(text) > 0 && text[len(text)-1] == '\r' {
+				text = text[:len(text)-1]
+			}
+			allLines = append(allLines, Line{Number: num, Text: text})
+			bytePos += int64(len(lineBytes))
+			// Keep ring buffer bounded during scanning
+			if len(allLines) > t.bufferSize*2 {
+				allLines = allLines[len(allLines)-t.bufferSize:]
+			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
+		if err != nil {
+			if err == io.EOF {
+				// If last chunk had no newline, we already processed it above
+				break
+			}
+			return err
+		}
 	}
 
 	// Keep last bufferSize lines
@@ -233,6 +306,7 @@ func (t *Tailer) handleTruncation(f *os.File, currentSize int64) {
 	t.lineNum = 0
 	t.offset = 0
 	t.fileSize = currentSize
+	t.lineOffsets = t.lineOffsets[:0]
 	t.mu.Unlock()
 
 	if t.onTruncated != nil {
@@ -261,17 +335,35 @@ func (t *Tailer) readNewLines(f *os.File, offset, size int64) []Line {
 		return nil
 	}
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	reader := bufio.NewReader(f)
 	var newLines []Line
 
 	t.mu.RLock()
 	num := t.lineNum
 	t.mu.RUnlock()
 
-	for scanner.Scan() {
-		num++
-		newLines = append(newLines, Line{Number: num, Text: scanner.Text()})
+	bytePos := offset
+	for {
+		t.mu.Lock()
+		t.lineOffsets = append(t.lineOffsets, bytePos)
+		t.mu.Unlock()
+
+		lineBytes, err := reader.ReadBytes('\n')
+		if len(lineBytes) > 0 {
+			num++
+			text := string(lineBytes)
+			if len(text) > 0 && text[len(text)-1] == '\n' {
+				text = text[:len(text)-1]
+			}
+			if len(text) > 0 && text[len(text)-1] == '\r' {
+				text = text[:len(text)-1]
+			}
+			newLines = append(newLines, Line{Number: num, Text: text})
+			bytePos += int64(len(lineBytes))
+		}
+		if err != nil {
+			break
+		}
 	}
 
 	t.mu.Lock()

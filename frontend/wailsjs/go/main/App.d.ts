@@ -14,7 +14,11 @@ export function GetSavedTabs():Promise<Array<config.TabState>>;
 
 export function GetSettings():Promise<config.AppSettings>;
 
+export function GetTabLineRange(arg1:string,arg2:number,arg3:number):Promise<Array<tailer.Line>>;
+
 export function GetTabLines(arg1:string):Promise<Array<tailer.Line>>;
+
+export function GetTabTotalLines(arg1:string):Promise<number>;
 
 export function GetTabs():Promise<Array<main.TabInfo>>;
 

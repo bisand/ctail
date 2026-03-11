@@ -4,11 +4,15 @@
   import { activeTab, tabStore } from '../stores/tabs.js';
   import { settings } from '../stores/settings.js';
   import { profiles } from '../stores/rules.js';
+  import { GetTabLineRange, GetTabTotalLines } from '../../../wailsjs/go/main/App.js';
 
   let container;
   let isAtBottom = true;
   let searchQuery = '';
   let searchVisible = false;
+
+  const FETCH_BATCH = 500;
+  const MAX_WINDOW = 5000;
 
   $: currentTab = $activeTab;
   $: lines = currentTab ? currentTab.lines : [];
@@ -16,6 +20,11 @@
   $: profile = $profiles[profileName];
   $: rules = profile ? profile.rules : [];
   $: autoScroll = currentTab ? currentTab.autoScroll : true;
+  $: totalLines = currentTab ? currentTab.totalLines : 0;
+  $: windowStart = lines.length > 0 ? lines[0].number : 0;
+  $: windowEnd = lines.length > 0 ? lines[lines.length - 1].number : 0;
+  $: canScrollBack = windowStart > 1;
+  $: canScrollForward = !autoScroll && windowEnd < totalLines;
 
   afterUpdate(() => {
     if (autoScroll && container) {
@@ -23,21 +32,100 @@
     }
   });
 
+  async function loadEarlierLines() {
+    if (!currentTab || currentTab.loadingLines || !canScrollBack) return;
+
+    tabStore.setLoadingLines(currentTab.id, true);
+    try {
+      const fetchStart = Math.max(1, windowStart - FETCH_BATCH);
+      const fetchCount = windowStart - fetchStart;
+      if (fetchCount <= 0) return;
+
+      const olderLines = await GetTabLineRange(currentTab.id, fetchStart, fetchCount);
+      if (olderLines && olderLines.length > 0) {
+        // Remember scroll position to prevent jump
+        const prevScrollHeight = container.scrollHeight;
+        const prevScrollTop = container.scrollTop;
+
+        tabStore.prependLines(currentTab.id, olderLines, MAX_WINDOW);
+
+        // Restore scroll position after DOM update
+        await tick();
+        if (container) {
+          const newScrollHeight = container.scrollHeight;
+          container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load earlier lines:', e);
+    } finally {
+      tabStore.setLoadingLines(currentTab.id, false);
+    }
+  }
+
+  async function loadLaterLines() {
+    if (!currentTab || currentTab.loadingLines || !canScrollForward) return;
+
+    tabStore.setLoadingLines(currentTab.id, true);
+    try {
+      const fetchStart = windowEnd + 1;
+      const newerLines = await GetTabLineRange(currentTab.id, fetchStart, FETCH_BATCH);
+      if (newerLines && newerLines.length > 0) {
+        tabStore.appendRangeLines(currentTab.id, newerLines, MAX_WINDOW);
+      }
+    } catch (e) {
+      console.error('Failed to load later lines:', e);
+    } finally {
+      tabStore.setLoadingLines(currentTab.id, false);
+    }
+  }
+
   function handleScroll() {
-    if (!container) return;
+    if (!container || !currentTab) return;
+
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
-    if (isAtBottom && !atBottom && currentTab) {
+    const atTop = container.scrollTop < 50;
+
+    if (isAtBottom && !atBottom) {
       tabStore.setAutoScroll(currentTab.id, false);
     }
     isAtBottom = atBottom;
+
+    // Load earlier lines when scrolling near the top
+    if (atTop && canScrollBack && !currentTab.loadingLines) {
+      loadEarlierLines();
+    }
+
+    // Load later lines when scrolling near the bottom (only when not in live-tail)
+    if (atBottom && canScrollForward && !currentTab.loadingLines) {
+      loadLaterLines();
+    }
   }
 
   function scrollToBottom() {
     if (currentTab) {
       tabStore.setAutoScroll(currentTab.id, true);
+      // When re-enabling auto-scroll, jump to latest lines from the file
+      jumpToLatest();
     }
-    if (container) {
-      container.scrollTop = container.scrollHeight;
+  }
+
+  async function jumpToLatest() {
+    if (!currentTab) return;
+    try {
+      const total = await GetTabTotalLines(currentTab.id);
+      tabStore.setTotalLines(currentTab.id, total);
+      const fetchStart = Math.max(1, total - MAX_WINDOW + 1);
+      const latestLines = await GetTabLineRange(currentTab.id, fetchStart, MAX_WINDOW);
+      if (latestLines && latestLines.length > 0) {
+        tabStore.setLines(currentTab.id, latestLines, total);
+      }
+      await tick();
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    } catch (e) {
+      console.error('Failed to jump to latest:', e);
     }
   }
 
@@ -100,6 +188,11 @@
       <button class="scroll-bottom-btn" on:click={scrollToBottom} title="Scroll to bottom (auto-scroll)">
         ↓ Auto-scroll
       </button>
+    {/if}
+    {#if totalLines > 0}
+      <div class="window-indicator">
+        {windowStart}–{windowEnd} / {totalLines}
+      </div>
     {/if}
   {:else}
     <div class="empty-state centered">
@@ -209,5 +302,19 @@
 
   .search-close:hover {
     background: var(--bg-hover);
+  }
+
+  .window-indicator {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    opacity: 0.8;
+    pointer-events: none;
+    z-index: 10;
   }
 </style>

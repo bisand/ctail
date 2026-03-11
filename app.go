@@ -165,6 +165,28 @@ func (a *App) GetTabLines(tabID string) []tailer.Line {
 	return tab.tailer.GetLines()
 }
 
+// GetTabLineRange reads lines from a file starting at startLine (1-based), returning up to count lines
+func (a *App) GetTabLineRange(tabID string, startLine int64, count int) []tailer.Line {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	a.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return tab.tailer.ReadRange(startLine, count)
+}
+
+// GetTabTotalLines returns the total number of lines known in the file for a tab
+func (a *App) GetTabTotalLines(tabID string) int64 {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	a.mu.RUnlock()
+	if !ok {
+		return 0
+	}
+	return tab.tailer.GetTotalLines()
+}
+
 // GetTabs returns info about all open tabs
 func (a *App) GetTabs() []TabInfo {
 	a.mu.RLock()

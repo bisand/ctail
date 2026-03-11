@@ -7,7 +7,7 @@
   import { tabStore, activeTab } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLines, GetSettings, GetSavedTabs, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLines, GetTabTotalLines, GetSettings, GetSavedTabs, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
   let selectedProfile = 'Common Logs';
@@ -69,9 +69,12 @@
             if (tab.profileId) {
               tabStore.setProfile(tabId, tab.profileId);
             }
-            const lines = await GetTabLines(tabId);
+            const [lines, total] = await Promise.all([
+              GetTabLines(tabId),
+              GetTabTotalLines(tabId)
+            ]);
             if (lines && lines.length > 0) {
-              tabStore.setLines(tabId, lines);
+              tabStore.setLines(tabId, lines, total);
             }
           } catch (e) {
             console.warn('Failed to restore tab:', tab.filePath, e);
@@ -115,9 +118,12 @@
       tabStore.addTab(tabId, path, fileName);
 
       // Lines will arrive via events, but get initial batch
-      const lines = await GetTabLines(tabId);
+      const [lines, total] = await Promise.all([
+        GetTabLines(tabId),
+        GetTabTotalLines(tabId)
+      ]);
       if (lines && lines.length > 0) {
-        tabStore.setLines(tabId, lines);
+        tabStore.setLines(tabId, lines, total);
       }
     } catch (e) {
       console.error('Failed to open file:', e);

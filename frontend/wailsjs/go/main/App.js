@@ -22,8 +22,16 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function GetTabLineRange(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetTabLineRange'](arg1, arg2, arg3);
+}
+
 export function GetTabLines(arg1) {
   return window['go']['main']['App']['GetTabLines'](arg1);
+}
+
+export function GetTabTotalLines(arg1) {
+  return window['go']['main']['App']['GetTabTotalLines'](arg1);
 }
 
 export function GetTabs() {

@@ -16,9 +16,11 @@ function createTabStore() {
           fileName,
           profile: 'Common Logs',
           lines: [],
+          totalLines: 0,
           hasUpdate: false,
           autoScroll: true,
-          paused: false
+          paused: false,
+          loadingLines: false
         });
         state.activeTabId = id;
         return state;
@@ -47,11 +49,12 @@ function createTabStore() {
         return state;
       });
     },
-    setLines(tabId, lines) {
+    setLines(tabId, lines, totalLines) {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
         if (tab) {
           tab.lines = lines;
+          if (totalLines !== undefined) tab.totalLines = totalLines;
           if (state.activeTabId !== tabId) {
             tab.hasUpdate = true;
           }
@@ -64,9 +67,11 @@ function createTabStore() {
         const tab = state.tabs.find(t => t.id === tabId);
         if (tab) {
           tab.lines = [...tab.lines, ...newLines];
-          // Keep buffer bounded (frontend side)
-          if (tab.lines.length > 15000) {
-            tab.lines = tab.lines.slice(tab.lines.length - 10000);
+          tab.totalLines += newLines.length;
+          // Keep buffer bounded (frontend side) — only trim when auto-scrolling
+          const maxWindow = 5000;
+          if (tab.autoScroll && tab.lines.length > maxWindow) {
+            tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
           }
           if (state.activeTabId !== tabId) {
             tab.hasUpdate = true;
@@ -88,6 +93,46 @@ function createTabStore() {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
         if (tab) tab.profile = profileName;
+        return state;
+      });
+    },
+    setLoadingLines(tabId, value) {
+      update(state => {
+        const tab = state.tabs.find(t => t.id === tabId);
+        if (tab) tab.loadingLines = value;
+        return state;
+      });
+    },
+    setTotalLines(tabId, total) {
+      update(state => {
+        const tab = state.tabs.find(t => t.id === tabId);
+        if (tab) tab.totalLines = total;
+        return state;
+      });
+    },
+    prependLines(tabId, olderLines, maxWindow) {
+      update(state => {
+        const tab = state.tabs.find(t => t.id === tabId);
+        if (tab && olderLines.length > 0) {
+          tab.lines = [...olderLines, ...tab.lines];
+          // Trim from end if exceeding window
+          if (tab.lines.length > maxWindow) {
+            tab.lines = tab.lines.slice(0, maxWindow);
+          }
+        }
+        return state;
+      });
+    },
+    appendRangeLines(tabId, newerLines, maxWindow) {
+      update(state => {
+        const tab = state.tabs.find(t => t.id === tabId);
+        if (tab && newerLines.length > 0) {
+          tab.lines = [...tab.lines, ...newerLines];
+          // Trim from start if exceeding window
+          if (tab.lines.length > maxWindow) {
+            tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
+          }
+        }
         return state;
       });
     },
