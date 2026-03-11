@@ -4,7 +4,7 @@
   import TabBar from './lib/components/TabBar.svelte';
   import LogView from './lib/components/LogView.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
-  import { tabStore, activeTab } from './lib/stores/tabs.js';
+  import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
   import { OpenFileDialog, OpenTab, GetTabLines, GetTabTotalLines, GetSettings, GetSavedTabs, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
@@ -103,9 +103,18 @@
       const tab = $activeTab;
       if (tab) {
         const { CloseTab } = import('../wailsjs/go/main/App.js');
-        // Dynamic import won't work well here, use direct store removal
         tabStore.removeTab(tab.id);
       }
+    }
+    if (e.ctrlKey && e.key === 'Tab') {
+      e.preventDefault();
+      const allTabs = $tabs;
+      if (allTabs.length < 2) return;
+      const currentIdx = allTabs.findIndex(t => t.id === $activeTab?.id);
+      const nextIdx = e.shiftKey
+        ? (currentIdx - 1 + allTabs.length) % allTabs.length
+        : (currentIdx + 1) % allTabs.length;
+      tabStore.setActive(allTabs[nextIdx].id);
     }
   }
 
