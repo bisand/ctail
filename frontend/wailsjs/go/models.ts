@@ -23,6 +23,7 @@ export namespace config {
 	    fontSize: number;
 	    showLineNumbers: boolean;
 	    wordWrap: boolean;
+	    restoreTabs: boolean;
 	    windowWidth: number;
 	    windowHeight: number;
 	    tabs: TabState[];
@@ -39,6 +40,7 @@ export namespace config {
 	        this.fontSize = source["fontSize"];
 	        this.showLineNumbers = source["showLineNumbers"];
 	        this.wordWrap = source["wordWrap"];
+	        this.restoreTabs = source["restoreTabs"];
 	        this.windowWidth = source["windowWidth"];
 	        this.windowHeight = source["windowHeight"];
 	        this.tabs = this.convertValues(source["tabs"], TabState);

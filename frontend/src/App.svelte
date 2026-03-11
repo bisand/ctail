@@ -7,7 +7,7 @@
   import { tabStore, activeTab } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLines, GetSettings, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLines, GetSettings, GetSavedTabs, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
   let selectedProfile = 'Common Logs';
@@ -56,6 +56,31 @@
     EventsOn('tailer:error', (data) => {
       console.error(`Tailer error for ${data.tabId}: ${data.message}`);
     });
+
+    // Restore previously open tabs
+    try {
+      const savedTabs = await GetSavedTabs();
+      if (savedTabs && savedTabs.length > 0) {
+        for (const tab of savedTabs) {
+          try {
+            const tabId = await OpenTab(tab.filePath);
+            const fileName = tab.filePath.split(/[/\\]/).pop();
+            tabStore.addTab(tabId, tab.filePath, fileName);
+            if (tab.profileId) {
+              tabStore.setProfile(tabId, tab.profileId);
+            }
+            const lines = await GetTabLines(tabId);
+            if (lines && lines.length > 0) {
+              tabStore.setLines(tabId, lines);
+            }
+          } catch (e) {
+            console.warn('Failed to restore tab:', tab.filePath, e);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to restore tabs:', e);
+    }
 
     // Keyboard shortcuts
     window.addEventListener('keydown', handleGlobalKeydown);

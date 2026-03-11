@@ -14,6 +14,10 @@ export function GetProfile(arg1) {
   return window['go']['main']['App']['GetProfile'](arg1);
 }
 
+export function GetSavedTabs() {
+  return window['go']['main']['App']['GetSavedTabs']();
+}
+
 export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }

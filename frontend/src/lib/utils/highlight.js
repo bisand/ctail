@@ -79,8 +79,8 @@ export function highlightLine(text, rules) {
     return [{ text, style: {} }];
   }
 
-  // Sort matches by start position, then by priority (higher priority last = wins)
-  allMatches.sort((a, b) => a.start - b.start || a.priority - b.priority);
+  // Sort matches by start position, then by priority descending (higher priority wins)
+  allMatches.sort((a, b) => a.start - b.start || b.priority - a.priority);
 
   // Build segments
   const segments = [];

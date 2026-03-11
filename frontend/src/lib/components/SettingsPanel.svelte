@@ -179,6 +179,11 @@
           on:change={e => updateSetting('wordWrap', e.target.checked)} />
         <span>Word Wrap</span>
       </label>
+      <label class="toggle-label">
+        <input type="checkbox" checked={$settings.restoreTabs}
+          on:change={e => updateSetting('restoreTabs', e.target.checked)} />
+        <span>Restore Tabs on Startup</span>
+      </label>
       <label>
         <span>Theme</span>
         <select value={$settings.theme}

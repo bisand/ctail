@@ -38,6 +38,8 @@
     line-height: 1.5;
     padding: 0 8px;
     min-height: 1.5em;
+    width: fit-content;
+    min-width: 100%;
   }
 
   .log-line:hover {
@@ -56,7 +58,6 @@
   .line-content {
     white-space: pre;
     flex: 1;
-    overflow: hidden;
   }
 
   :global([data-wordwrap="true"]) .line-content {

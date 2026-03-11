@@ -10,6 +10,8 @@ export function DeleteProfile(arg1:string):Promise<void>;
 
 export function GetProfile(arg1:string):Promise<config.Profile>;
 
+export function GetSavedTabs():Promise<Array<config.TabState>>;
+
 export function GetSettings():Promise<config.AppSettings>;
 
 export function GetTabLines(arg1:string):Promise<Array<tailer.Line>>;

@@ -38,6 +38,7 @@ type AppSettings struct {
 	FontSize      int           `json:"fontSize"`
 	ShowLineNumbers bool        `json:"showLineNumbers"`
 	WordWrap      bool          `json:"wordWrap"`
+	RestoreTabs   bool          `json:"restoreTabs"`
 	WindowWidth   int           `json:"windowWidth"`
 	WindowHeight  int           `json:"windowHeight"`
 	Tabs          []TabState    `json:"tabs"`
@@ -53,6 +54,7 @@ func DefaultSettings() AppSettings {
 		FontSize:        14,
 		ShowLineNumbers: false,
 		WordWrap:        false,
+		RestoreTabs:     true,
 		WindowWidth:     1200,
 		WindowHeight:    800,
 		Tabs:            []TabState{},

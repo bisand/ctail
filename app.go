@@ -51,6 +51,20 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	// Save open tabs to settings for restoration on next startup
+	if a.config != nil {
+		settings := a.config.GetSettings()
+		settings.Tabs = make([]config.TabState, 0, len(a.tabs))
+		for _, tab := range a.tabs {
+			settings.Tabs = append(settings.Tabs, config.TabState{
+				FilePath:  tab.FilePath,
+				ProfileID: tab.Profile,
+			})
+		}
+		_ = a.config.SaveSettings(settings)
+	}
+
 	for _, tab := range a.tabs {
 		if tab.tailer != nil {
 			tab.tailer.Stop()
@@ -177,6 +191,18 @@ func (a *App) SetTabProfile(tabID, profileName string) {
 }
 
 // --- Config API ---
+
+// GetSavedTabs returns previously open tabs for restoration
+func (a *App) GetSavedTabs() []config.TabState {
+	if a.config == nil {
+		return nil
+	}
+	settings := a.config.GetSettings()
+	if !settings.RestoreTabs {
+		return nil
+	}
+	return settings.Tabs
+}
 
 // GetSettings returns app settings
 func (a *App) GetSettings() config.AppSettings {
