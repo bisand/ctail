@@ -83,21 +83,23 @@
   function handleScroll() {
     if (!container || !currentTab) return;
 
+    const scrollRatio = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
+    const nearTop = scrollRatio < 0.15;
+    const nearBottom = scrollRatio > 0.85;
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
-    const atTop = container.scrollTop < 50;
 
     if (isAtBottom && !atBottom) {
       tabStore.setAutoScroll(currentTab.id, false);
     }
     isAtBottom = atBottom;
 
-    // Load earlier lines when scrolling near the top
-    if (atTop && canScrollBack && !currentTab.loadingLines) {
+    // Prefetch earlier lines when approaching the top
+    if (nearTop && canScrollBack && !currentTab.loadingLines) {
       loadEarlierLines();
     }
 
-    // Load later lines when scrolling near the bottom (only when not in live-tail)
-    if (atBottom && canScrollForward && !currentTab.loadingLines) {
+    // Prefetch later lines when approaching the bottom (only when not in live-tail)
+    if (nearBottom && canScrollForward && !currentTab.loadingLines) {
       loadLaterLines();
     }
   }
