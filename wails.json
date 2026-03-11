@@ -6,6 +6,8 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "./frontend/src/wailsjs",
+  "tags": "webkit2_41",
   "author": {
     "name": "André Biseth",
     "email": "andre@biseth.net"
