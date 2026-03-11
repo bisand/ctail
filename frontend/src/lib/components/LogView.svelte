@@ -13,6 +13,17 @@
 
   const FETCH_BATCH = 200;
   const MAX_WINDOW = 1000;
+  let scrollCheckTimer = null;
+
+  function scheduleScrollCheck() {
+    if (scrollCheckTimer) clearTimeout(scrollCheckTimer);
+    scrollCheckTimer = setTimeout(() => {
+      scrollCheckTimer = null;
+      if (container && currentTab && !currentTab.loadingLines) {
+        handleScroll();
+      }
+    }, 50);
+  }
 
   $: currentTab = $activeTab;
   $: lines = currentTab ? currentTab.lines : [];
@@ -43,13 +54,11 @@
 
       const olderLines = await GetTabLineRange(currentTab.id, fetchStart, fetchCount);
       if (olderLines && olderLines.length > 0) {
-        // Remember scroll position to prevent jump
         const prevScrollHeight = container.scrollHeight;
         const prevScrollTop = container.scrollTop;
 
         tabStore.prependLines(currentTab.id, olderLines, MAX_WINDOW);
 
-        // Restore scroll position after DOM update
         await tick();
         if (container) {
           const newScrollHeight = container.scrollHeight;
@@ -60,6 +69,8 @@
       console.error('Failed to load earlier lines:', e);
     } finally {
       tabStore.setLoadingLines(currentTab.id, false);
+      // Re-check: if still near the top, keep fetching
+      scheduleScrollCheck();
     }
   }
 
@@ -77,6 +88,7 @@
       console.error('Failed to load later lines:', e);
     } finally {
       tabStore.setLoadingLines(currentTab.id, false);
+      scheduleScrollCheck();
     }
   }
 
