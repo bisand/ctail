@@ -69,11 +69,11 @@ Config files are stored in:
 ```
 Go Backend                          Svelte Frontend
 ┌──────────────┐                    ┌──────────────────┐
-│ File Tailer  │──Wails Events──▶  │ Tab Bar + Badges │
+│ File Tailer  │ ──Wails Events──▶  │ Tab Bar + Badges │
 │ (polling,    │                    │ Log View (scroll)│
 │  ring buffer)│                    │ Highlighted Lines│
 ├──────────────┤                    ├──────────────────┤
-│ Config Mgr   │◀──Wails Bind──▶  │ Settings Panel   │
+│ Config Mgr   │ ◀──Wails Bind──▶   │ Settings Panel   │
 │ (JSON files) │                    │ Rule Editor      │
 ├──────────────┤                    ├──────────────────┤
 │ Rule Engine  │                    │ Highlight Utils  │
@@ -90,4 +90,3 @@ go test ./internal/... -v
 ## License
 
 MIT
-# ctail
