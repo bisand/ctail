@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux/amd64
+            output: ctail
+            asset_name: ctail-linux-amd64
+            tags: webkit2_41
+          - os: windows-latest
+            platform: windows/amd64
+            output: ctail.exe
+            asset_name: ctail-windows-amd64.exe
+            tags: ""
+          - os: macos-latest
+            platform: darwin/universal
+            output: ctail
+            asset_name: ctail-macos-universal
+            tags: ""
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Build
+        run: |
+          wails build -platform ${{ matrix.platform }} ${{ matrix.tags && format('-tags {0}', matrix.tags) || '' }}
+
+      - name: Compress Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          cd build/bin
+          tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.output }}
+
+      - name: Compress macOS binary
+        if: runner.os == 'macOS'
+        run: |
+          cd build/bin
+          zip -r ${{ matrix.asset_name }}.zip ctail.app || tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.output }}
+
+      - name: Compress Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build/bin/${{ matrix.output }} -DestinationPath build/bin/${{ matrix.asset_name }}.zip
+
+      - name: Upload Linux artifact to release
+        if: runner.os == 'Linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/bin/${{ matrix.asset_name }}.tar.gz
+
+      - name: Upload macOS artifact to release
+        if: runner.os == 'macOS'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/bin/${{ matrix.asset_name }}.zip
+            build/bin/${{ matrix.asset_name }}.tar.gz
+
+      - name: Upload Windows artifact to release
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/bin/${{ matrix.asset_name }}.zip
