@@ -90,3 +90,4 @@ go test ./internal/... -v
 ## License
 
 MIT
+# ctail
