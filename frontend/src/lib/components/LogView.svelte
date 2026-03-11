@@ -11,8 +11,8 @@
   let searchQuery = '';
   let searchVisible = false;
 
-  const FETCH_BATCH = 500;
-  const MAX_WINDOW = 5000;
+  const FETCH_BATCH = 200;
+  const MAX_WINDOW = 1000;
 
   $: currentTab = $activeTab;
   $: lines = currentTab ? currentTab.lines : [];
