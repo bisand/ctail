@@ -158,10 +158,10 @@
           on:change={e => updateSetting('pollIntervalMs', parseInt(e.target.value))} />
       </label>
       <label>
-        <span>Buffer Size (lines)</span>
-        <input type="number" min="1000" max="100000" step="1000"
-          value={$settings.bufferSize}
-          on:change={e => updateSetting('bufferSize', parseInt(e.target.value))} />
+        <span>Scroll Buffer (lines)</span>
+        <input type="number" min="100" max="5000" step="100"
+          value={$settings.scrollBuffer || 500}
+          on:change={e => updateSetting('scrollBuffer', parseInt(e.target.value))} />
       </label>
       <label>
         <span>Font Size</span>

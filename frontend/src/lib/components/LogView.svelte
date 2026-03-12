@@ -12,8 +12,9 @@
   let searchVisible = false;
 
   const FETCH_BATCH = 200;
-  const MAX_WINDOW = 500;
   let fetchTimer = null;
+
+  $: MAX_WINDOW = ($settings.scrollBuffer || 500);
 
   // Debounce: only one fetch check per pause in scrolling
   function scheduleFetchCheck() {

@@ -34,6 +34,7 @@ type AppSettings struct {
 	PollInterval  time.Duration `json:"-"`
 	PollIntervalMs int          `json:"pollIntervalMs"`
 	BufferSize    int           `json:"bufferSize"`
+	ScrollBuffer  int           `json:"scrollBuffer"`
 	Theme         string        `json:"theme"` // "dark" or "light"
 	FontSize      int           `json:"fontSize"`
 	ShowLineNumbers bool        `json:"showLineNumbers"`
@@ -50,6 +51,7 @@ func DefaultSettings() AppSettings {
 		PollInterval:    500 * time.Millisecond,
 		PollIntervalMs:  500,
 		BufferSize:      10000,
+		ScrollBuffer:    500,
 		Theme:           "dark",
 		FontSize:        14,
 		ShowLineNumbers: false,

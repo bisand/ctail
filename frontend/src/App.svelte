@@ -11,15 +11,14 @@
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
   let selectedProfile = 'Common Logs';
-
-  const INITIAL_BUFFER = 500;
+  let scrollBuffer = 500;
 
   // Load initial lines for a tab after it becomes ready
   async function loadInitialLines(tabId) {
     try {
       const total = await GetTabTotalLines(tabId);
-      const fetchStart = Math.max(1, total - INITIAL_BUFFER + 1);
-      const lines = await GetTabLineRange(tabId, fetchStart, INITIAL_BUFFER);
+      const fetchStart = Math.max(1, total - scrollBuffer + 1);
+      const lines = await GetTabLineRange(tabId, fetchStart, scrollBuffer);
       if (lines && lines.length > 0) {
         tabStore.setLines(tabId, lines, total);
       }
@@ -36,6 +35,7 @@
       const s = await GetSettings();
       if (s) {
         settings.set(s);
+        scrollBuffer = s.scrollBuffer || 500;
         if (s.theme) {
           document.documentElement.setAttribute('data-theme', s.theme);
         }

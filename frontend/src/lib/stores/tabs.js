@@ -1,4 +1,5 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
+import { settings } from './settings.js';
 
 function createTabStore() {
   const { subscribe, set, update } = writable({
@@ -73,7 +74,7 @@ function createTabStore() {
           if (tab.autoScroll) {
             // Following: append lines and trim the top to keep window bounded
             tab.lines = [...tab.lines, ...newLines];
-            const maxWindow = 500;
+            const maxWindow = get(settings).scrollBuffer || 500;
             if (tab.lines.length > maxWindow) {
               tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
             }
