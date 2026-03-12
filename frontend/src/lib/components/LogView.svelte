@@ -13,15 +13,15 @@
 
   const FETCH_BATCH = 500;
   const MAX_WINDOW = 1500;
-  let scrollCheckTimer = null;
+  let fetchTimer = null;
 
-  // Debounce scroll to avoid duplicate fetches during rapid scrolling
-  function scheduleScrollCheck() {
-    if (scrollCheckTimer) clearTimeout(scrollCheckTimer);
-    scrollCheckTimer = setTimeout(() => {
-      scrollCheckTimer = null;
+  // Debounce: only one fetch check per pause in scrolling
+  function scheduleFetchCheck() {
+    if (fetchTimer) clearTimeout(fetchTimer);
+    fetchTimer = setTimeout(() => {
+      fetchTimer = null;
       checkAndFetch();
-    }, 150);
+    }, 100);
   }
 
   $: currentTab = $activeTab;
@@ -95,7 +95,7 @@
 
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
 
-    // Auto-scroll toggle is immediate (not debounced)
+    // Auto-scroll toggle is immediate
     if (isAtBottom && !atBottom) {
       tabStore.setAutoScroll(currentTab.id, false);
     }
@@ -104,18 +104,44 @@
     }
     isAtBottom = atBottom;
 
-    // Debounce fetch checks to avoid queuing up requests during rapid scrolling
-    scheduleScrollCheck();
+    scheduleFetchCheck();
+  }
+
+  // Wheel events fire even when scrollTop is at 0 or max,
+  // so we can detect the user wanting to scroll beyond the rendered content.
+  function handleWheel(e) {
+    if (!container || !currentTab || currentTab.loadingLines) return;
+
+    if (e.deltaY < 0 && container.scrollTop <= 0 && canScrollBack) {
+      scheduleFetchCheck();
+    }
+    if (e.deltaY > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 5 && canScrollForward) {
+      scheduleFetchCheck();
+    }
   }
 
   function checkAndFetch() {
     if (!container || !currentTab || currentTab.loadingLines) return;
 
-    const scrollRatio = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
+    const bufferSize = lines.length;
+    if (bufferSize === 0) return;
 
-    if (scrollRatio < 0.25 && canScrollBack) {
+    // Estimate which buffer lines are visible
+    const lineHeight = container.scrollHeight / bufferSize;
+    if (lineHeight <= 0) return;
+    const firstVisibleIdx = Math.floor(container.scrollTop / lineHeight);
+    const visibleCount = Math.ceil(container.clientHeight / lineHeight);
+    const lastVisibleIdx = firstVisibleIdx + visibleCount;
+
+    const triggerTop = Math.floor(bufferSize / 3);
+    const triggerBottom = Math.floor(bufferSize * 2 / 3);
+
+    // Viewport is in the top 1/3 of the buffer → load earlier lines
+    if (firstVisibleIdx < triggerTop && canScrollBack) {
       loadEarlierLines();
-    } else if (scrollRatio > 0.75 && canScrollForward) {
+    }
+    // Viewport is in the bottom 1/3 of the buffer → load later lines
+    else if (lastVisibleIdx > triggerBottom && canScrollForward) {
       loadLaterLines();
     }
   }
@@ -193,7 +219,7 @@
   {/if}
 
   {#if currentTab}
-    <div class="log-container" bind:this={container} on:scroll={handleScroll}>
+    <div class="log-container" bind:this={container} on:scroll={handleScroll} on:wheel={handleWheel}>
       {#each filteredLines as line (line.number)}
         <LogLine
           {line}
