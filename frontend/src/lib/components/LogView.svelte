@@ -15,14 +15,13 @@
   const MAX_WINDOW = 1500;
   let scrollCheckTimer = null;
 
+  // Debounce scroll to avoid duplicate fetches during rapid scrolling
   function scheduleScrollCheck() {
     if (scrollCheckTimer) clearTimeout(scrollCheckTimer);
     scrollCheckTimer = setTimeout(() => {
       scrollCheckTimer = null;
-      if (container && currentTab && !currentTab.loadingLines) {
-        handleScroll();
-      }
-    }, 50);
+      checkAndFetch();
+    }, 150);
   }
 
   $: currentTab = $activeTab;
@@ -71,8 +70,6 @@
       console.error('Failed to load earlier lines:', e);
     } finally {
       tabStore.setLoadingLines(currentTab.id, false);
-      // Re-check: if still near the top, keep fetching
-      scheduleScrollCheck();
     }
   }
 
@@ -90,34 +87,35 @@
       console.error('Failed to load later lines:', e);
     } finally {
       tabStore.setLoadingLines(currentTab.id, false);
-      scheduleScrollCheck();
     }
   }
 
   function handleScroll() {
     if (!container || !currentTab) return;
 
-    const scrollRatio = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
-    const nearTop = scrollRatio < 0.25;
-    const nearBottom = scrollRatio > 0.75;
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
 
+    // Auto-scroll toggle is immediate (not debounced)
     if (isAtBottom && !atBottom) {
       tabStore.setAutoScroll(currentTab.id, false);
     }
-    // Re-enable follow when user scrolls to the very end of the file
     if (atBottom && !autoScroll && windowEnd >= totalLines) {
       tabStore.setAutoScroll(currentTab.id, true);
     }
     isAtBottom = atBottom;
 
-    // Prefetch earlier lines when approaching the top
-    if (nearTop && canScrollBack && !currentTab.loadingLines) {
-      loadEarlierLines();
-    }
+    // Debounce fetch checks to avoid queuing up requests during rapid scrolling
+    scheduleScrollCheck();
+  }
 
-    // Prefetch later lines when approaching the bottom (only when not in live-tail)
-    if (nearBottom && canScrollForward && !currentTab.loadingLines) {
+  function checkAndFetch() {
+    if (!container || !currentTab || currentTab.loadingLines) return;
+
+    const scrollRatio = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
+
+    if (scrollRatio < 0.25 && canScrollBack) {
+      loadEarlierLines();
+    } else if (scrollRatio > 0.75 && canScrollForward) {
       loadLaterLines();
     }
   }
