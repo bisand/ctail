@@ -38,6 +38,26 @@ func NewApp() *App {
 	}
 }
 
+// persistTabs saves the current open tabs to settings (call with mu held or after collecting tab info)
+func (a *App) persistTabs() {
+	if a.config == nil {
+		return
+	}
+	a.mu.RLock()
+	tabStates := make([]config.TabState, 0, len(a.tabs))
+	for _, tab := range a.tabs {
+		tabStates = append(tabStates, config.TabState{
+			FilePath:  tab.FilePath,
+			ProfileID: tab.Profile,
+		})
+	}
+	a.mu.RUnlock()
+
+	settings := a.config.GetSettings()
+	settings.Tabs = tabStates
+	_ = a.config.SaveSettings(settings)
+}
+
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	cfg, err := config.NewManager()
@@ -49,26 +69,20 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// Save open tabs to settings for restoration on next startup
-	if a.config != nil {
-		settings := a.config.GetSettings()
-		settings.Tabs = make([]config.TabState, 0, len(a.tabs))
-		for _, tab := range a.tabs {
-			settings.Tabs = append(settings.Tabs, config.TabState{
-				FilePath:  tab.FilePath,
-				ProfileID: tab.Profile,
-			})
-		}
-		_ = a.config.SaveSettings(settings)
-	}
+	// Save open tabs (also saved on every open/close, but do it here too)
+	a.persistTabs()
 
 	// Stop tailers with a timeout to avoid hanging on stale remote mounts
+	a.mu.RLock()
+	tabsCopy := make([]*TabInfo, 0, len(a.tabs))
+	for _, tab := range a.tabs {
+		tabsCopy = append(tabsCopy, tab)
+	}
+	a.mu.RUnlock()
+
 	done := make(chan struct{})
 	go func() {
-		for _, tab := range a.tabs {
+		for _, tab := range tabsCopy {
 			if tab.tailer != nil {
 				tab.tailer.Stop()
 			}
@@ -155,6 +169,9 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	a.tabs[id] = tab
 	a.mu.Unlock()
 
+	// Persist tabs so they survive a force-kill
+	go a.persistTabs()
+
 	// Start tailing in the background — never blocks
 	if err := t.Start(); err != nil {
 		return id, nil // still return tab id — error will come via event
@@ -175,6 +192,9 @@ func (a *App) CloseTab(tabID string) {
 	if ok && tab.tailer != nil {
 		go tab.tailer.Stop()
 	}
+
+	// Persist tabs so they survive a force-kill
+	go a.persistTabs()
 }
 
 // GetTabLines returns the current buffered lines for a tab
