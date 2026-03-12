@@ -121,8 +121,16 @@
   function scrollToBottom() {
     if (currentTab) {
       tabStore.setAutoScroll(currentTab.id, true);
-      // When re-enabling auto-scroll, jump to latest lines from the file
       jumpToLatest();
+    }
+  }
+
+  function toggleFollow() {
+    if (!currentTab) return;
+    if (autoScroll) {
+      tabStore.setAutoScroll(currentTab.id, false);
+    } else {
+      scrollToBottom();
     }
   }
 
@@ -212,16 +220,28 @@
       {/if}
     </div>
 
-    {#if !autoScroll}
-      <button class="scroll-bottom-btn" on:click={scrollToBottom} title="Scroll to bottom (auto-scroll)">
-        ↓ Auto-scroll
-      </button>
-    {/if}
-    {#if totalLines > 0}
-      <div class="window-indicator">
-        {windowStart}–{windowEnd} / {totalLines}
+    <div class="status-bar">
+      <div class="status-left">
+        {#if currentTab.loadingLines}
+          <span class="status-loading">⟳</span>
+        {/if}
+        {#if tabStatus === 'loading'}
+          <span class="status-text">Loading…</span>
+        {:else if tabStatus === 'error'}
+          <span class="status-text status-error">⚠ {tabError}</span>
+        {:else if totalLines > 0}
+          <span class="status-text">Lines {windowStart}–{windowEnd} of {totalLines}</span>
+        {:else}
+          <span class="status-text">Empty</span>
+        {/if}
       </div>
-    {/if}
+      <div class="status-right">
+        <label class="follow-toggle" title="Auto-scroll to new lines (per tab)">
+          <input type="checkbox" checked={autoScroll} on:change={toggleFollow} />
+          Follow
+        </label>
+      </div>
+    </div>
   {:else}
     <div class="empty-state centered">
       <p class="big">ctail</p>
@@ -305,22 +325,62 @@
     font-size: 14px;
   }
 
-  .scroll-bottom-btn {
-    position: absolute;
-    bottom: 16px;
-    right: 24px;
-    background: var(--accent);
-    color: var(--bg-primary);
-    padding: 6px 14px;
-    border-radius: 16px;
-    font-weight: 600;
-    font-size: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    z-index: 10;
+  .status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    height: 24px;
+    min-height: 24px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+    user-select: none;
   }
 
-  .scroll-bottom-btn:hover {
-    background: var(--accent-hover);
+  .status-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .status-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-text {
+    white-space: nowrap;
+  }
+
+  .status-error {
+    color: var(--warning, #e5c07b);
+  }
+
+  .status-loading {
+    animation: spin 1s linear infinite;
+    display: inline-block;
+  }
+
+  .follow-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .follow-toggle:hover {
+    color: var(--text-primary);
+  }
+
+  .follow-toggle input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--accent);
   }
 
   .search-bar {
@@ -355,19 +415,5 @@
 
   .search-close:hover {
     background: var(--bg-hover);
-  }
-
-  .window-indicator {
-    position: absolute;
-    bottom: 16px;
-    left: 16px;
-    background: var(--bg-surface);
-    color: var(--text-muted);
-    padding: 3px 10px;
-    border-radius: 10px;
-    font-size: 11px;
-    opacity: 0.8;
-    pointer-events: none;
-    z-index: 10;
   }
 </style>
