@@ -308,16 +308,7 @@ func (t *Tailer) pollLoop() {
 }
 
 func (t *Tailer) poll() {
-	f, err := os.Open(t.filePath)
-	if err != nil {
-		if t.onError != nil {
-			t.onError(err)
-		}
-		return
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
+	info, err := os.Stat(t.filePath)
 	if err != nil {
 		if t.onError != nil {
 			t.onError(err)
@@ -332,14 +323,24 @@ func (t *Tailer) poll() {
 	prevOffset := t.offset
 	t.mu.Unlock()
 
-	// Detect truncation
-	if currentSize < prevSize {
-		t.handleTruncation(f, currentSize)
+	// No new data
+	if currentSize == prevOffset {
 		return
 	}
 
-	// No new data
-	if currentSize == prevOffset {
+	// Only open the file when there's something to read
+	f, err := os.Open(t.filePath)
+	if err != nil {
+		if t.onError != nil {
+			t.onError(err)
+		}
+		return
+	}
+	defer f.Close()
+
+	// Detect truncation
+	if currentSize < prevSize {
+		t.handleTruncation(f, currentSize)
 		return
 	}
 
