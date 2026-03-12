@@ -105,6 +105,10 @@
     if (isAtBottom && !atBottom) {
       tabStore.setAutoScroll(currentTab.id, false);
     }
+    // Re-enable follow when user scrolls to the very end of the file
+    if (atBottom && !autoScroll && windowEnd >= totalLines) {
+      tabStore.setAutoScroll(currentTab.id, true);
+    }
     isAtBottom = atBottom;
 
     // Prefetch earlier lines when approaching the top
