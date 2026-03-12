@@ -17,12 +17,15 @@
   let ruleBackground = '';
   let ruleBold = false;
   let ruleItalic = false;
-  let rulePriority = 50;
-
   export let selectedProfile = 'Common Logs';
 
   $: currentProfile = $profiles[selectedProfile];
-  $: currentRules = currentProfile ? currentProfile.rules : [];
+  $: currentRules = currentProfile
+    ? [...currentProfile.rules].sort((a, b) => a.priority - b.priority)
+    : [];
+
+  // Drag state
+  let dragIndex = null;
 
   function selectSection(section) {
     activeSection = section;
@@ -50,7 +53,6 @@
     ruleBackground = rule.background || '';
     ruleBold = rule.bold;
     ruleItalic = rule.italic;
-    rulePriority = rule.priority;
   }
 
   function startNewRule() {
@@ -62,11 +64,50 @@
     ruleBackground = '';
     ruleBold = false;
     ruleItalic = false;
-    rulePriority = 50;
   }
 
   function cancelEdit() {
     editingRule = null;
+  }
+
+  // Reassign priorities based on array position and persist
+  async function saveRules(rules) {
+    const reindexed = rules.map((r, i) => ({ ...r, priority: i }));
+    const updated = { name: selectedProfile, rules: reindexed };
+    profiles.update(p => ({ ...p, [selectedProfile]: updated }));
+    await SaveProfile(updated);
+  }
+
+  async function moveRule(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= currentRules.length) return;
+    const reordered = [...currentRules];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    await saveRules(reordered);
+  }
+
+  function handleDragStart(e, index) {
+    dragIndex = index;
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function handleDragOver(e, index) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }
+
+  async function handleDrop(e, index) {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === index) { dragIndex = null; return; }
+    const reordered = [...currentRules];
+    const [moved] = reordered.splice(dragIndex, 1);
+    reordered.splice(index, 0, moved);
+    dragIndex = null;
+    await saveRules(reordered);
+  }
+
+  function handleDragEnd() {
+    dragIndex = null;
   }
 
   async function saveRule() {
@@ -84,7 +125,7 @@
         bold: ruleBold,
         italic: ruleItalic,
         enabled: true,
-        priority: rulePriority
+        priority: currentRules.length
       };
       updatedRules = [...currentRules, newRule];
     } else {
@@ -92,23 +133,19 @@
         if (r.id === editingRule) {
           return { ...r, name: ruleName, pattern: rulePattern, matchType: ruleMatchType,
             foreground: ruleForeground, background: ruleBackground, bold: ruleBold,
-            italic: ruleItalic, priority: rulePriority };
+            italic: ruleItalic };
         }
         return r;
       });
     }
 
-    const updated = { name: selectedProfile, rules: updatedRules };
-    profiles.update(p => ({ ...p, [selectedProfile]: updated }));
-    await SaveProfile(updated);
+    await saveRules(updatedRules);
     editingRule = null;
   }
 
   async function deleteRule(ruleId) {
     const updatedRules = currentRules.filter(r => r.id !== ruleId);
-    const updated = { name: selectedProfile, rules: updatedRules };
-    profiles.update(p => ({ ...p, [selectedProfile]: updated }));
-    await SaveProfile(updated);
+    await saveRules(updatedRules);
   }
 
   async function toggleRule(ruleId) {
@@ -116,9 +153,7 @@
       if (r.id === ruleId) return { ...r, enabled: !r.enabled };
       return r;
     });
-    const updated = { name: selectedProfile, rules: updatedRules };
-    profiles.update(p => ({ ...p, [selectedProfile]: updated }));
-    await SaveProfile(updated);
+    await saveRules(updatedRules);
   }
 
   async function createProfile() {
@@ -218,11 +253,22 @@
         </div>
       {/if}
 
+      <p class="precedence-hint">Rules are applied top to bottom. Rules lower in the list take precedence over earlier ones.</p>
+
       <div class="rules-list">
-        {#each currentRules as rule (rule.id)}
-          <div class="rule-item" class:disabled={!rule.enabled}
+        {#each currentRules as rule, index (rule.id)}
+          <div class="rule-item" class:disabled={!rule.enabled} class:dragging={dragIndex === index}
+            draggable="true"
+            on:dragstart={e => handleDragStart(e, index)}
+            on:dragover={e => handleDragOver(e, index)}
+            on:drop={e => handleDrop(e, index)}
+            on:dragend={handleDragEnd}
             style="background: {rule.background || 'var(--bg-primary)'}; color: {rule.foreground || 'var(--text-primary)'}; {rule.bold ? 'font-weight:700;' : ''}{rule.italic ? 'font-style:italic;' : ''}">
             <div class="rule-header">
+              <div class="rule-order-buttons">
+                <button class="order-btn" on:click={() => moveRule(index, -1)} disabled={index === 0} title="Move up">▲</button>
+                <button class="order-btn" on:click={() => moveRule(index, 1)} disabled={index === currentRules.length - 1} title="Move down">▼</button>
+              </div>
               <input type="checkbox" checked={rule.enabled} on:change={() => toggleRule(rule.id)} />
               <span class="rule-name">{rule.name}</span>
               <span class="rule-type" style="color: var(--text-muted); background: {rule.background ? 'rgba(0,0,0,0.25)' : 'var(--bg-primary)'}">{rule.matchType}</span>
@@ -275,10 +321,6 @@
           <label class="toggle-label">
             <input type="checkbox" bind:checked={ruleItalic} />
             <span>Italic</span>
-          </label>
-          <label>
-            <span>Priority</span>
-            <input type="number" min="0" max="1000" bind:value={rulePriority} />
           </label>
           <div class="editor-actions">
             <button class="btn-save" on:click={saveRule}>Save</button>
@@ -396,6 +438,13 @@
     font-size: 12px;
   }
 
+  .precedence-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 0;
+    line-height: 1.4;
+  }
+
   .rules-list {
     display: flex;
     flex-direction: column;
@@ -407,6 +456,15 @@
     padding: 8px;
     border: 1px solid var(--border);
     transition: opacity 0.15s;
+    cursor: grab;
+  }
+
+  .rule-item.dragging {
+    opacity: 0.4;
+  }
+
+  .rule-item:active {
+    cursor: grabbing;
   }
 
   .rule-item.disabled {
@@ -417,6 +475,39 @@
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .rule-order-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .order-btn {
+    width: 18px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    border-radius: 2px;
+    color: inherit;
+    opacity: 0.6;
+    background: rgba(128, 128, 128, 0.15);
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .order-btn:hover:not(:disabled) {
+    opacity: 1;
+    background: rgba(128, 128, 128, 0.3);
+  }
+
+  .order-btn:disabled {
+    opacity: 0.2;
+    cursor: default;
   }
 
   .rule-name {
