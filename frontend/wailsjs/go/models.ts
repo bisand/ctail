@@ -25,6 +25,7 @@ export namespace config {
 	    showLineNumbers: boolean;
 	    wordWrap: boolean;
 	    restoreTabs: boolean;
+	    activeProfile: string;
 	    windowWidth: number;
 	    windowHeight: number;
 	    tabs: TabState[];
@@ -43,6 +44,7 @@ export namespace config {
 	        this.showLineNumbers = source["showLineNumbers"];
 	        this.wordWrap = source["wordWrap"];
 	        this.restoreTabs = source["restoreTabs"];
+	        this.activeProfile = source["activeProfile"];
 	        this.windowWidth = source["windowWidth"];
 	        this.windowHeight = source["windowHeight"];
 	        this.tabs = this.convertValues(source["tabs"], TabState);

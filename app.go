@@ -66,9 +66,32 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.config = cfg
+
+	// Restore window position, size, and maximised state
+	s := cfg.GetSettings()
+	if s.WindowWidth > 0 && s.WindowHeight > 0 {
+		wailsRuntime.WindowSetSize(ctx, s.WindowWidth, s.WindowHeight)
+	}
+	if s.WindowX >= 0 && s.WindowY >= 0 {
+		wailsRuntime.WindowSetPosition(ctx, s.WindowX, s.WindowY)
+	}
+	if s.WindowMaximised {
+		wailsRuntime.WindowMaximise(ctx)
+	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// Save window position, size, and state
+	if a.config != nil {
+		s := a.config.GetSettings()
+		s.WindowMaximised = wailsRuntime.WindowIsMaximised(ctx)
+		if !s.WindowMaximised {
+			s.WindowWidth, s.WindowHeight = wailsRuntime.WindowGetSize(ctx)
+			s.WindowX, s.WindowY = wailsRuntime.WindowGetPosition(ctx)
+		}
+		_ = a.config.SaveSettings(s)
+	}
+
 	// Save open tabs (also saved on every open/close, but do it here too)
 	a.persistTabs()
 
