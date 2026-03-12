@@ -7,6 +7,7 @@ export const settings = writable({
   fontSize: 14,
   showLineNumbers: false,
   wordWrap: false,
+  activeProfile: 'Common Logs',
 });
 
 export const settingsPanelOpen = writable(false);

@@ -10,7 +10,6 @@
   import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
-  let selectedProfile = 'Common Logs';
   let scrollBuffer = 500;
 
   // Load initial lines for a tab after it becomes ready
@@ -53,7 +52,6 @@
         if (p) allProfiles[name] = p;
       }
       profiles.set(allProfiles);
-      if (names.length > 0) selectedProfile = names[0];
     } catch (e) {
       console.error('Failed to load profiles:', e);
     }
@@ -159,7 +157,7 @@
   <div class="main-area">
     <LogView />
     {#if $settingsPanelOpen}
-      <SettingsPanel bind:selectedProfile />
+      <SettingsPanel />
     {/if}
   </div>
 </div>

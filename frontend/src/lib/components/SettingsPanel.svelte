@@ -17,8 +17,8 @@
   let ruleBackground = '';
   let ruleBold = false;
   let ruleItalic = false;
-  export let selectedProfile = 'Common Logs';
 
+  $: selectedProfile = $settings.activeProfile || 'Common Logs';
   $: currentProfile = $profiles[selectedProfile];
   $: currentRules = currentProfile
     ? [...currentProfile.rules].sort((a, b) => a.priority - b.priority)
@@ -186,7 +186,7 @@
     const p = { name: newProfileName.trim(), rules: [] };
     profiles.update(all => ({ ...all, [p.name]: p }));
     await SaveProfile(p);
-    selectedProfile = p.name;
+    updateSetting('activeProfile', p.name);
     showNewProfile = false;
     newProfileName = '';
   }
@@ -199,7 +199,8 @@
       delete copy[selectedProfile];
       return copy;
     });
-    selectedProfile = $profileNames.find(n => n !== selectedProfile) || $profileNames[0];
+    const remaining = $profileNames.find(n => n !== selectedProfile) || $profileNames[0];
+    updateSetting('activeProfile', remaining);
   }
 </script>
 
@@ -260,7 +261,7 @@
   {:else if activeSection === 'rules'}
     <div class="section">
       <div class="profile-selector">
-        <select bind:value={selectedProfile}>
+        <select value={selectedProfile} on:change={e => updateSetting('activeProfile', e.target.value)}>
           {#each $profileNames as name}
             <option value={name}>{name}</option>
           {/each}

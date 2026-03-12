@@ -27,7 +27,7 @@
 
   $: currentTab = $activeTab;
   $: lines = currentTab ? currentTab.lines : [];
-  $: profileName = currentTab ? currentTab.profile : 'Common Logs';
+  $: profileName = $settings.activeProfile || 'Common Logs';
   $: profile = $profiles[profileName];
   $: rules = profile ? profile.rules : [];
   $: autoScroll = currentTab ? currentTab.autoScroll : true;
