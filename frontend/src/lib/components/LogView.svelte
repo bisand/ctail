@@ -55,15 +55,18 @@
 
       const olderLines = await GetTabLineRange(currentTab.id, fetchStart, fetchCount);
       if (olderLines && olderLines.length > 0) {
-        const prevScrollHeight = container.scrollHeight;
         const prevScrollTop = container.scrollTop;
+        const prevBufferSize = lines.length;
 
         tabStore.prependLines(currentTab.id, olderLines, MAX_WINDOW);
 
         await tick();
         if (container) {
-          const newScrollHeight = container.scrollHeight;
-          container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
+          // Buffer stayed ~same size (prepend N, trim N from bottom).
+          // Content shifted down by addedCount lines, so move scrollTop
+          // down by that many lines to keep the visible content stable.
+          const lineHeight = container.scrollHeight / (lines.length || 1);
+          container.scrollTop = prevScrollTop + olderLines.length * lineHeight;
         }
       }
     } catch (e) {
@@ -79,9 +82,24 @@
     tabStore.setLoadingLines(currentTab.id, true);
     try {
       const fetchStart = windowEnd + 1;
+      const prevBufferSize = lines.length;
+      const prevScrollTop = container.scrollTop;
+
       const newerLines = await GetTabLineRange(currentTab.id, fetchStart, FETCH_BATCH);
       if (newerLines && newerLines.length > 0) {
         tabStore.appendRangeLines(currentTab.id, newerLines, MAX_WINDOW);
+
+        await tick();
+        if (container) {
+          // Buffer stayed ~same size (append N, trim N from top).
+          // Content shifted up by trimmedCount lines, so move scrollTop
+          // up to keep the visible content stable.
+          const trimmed = (prevBufferSize + newerLines.length) - lines.length;
+          if (trimmed > 0) {
+            const lineHeight = container.scrollHeight / (lines.length || 1);
+            container.scrollTop = prevScrollTop - trimmed * lineHeight;
+          }
+        }
       }
     } catch (e) {
       console.error('Failed to load later lines:', e);
