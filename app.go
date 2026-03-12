@@ -65,10 +65,21 @@ func (a *App) shutdown(ctx context.Context) {
 		_ = a.config.SaveSettings(settings)
 	}
 
-	for _, tab := range a.tabs {
-		if tab.tailer != nil {
-			tab.tailer.Stop()
+	// Stop tailers with a timeout to avoid hanging on stale remote mounts
+	done := make(chan struct{})
+	go func() {
+		for _, tab := range a.tabs {
+			if tab.tailer != nil {
+				tab.tailer.Stop()
+			}
 		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		fmt.Println("Warning: shutdown timed out waiting for tailers to stop")
 	}
 }
 

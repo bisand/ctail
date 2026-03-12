@@ -241,7 +241,20 @@ func (t *Tailer) pollLoop() {
 			interval := t.pollInterval
 			t.mu.RUnlock()
 			ticker.Reset(interval)
-			t.poll()
+
+			// Run poll in a goroutine so a blocked file I/O
+			// (e.g. stale remote mount) doesn't prevent shutdown.
+			pollDone := make(chan struct{})
+			go func() {
+				t.poll()
+				close(pollDone)
+			}()
+
+			select {
+			case <-pollDone:
+			case <-t.stopCh:
+				return
+			}
 		}
 	}
 }
