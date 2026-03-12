@@ -7,18 +7,19 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLines, GetTabTotalLines, GetSettings, GetSavedTabs, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
   let selectedProfile = 'Common Logs';
 
+  const INITIAL_BUFFER = 500;
+
   // Load initial lines for a tab after it becomes ready
   async function loadInitialLines(tabId) {
     try {
-      const [lines, total] = await Promise.all([
-        GetTabLines(tabId),
-        GetTabTotalLines(tabId)
-      ]);
+      const total = await GetTabTotalLines(tabId);
+      const fetchStart = Math.max(1, total - INITIAL_BUFFER + 1);
+      const lines = await GetTabLineRange(tabId, fetchStart, INITIAL_BUFFER);
       if (lines && lines.length > 0) {
         tabStore.setLines(tabId, lines, total);
       }
