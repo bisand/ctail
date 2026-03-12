@@ -21,9 +21,16 @@
       <div
         class="tab"
         class:active={$activeTabId === tab.id}
+        class:loading={tab.status === 'loading'}
+        class:error={tab.status === 'error'}
         on:click={() => switchTab(tab.id)}
-        title={tab.filePath}
+        title={tab.status === 'error' ? `${tab.filePath}\n⚠ ${tab.errorMessage}` : tab.filePath}
       >
+        {#if tab.status === 'loading'}
+          <span class="tab-spinner"></span>
+        {:else if tab.status === 'error'}
+          <span class="tab-error-icon" title={tab.errorMessage}>⚠</span>
+        {/if}
         <span class="tab-name">{tab.fileName}</span>
         {#if tab.hasUpdate}
           <span class="badge"></span>
@@ -86,6 +93,30 @@
     overflow: hidden;
     text-overflow: ellipsis;
     font-size: 12px;
+  }
+
+  .tab-spinner {
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--text-muted);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .tab-error-icon {
+    color: var(--warning, #e5c07b);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  .tab.error .tab-name {
+    opacity: 0.6;
   }
 
   .badge {

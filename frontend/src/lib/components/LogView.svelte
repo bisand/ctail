@@ -36,6 +36,8 @@
   $: windowEnd = lines.length > 0 ? lines[lines.length - 1].number : 0;
   $: canScrollBack = windowStart > 1;
   $: canScrollForward = !autoScroll && windowEnd < totalLines;
+  $: tabStatus = currentTab ? currentTab.status : null;
+  $: tabError = currentTab ? currentTab.errorMessage : '';
 
   afterUpdate(() => {
     if (autoScroll && container) {
@@ -192,8 +194,20 @@
       {/each}
       {#if lines.length === 0}
         <div class="empty-state">
-          <p>Waiting for data...</p>
-          <p class="muted">{currentTab.filePath}</p>
+          {#if tabStatus === 'loading'}
+            <div class="loading-indicator">
+              <div class="spinner"></div>
+              <p>Loading file...</p>
+              <p class="muted">{currentTab.filePath}</p>
+            </div>
+          {:else if tabStatus === 'error'}
+            <p class="error-msg">⚠ {tabError}</p>
+            <p class="muted">{currentTab.filePath}</p>
+            <p class="hint">The file may be on an unreachable mount. It will reload when available.</p>
+          {:else}
+            <p>Waiting for data...</p>
+            <p class="muted">{currentTab.filePath}</p>
+          {/if}
         </div>
       {/if}
     </div>
@@ -264,6 +278,31 @@
     color: var(--text-muted);
     font-size: 12px;
     margin-top: 8px;
+  }
+
+  .loading-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .error-msg {
+    color: var(--warning, #e5c07b);
+    font-size: 14px;
   }
 
   .scroll-bottom-btn {

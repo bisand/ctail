@@ -94,7 +94,9 @@ func (a *App) OpenFileDialog() (string, error) {
 	})
 }
 
-// OpenTab opens a new tab tailing the given file
+// OpenTab opens a new tab tailing the given file.
+// Returns immediately — file I/O runs in the background.
+// The frontend receives tailer:ready or tailer:error events.
 func (a *App) OpenTab(filePath string) (string, error) {
 	if filePath == "" {
 		return "", fmt.Errorf("no file path provided")
@@ -142,26 +144,36 @@ func (a *App) OpenTab(filePath string) (string, error) {
 		})
 	})
 
-	if err := t.Start(); err != nil {
-		return "", fmt.Errorf("start tailing: %w", err)
-	}
+	t.OnReady(func() {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
+			"tabId": id,
+		})
+	})
 
+	// Register tab immediately so it appears in the UI
 	a.mu.Lock()
 	a.tabs[id] = tab
 	a.mu.Unlock()
 
+	// Start tailing in the background — never blocks
+	if err := t.Start(); err != nil {
+		return id, nil // still return tab id — error will come via event
+	}
+
 	return id, nil
 }
 
-// CloseTab stops tailing and removes the tab
+// CloseTab stops tailing and removes the tab (non-blocking)
 func (a *App) CloseTab(tabID string) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if tab, ok := a.tabs[tabID]; ok {
-		if tab.tailer != nil {
-			tab.tailer.Stop()
-		}
+	tab, ok := a.tabs[tabID]
+	if ok {
 		delete(a.tabs, tabID)
+	}
+	a.mu.Unlock()
+
+	if ok && tab.tailer != nil {
+		go tab.tailer.Stop()
 	}
 }
 

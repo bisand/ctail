@@ -2,6 +2,7 @@ package tailer
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -32,6 +33,7 @@ type Tailer struct {
 	onLines     func([]Line)
 	onTruncated func()
 	onError     func(error)
+	onReady     func() // called once after successful initial read
 }
 
 // New creates a new Tailer
@@ -61,7 +63,10 @@ func (t *Tailer) OnTruncated(fn func()) { t.onTruncated = fn }
 // OnError sets the callback for errors
 func (t *Tailer) OnError(fn func(error)) { t.onError = fn }
 
-// Start begins tailing the file
+// OnReady sets the callback for when the initial read completes successfully
+func (t *Tailer) OnReady(fn func()) { t.onReady = fn }
+
+// Start begins tailing the file (non-blocking — initial read happens in background)
 func (t *Tailer) Start() error {
 	t.mu.Lock()
 	if t.running {
@@ -71,13 +76,39 @@ func (t *Tailer) Start() error {
 	t.running = true
 	t.mu.Unlock()
 
-	// Initial read: read last bufferSize lines
-	if err := t.initialRead(); err != nil {
-		return err
+	go t.startLoop()
+	return nil
+}
+
+// startLoop performs the initial read then enters the poll loop.
+// Runs entirely in a goroutine so the caller of Start() never blocks on I/O.
+func (t *Tailer) startLoop() {
+	// Initial read with a timeout so stale mounts don't block forever
+	initDone := make(chan error, 1)
+	go func() {
+		initDone <- t.initialRead()
+	}()
+
+	select {
+	case err := <-initDone:
+		if err != nil {
+			if t.onError != nil {
+				t.onError(err)
+			}
+			// Still enter poll loop — file may become available later
+		} else if t.onReady != nil {
+			t.onReady()
+		}
+	case <-t.stopCh:
+		return
+	case <-time.After(10 * time.Second):
+		if t.onError != nil {
+			t.onError(fmt.Errorf("timeout reading %s (file may be on an unreachable mount)", t.filePath))
+		}
+		// Enter poll loop anyway — will retry on next tick
 	}
 
-	go t.pollLoop()
-	return nil
+	t.pollLoop()
 }
 
 // Stop stops tailing
@@ -108,6 +139,7 @@ func (t *Tailer) GetTotalLines() int64 {
 }
 
 // ReadRange reads lines from the file starting at startLine (1-based), returning up to count lines.
+// Uses a timeout to avoid blocking on unreachable mounts.
 func (t *Tailer) ReadRange(startLine int64, count int) []Line {
 	if startLine < 1 || count < 1 {
 		return nil
@@ -129,26 +161,42 @@ func (t *Tailer) ReadRange(startLine int64, count int) []Line {
 
 	byteOffset := offsets[idx]
 
-	f, err := os.Open(t.filePath)
-	if err != nil {
+	type result struct {
+		lines []Line
+	}
+
+	ch := make(chan result, 1)
+	go func() {
+		f, err := os.Open(t.filePath)
+		if err != nil {
+			ch <- result{nil}
+			return
+		}
+		defer f.Close()
+
+		if _, err := f.Seek(byteOffset, io.SeekStart); err != nil {
+			ch <- result{nil}
+			return
+		}
+
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+		var lines []Line
+		lineNo := startLine
+		for scanner.Scan() && len(lines) < count {
+			lines = append(lines, Line{Number: lineNo, Text: scanner.Text()})
+			lineNo++
+		}
+		ch <- result{lines}
+	}()
+
+	select {
+	case r := <-ch:
+		return r.lines
+	case <-time.After(5 * time.Second):
 		return nil
 	}
-	defer f.Close()
-
-	if _, err := f.Seek(byteOffset, io.SeekStart); err != nil {
-		return nil
-	}
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-
-	var lines []Line
-	lineNo := startLine
-	for scanner.Scan() && len(lines) < count {
-		lines = append(lines, Line{Number: lineNo, Text: scanner.Text()})
-		lineNo++
-	}
-	return lines
 }
 
 // SetPollInterval updates the poll interval

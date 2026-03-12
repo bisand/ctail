@@ -20,7 +20,9 @@ function createTabStore() {
           hasUpdate: false,
           autoScroll: true,
           paused: false,
-          loadingLines: false
+          loadingLines: false,
+          status: 'loading', // 'loading' | 'ready' | 'error'
+          errorMessage: ''
         });
         state.activeTabId = id;
         return state;
@@ -107,6 +109,16 @@ function createTabStore() {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
         if (tab) tab.totalLines = total;
+        return state;
+      });
+    },
+    setStatus(tabId, status, errorMessage) {
+      update(state => {
+        const tab = state.tabs.find(t => t.id === tabId);
+        if (tab) {
+          tab.status = status;
+          if (errorMessage !== undefined) tab.errorMessage = errorMessage;
+        }
         return state;
       });
     },

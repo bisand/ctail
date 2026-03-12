@@ -12,6 +12,23 @@
 
   let selectedProfile = 'Common Logs';
 
+  // Load initial lines for a tab after it becomes ready
+  async function loadInitialLines(tabId) {
+    try {
+      const [lines, total] = await Promise.all([
+        GetTabLines(tabId),
+        GetTabTotalLines(tabId)
+      ]);
+      if (lines && lines.length > 0) {
+        tabStore.setLines(tabId, lines, total);
+      }
+      tabStore.setStatus(tabId, 'ready');
+    } catch (e) {
+      console.error('Failed to load initial lines for', tabId, e);
+      tabStore.setStatus(tabId, 'error', String(e));
+    }
+  }
+
   onMount(async () => {
     // Load settings
     try {
@@ -55,27 +72,30 @@
 
     EventsOn('tailer:error', (data) => {
       console.error(`Tailer error for ${data.tabId}: ${data.message}`);
+      if (data.tabId) {
+        tabStore.setStatus(data.tabId, 'error', data.message || 'Unknown error');
+      }
     });
 
-    // Restore previously open tabs
+    EventsOn('tailer:ready', (data) => {
+      if (data.tabId) {
+        loadInitialLines(data.tabId);
+      }
+    });
+
+    // Restore previously open tabs (non-blocking — tabs appear immediately)
     try {
       const savedTabs = await GetSavedTabs();
       if (savedTabs && savedTabs.length > 0) {
         for (const tab of savedTabs) {
           try {
-            const tabId = await OpenTab(tab.filePath);
             const fileName = tab.filePath.split(/[/\\]/).pop();
+            const tabId = await OpenTab(tab.filePath);
             tabStore.addTab(tabId, tab.filePath, fileName);
             if (tab.profileId) {
               tabStore.setProfile(tabId, tab.profileId);
             }
-            const [lines, total] = await Promise.all([
-              GetTabLines(tabId),
-              GetTabTotalLines(tabId)
-            ]);
-            if (lines && lines.length > 0) {
-              tabStore.setLines(tabId, lines, total);
-            }
+            // Lines will arrive via tailer:ready → loadInitialLines
           } catch (e) {
             console.warn('Failed to restore tab:', tab.filePath, e);
           }
@@ -125,15 +145,7 @@
       const tabId = await OpenTab(path);
       const fileName = path.split(/[/\\]/).pop();
       tabStore.addTab(tabId, path, fileName);
-
-      // Lines will arrive via events, but get initial batch
-      const [lines, total] = await Promise.all([
-        GetTabLines(tabId),
-        GetTabTotalLines(tabId)
-      ]);
-      if (lines && lines.length > 0) {
-        tabStore.setLines(tabId, lines, total);
-      }
+      // Lines will arrive via tailer:ready → loadInitialLines
     } catch (e) {
       console.error('Failed to open file:', e);
     }
