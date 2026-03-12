@@ -73,7 +73,7 @@ function createTabStore() {
           if (tab.autoScroll) {
             // Following: append lines and trim the top to keep window bounded
             tab.lines = [...tab.lines, ...newLines];
-            const maxWindow = 1500;
+            const maxWindow = 500;
             if (tab.lines.length > maxWindow) {
               tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
             }

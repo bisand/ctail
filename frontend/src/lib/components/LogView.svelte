@@ -11,8 +11,8 @@
   let searchQuery = '';
   let searchVisible = false;
 
-  const FETCH_BATCH = 500;
-  const MAX_WINDOW = 1500;
+  const FETCH_BATCH = 200;
+  const MAX_WINDOW = 500;
   let fetchTimer = null;
 
   // Debounce: only one fetch check per pause in scrolling
@@ -133,8 +133,8 @@
     const visibleCount = Math.ceil(container.clientHeight / lineHeight);
     const lastVisibleIdx = firstVisibleIdx + visibleCount;
 
-    const triggerTop = Math.floor(bufferSize / 3);
-    const triggerBottom = Math.floor(bufferSize * 2 / 3);
+    const triggerTop = Math.floor(bufferSize / 4);
+    const triggerBottom = Math.floor(bufferSize * 3 / 4);
 
     // Viewport is in the top 1/3 of the buffer → load earlier lines
     if (firstVisibleIdx < triggerTop && canScrollBack) {
