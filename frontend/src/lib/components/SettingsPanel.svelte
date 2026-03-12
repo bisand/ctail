@@ -221,7 +221,7 @@
       <div class="rules-list">
         {#each currentRules as rule (rule.id)}
           <div class="rule-item" class:disabled={!rule.enabled}
-            style="background: {rule.background || 'var(--bg-surface)'}; color: {rule.foreground || 'var(--text-primary)'}; {rule.bold ? 'font-weight:700;' : ''}{rule.italic ? 'font-style:italic;' : ''}">
+            style="background: {rule.background || 'var(--bg-primary)'}; color: {rule.foreground || 'var(--text-primary)'}; {rule.bold ? 'font-weight:700;' : ''}{rule.italic ? 'font-style:italic;' : ''}">
             <div class="rule-header">
               <input type="checkbox" checked={rule.enabled} on:change={() => toggleRule(rule.id)} />
               <span class="rule-name">{rule.name}</span>
