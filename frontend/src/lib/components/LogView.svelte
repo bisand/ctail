@@ -11,8 +11,8 @@
   let searchQuery = '';
   let searchVisible = false;
 
-  const FETCH_BATCH = 200;
-  const MAX_WINDOW = 1000;
+  const FETCH_BATCH = 500;
+  const MAX_WINDOW = 1500;
   let scrollCheckTimer = null;
 
   function scheduleScrollCheck() {
@@ -98,8 +98,8 @@
     if (!container || !currentTab) return;
 
     const scrollRatio = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
-    const nearTop = scrollRatio < 0.15;
-    const nearBottom = scrollRatio > 0.85;
+    const nearTop = scrollRatio < 0.25;
+    const nearBottom = scrollRatio > 0.75;
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
 
     if (isAtBottom && !atBottom) {

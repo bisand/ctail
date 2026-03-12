@@ -71,7 +71,7 @@ function createTabStore() {
           tab.lines = [...tab.lines, ...newLines];
           tab.totalLines += newLines.length;
           // Keep buffer bounded (frontend side) — only trim when auto-scrolling
-          const maxWindow = 1000;
+          const maxWindow = 1500;
           if (tab.autoScroll && tab.lines.length > maxWindow) {
             tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
           }
