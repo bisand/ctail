@@ -24,8 +24,12 @@
     ? [...currentProfile.rules].sort((a, b) => a.priority - b.priority)
     : [];
 
-  // Drag state
+  // Drag state (pointer-based for WebKit compatibility)
   let dragIndex = null;
+  let dragOverIndex = null;
+  let isDragging = false;
+  let dragEl = null;
+  let dragStartY = 0;
 
   function selectSection(section) {
     activeSection = section;
@@ -86,28 +90,49 @@
     await saveRules(reordered);
   }
 
-  function handleDragStart(e, index) {
+  function handlePointerDown(e, index) {
+    if (e.target.closest('.order-btn') || e.target.closest('.icon-btn-small') || e.target.tagName === 'INPUT') return;
     dragIndex = index;
-    e.dataTransfer.effectAllowed = 'move';
+    dragStartY = e.clientY;
+    dragEl = e.currentTarget;
+    dragEl.setPointerCapture(e.pointerId);
   }
 
-  function handleDragOver(e, index) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+  function handlePointerMove(e) {
+    if (dragIndex === null) return;
+    if (!isDragging && Math.abs(e.clientY - dragStartY) > 5) {
+      isDragging = true;
+    }
+    if (!isDragging) return;
+
+    const listEl = dragEl.parentElement;
+    const items = [...listEl.children];
+    for (let i = 0; i < items.length; i++) {
+      const rect = items[i].getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) {
+        dragOverIndex = i;
+        return;
+      }
+    }
+    dragOverIndex = items.length;
   }
 
-  async function handleDrop(e, index) {
-    e.preventDefault();
-    if (dragIndex === null || dragIndex === index) { dragIndex = null; return; }
+  async function handlePointerUp(e) {
+    if (dragIndex === null) return;
+    const wasDragging = isDragging;
+    const fromIndex = dragIndex;
+    let toIndex = dragOverIndex;
+    dragIndex = null;
+    dragOverIndex = null;
+    isDragging = false;
+    dragEl = null;
+
+    if (!wasDragging || toIndex === null || toIndex === fromIndex || toIndex === fromIndex + 1) return;
     const reordered = [...currentRules];
-    const [moved] = reordered.splice(dragIndex, 1);
-    reordered.splice(index, 0, moved);
-    dragIndex = null;
+    const [moved] = reordered.splice(fromIndex, 1);
+    if (toIndex > fromIndex) toIndex--;
+    reordered.splice(toIndex, 0, moved);
     await saveRules(reordered);
-  }
-
-  function handleDragEnd() {
-    dragIndex = null;
   }
 
   async function saveRule() {
@@ -257,12 +282,13 @@
 
       <div class="rules-list">
         {#each currentRules as rule, index (rule.id)}
-          <div class="rule-item" class:disabled={!rule.enabled} class:dragging={dragIndex === index}
-            draggable="true"
-            on:dragstart={e => handleDragStart(e, index)}
-            on:dragover={e => handleDragOver(e, index)}
-            on:drop={e => handleDrop(e, index)}
-            on:dragend={handleDragEnd}
+          {#if isDragging && dragOverIndex === index}
+            <div class="drop-indicator"></div>
+          {/if}
+          <div class="rule-item" class:disabled={!rule.enabled} class:dragging={isDragging && dragIndex === index}
+            on:pointerdown={e => handlePointerDown(e, index)}
+            on:pointermove={handlePointerMove}
+            on:pointerup={handlePointerUp}
             style="background: {rule.background || 'var(--bg-primary)'}; color: {rule.foreground || 'var(--text-primary)'}; {rule.bold ? 'font-weight:700;' : ''}{rule.italic ? 'font-style:italic;' : ''}">
             <div class="rule-header">
               <div class="rule-order-buttons">
@@ -278,6 +304,9 @@
             <div class="rule-pattern">{rule.pattern}</div>
           </div>
         {/each}
+        {#if isDragging && dragOverIndex >= currentRules.length}
+          <div class="drop-indicator"></div>
+        {/if}
       </div>
 
       <button class="btn-add-rule" on:click={startNewRule}>+ Add Rule</button>
@@ -465,6 +494,13 @@
 
   .rule-item:active {
     cursor: grabbing;
+  }
+
+  .drop-indicator {
+    height: 2px;
+    background: var(--accent);
+    border-radius: 1px;
+    margin: -1px 0;
   }
 
   .rule-item.disabled {
