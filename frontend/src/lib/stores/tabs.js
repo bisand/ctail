@@ -68,13 +68,18 @@ function createTabStore() {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
         if (tab) {
-          tab.lines = [...tab.lines, ...newLines];
           tab.totalLines += newLines.length;
-          // Keep buffer bounded (frontend side) — only trim when auto-scrolling
-          const maxWindow = 1500;
-          if (tab.autoScroll && tab.lines.length > maxWindow) {
-            tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
+
+          if (tab.autoScroll) {
+            // Following: append lines and trim the top to keep window bounded
+            tab.lines = [...tab.lines, ...newLines];
+            const maxWindow = 1500;
+            if (tab.lines.length > maxWindow) {
+              tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
+            }
           }
+          // Not following: only totalLines is updated (status bar shows new count)
+
           if (state.activeTabId !== tabId) {
             tab.hasUpdate = true;
           }
