@@ -19,6 +19,7 @@ export namespace config {
 	export class AppSettings {
 	    pollIntervalMs: number;
 	    bufferSize: number;
+	    scrollBuffer: number;
 	    theme: string;
 	    fontSize: number;
 	    showLineNumbers: boolean;
@@ -36,6 +37,7 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.pollIntervalMs = source["pollIntervalMs"];
 	        this.bufferSize = source["bufferSize"];
+	        this.scrollBuffer = source["scrollBuffer"];
 	        this.theme = source["theme"];
 	        this.fontSize = source["fontSize"];
 	        this.showLineNumbers = source["showLineNumbers"];

@@ -220,11 +220,12 @@
 
       <div class="rules-list">
         {#each currentRules as rule (rule.id)}
-          <div class="rule-item" class:disabled={!rule.enabled}>
+          <div class="rule-item" class:disabled={!rule.enabled}
+            style="background: {rule.background || 'var(--bg-surface)'}; color: {rule.foreground || 'var(--text-primary)'}; {rule.bold ? 'font-weight:700;' : ''}{rule.italic ? 'font-style:italic;' : ''}">
             <div class="rule-header">
               <input type="checkbox" checked={rule.enabled} on:change={() => toggleRule(rule.id)} />
-              <span class="rule-name" style="color: {rule.foreground}">{rule.name}</span>
-              <span class="rule-type">{rule.matchType}</span>
+              <span class="rule-name">{rule.name}</span>
+              <span class="rule-type" style="color: var(--text-muted); background: {rule.background ? 'rgba(0,0,0,0.25)' : 'var(--bg-primary)'}">{rule.matchType}</span>
               <button class="icon-btn-small" on:click={() => startEditRule(rule)}>✏</button>
               <button class="icon-btn-small danger" on:click={() => deleteRule(rule.id)}>×</button>
             </div>
@@ -402,9 +403,10 @@
   }
 
   .rule-item {
-    background: var(--bg-surface);
     border-radius: 6px;
     padding: 8px;
+    border: 1px solid var(--border);
+    transition: opacity 0.15s;
   }
 
   .rule-item.disabled {
@@ -433,7 +435,7 @@
 
   .rule-pattern {
     font-size: 11px;
-    color: var(--text-muted);
+    opacity: 0.7;
     font-family: monospace;
     margin-top: 4px;
     padding-left: 24px;
