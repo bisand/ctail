@@ -62,7 +62,8 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	// Tab order is persisted by the frontend via SaveTabOrder on every change.
+	// Save window state before closing
+	a.saveWindowState()
 
 	// Stop tailers with a timeout to avoid hanging on stale remote mounts
 	a.mu.RLock()
@@ -86,6 +87,43 @@ func (a *App) shutdown(ctx context.Context) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		fmt.Println("Warning: shutdown timed out waiting for tailers to stop")
+	}
+}
+
+func (a *App) saveWindowState() {
+	if a.ctx == nil || a.config == nil {
+		return
+	}
+	isMax := wailsRuntime.WindowIsMaximised(a.ctx)
+	settings := a.config.GetSettings()
+
+	if !isMax {
+		// Only save position/size when not maximised
+		w, h := wailsRuntime.WindowGetSize(a.ctx)
+		x, y := wailsRuntime.WindowGetPosition(a.ctx)
+		settings.Window.X = x
+		settings.Window.Y = y
+		settings.Window.Width = w
+		settings.Window.Height = h
+	}
+	settings.Window.Maximised = isMax
+	a.config.SaveSettings(settings)
+}
+
+// restoreWindowState applies saved window geometry after the DOM is ready
+func (a *App) restoreWindowState(ctx context.Context) {
+	if a.config == nil {
+		return
+	}
+	ws := a.config.GetSettings().Window
+	if ws.Width > 0 && ws.Height > 0 {
+		wailsRuntime.WindowSetSize(a.ctx, ws.Width, ws.Height)
+	}
+	if ws.X != 0 || ws.Y != 0 {
+		wailsRuntime.WindowSetPosition(a.ctx, ws.X, ws.Y)
+	}
+	if ws.Maximised {
+		wailsRuntime.WindowMaximise(a.ctx)
 	}
 }
 

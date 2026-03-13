@@ -9,6 +9,7 @@ export const settings = writable({
   showLineNumbers: false,
   wordWrap: false,
   activeProfile: 'Common Logs',
+  displayBackend: 'auto',
 });
 
 export const settingsPanelOpen = writable(false);

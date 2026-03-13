@@ -288,6 +288,15 @@
           <option value="light">Light</option>
         </select>
       </label>
+      <label>
+        <span>Display Backend <small>(Linux, requires restart)</small></span>
+        <select value={$settings.displayBackend || 'auto'}
+          on:change={(e) => updateSetting('displayBackend', e.target.value)}>
+          <option value="auto">Auto (prefer X11)</option>
+          <option value="x11">X11</option>
+          <option value="wayland">Wayland</option>
+        </select>
+      </label>
     </div>
 
   {:else if activeSection === 'rules'}

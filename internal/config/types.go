@@ -29,6 +29,15 @@ type TabState struct {
 	AutoScroll bool   `json:"autoScroll"`
 }
 
+// WindowState stores window geometry for persistence
+type WindowState struct {
+	X         int  `json:"x"`
+	Y         int  `json:"y"`
+	Width     int  `json:"width"`
+	Height    int  `json:"height"`
+	Maximised bool `json:"maximised"`
+}
+
 // AppSettings contains global application settings
 type AppSettings struct {
 	PollInterval  time.Duration `json:"-"`
@@ -44,6 +53,8 @@ type AppSettings struct {
 	ActiveProfile string        `json:"activeProfile"`
 	Tabs          []TabState    `json:"tabs"`
 	RecentFiles   []string      `json:"recentFiles"`
+	Window        WindowState   `json:"window"`
+	DisplayBackend string       `json:"displayBackend"` // "auto", "x11", or "wayland"
 }
 
 // DefaultSettings returns sensible defaults
@@ -62,6 +73,11 @@ func DefaultSettings() AppSettings {
 		ActiveProfile:   "Common Logs",
 		Tabs:            []TabState{},
 		RecentFiles:     []string{},
+		Window: WindowState{
+			Width:  1200,
+			Height: 800,
+		},
+		DisplayBackend: "auto",
 	}
 }
 
