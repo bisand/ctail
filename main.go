@@ -19,6 +19,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// Set via -ldflags at build time (git rev-list --count HEAD)
+var buildNumber = "dev"
+
 func main() {
 	useX11 := flag.Bool("x11", false, "Force X11 backend (fixes multi-monitor maximize on Wayland)")
 	useWayland := flag.Bool("wayland", false, "Force native Wayland backend")
@@ -35,7 +38,7 @@ func main() {
 		}
 	}
 
-	app := NewApp()
+	app := NewApp(buildNumber)
 
 	// Pre-load config to populate recent files menu
 	cfg, _ := config.NewManager()

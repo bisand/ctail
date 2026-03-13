@@ -1,6 +1,9 @@
 TAGS ?= webkit2_41
 PREFIX ?= /usr/local
 NFPM ?= $(shell go env GOPATH)/bin/nfpm
+VERSION ?= 0.5.0
+BUILD_NUMBER := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
+LDFLAGS := -ldflags "-X main.buildNumber=$(BUILD_NUMBER)"
 
 .PHONY: dev build build-windows build-macos clean test install uninstall package-deb package-rpm
 
@@ -8,7 +11,7 @@ dev:
 	wails dev -tags $(TAGS)
 
 build:
-	wails build -tags $(TAGS)
+	wails build -tags $(TAGS) $(LDFLAGS)
 
 build-windows:
 	wails build -platform windows/amd64
@@ -49,7 +52,7 @@ uninstall:
 	-gtk-update-icon-cache -f -t $(DESTDIR)$(PREFIX)/share/icons/hicolor 2>/dev/null || true
 
 package-deb: build
-	$(NFPM) package --packager deb --target build/
+	VERSION=$(VERSION).$(BUILD_NUMBER) $(NFPM) package --packager deb --target build/
 
 package-rpm: build
-	$(NFPM) package --packager rpm --target build/
+	VERSION=$(VERSION).$(BUILD_NUMBER) $(NFPM) package --packager rpm --target build/

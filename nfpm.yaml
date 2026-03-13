@@ -1,7 +1,7 @@
 name: ctail
 arch: amd64
 platform: linux
-version: v0.4.1
+version: ${VERSION:-0.5.0}
 section: utils
 priority: optional
 maintainer: André Biseth <https://github.com/bisand>

@@ -34,12 +34,14 @@ type App struct {
 	tabs            map[string]*TabInfo
 	nextID          int
 	recentMenu      *menu.Menu
+	buildNumber     string
 }
 
 // NewApp creates a new App
-func NewApp() *App {
+func NewApp(buildNum string) *App {
 	return &App{
-		tabs: make(map[string]*TabInfo),
+		tabs:        make(map[string]*TabInfo),
+		buildNumber: buildNum,
 	}
 }
 
@@ -413,9 +415,14 @@ func (a *App) ClearRecentFiles() {
 	a.RefreshRecentMenu()
 }
 
+const appVersion = "0.5.0"
+
 // GetAppVersion returns the application version string
 func (a *App) GetAppVersion() string {
-	return "0.4.1"
+	if a.buildNumber != "" && a.buildNumber != "dev" {
+		return appVersion + "+" + a.buildNumber
+	}
+	return appVersion
 }
 
 // ListThemes returns all available themes (built-in + custom)
