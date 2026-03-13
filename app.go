@@ -41,26 +41,6 @@ func NewApp() *App {
 	}
 }
 
-// persistTabs saves the current open tabs to settings (call with mu held or after collecting tab info)
-func (a *App) persistTabs() {
-	if a.config == nil {
-		return
-	}
-	a.mu.RLock()
-	tabStates := make([]config.TabState, 0, len(a.tabs))
-	for _, tab := range a.tabs {
-		tabStates = append(tabStates, config.TabState{
-			FilePath:  tab.FilePath,
-			ProfileID: tab.Profile,
-		})
-	}
-	a.mu.RUnlock()
-
-	settings := a.config.GetSettings()
-	settings.Tabs = tabStates
-	_ = a.config.SaveSettings(settings)
-}
-
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if a.preloadedConfig != nil {
@@ -112,8 +92,7 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	// Save open tabs (also saved on every open/close, but do it here too)
-	a.persistTabs()
+	// Tab order is persisted by the frontend via SaveTabOrder on every change.
 
 	// Stop tailers with a timeout to avoid hanging on stale remote mounts
 	a.mu.RLock()
