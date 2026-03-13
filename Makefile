@@ -52,7 +52,7 @@ uninstall:
 	-gtk-update-icon-cache -f -t $(DESTDIR)$(PREFIX)/share/icons/hicolor 2>/dev/null || true
 
 package-deb: build
-	VERSION=$(VERSION).$(BUILD_NUMBER) $(NFPM) package --packager deb --target build/
+	export VERSION=$(VERSION).$(BUILD_NUMBER) && $(NFPM) package --packager deb --target build/
 
 package-rpm: build
-	VERSION=$(VERSION).$(BUILD_NUMBER) $(NFPM) package --packager rpm --target build/
+	export VERSION=$(VERSION).$(BUILD_NUMBER) && $(NFPM) package --packager rpm --target build/
