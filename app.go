@@ -85,12 +85,9 @@ func (a *App) domReady(ctx context.Context) {
 	}
 	s := a.config.GetSettings()
 
-	if s.WindowMaximised {
-		wailsRuntime.WindowMaximise(ctx)
-		return
-	}
-
-	if s.WindowX >= 0 && s.WindowY >= 0 {
+	// Maximised state is handled via WindowStartState in main().
+	// Only restore position for non-maximised windows.
+	if !s.WindowMaximised && s.WindowX >= 0 && s.WindowY >= 0 {
 		wailsRuntime.WindowSetPosition(ctx, s.WindowX, s.WindowY)
 	}
 }
