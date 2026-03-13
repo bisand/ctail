@@ -1,5 +1,25 @@
 export namespace config {
 	
+	export class WindowState {
+	    x: number;
+	    y: number;
+	    width: number;
+	    height: number;
+	    maximised: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new WindowState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.maximised = source["maximised"];
+	    }
+	}
 	export class TabState {
 	    filePath: string;
 	    profileId: string;
@@ -29,6 +49,8 @@ export namespace config {
 	    activeProfile: string;
 	    tabs: TabState[];
 	    recentFiles: string[];
+	    window: WindowState;
+	    displayBackend: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -48,6 +70,8 @@ export namespace config {
 	        this.activeProfile = source["activeProfile"];
 	        this.tabs = this.convertValues(source["tabs"], TabState);
 	        this.recentFiles = source["recentFiles"];
+	        this.window = this.convertValues(source["window"], WindowState);
+	        this.displayBackend = source["displayBackend"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -216,6 +240,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 
 }
 

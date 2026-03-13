@@ -34,6 +34,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -54,9 +56,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      - name: Get build number
+        id: buildnum
+        shell: bash
+        run: echo "BUILD_NUMBER=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+
       - name: Build
+        shell: bash
         run: |
-          wails build -platform ${{ matrix.platform }} ${{ matrix.tags && format('-tags {0}', matrix.tags) || '' }}
+          wails build -platform ${{ matrix.platform }} ${{ matrix.tags && format('-tags {0}', matrix.tags) || '' }} -ldflags "-X main.buildNumber=${{ steps.buildnum.outputs.BUILD_NUMBER }}"
+
+      - name: Build deb and rpm packages
+        if: runner.os == 'Linux'
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          VERSION_TAG="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION_TAG#v}"
+          export VERSION="${VERSION}.${{ steps.buildnum.outputs.BUILD_NUMBER }}"
+          nfpm package --packager deb --target build/
+          nfpm package --packager rpm --target build/
 
       - name: Compress Linux binary
         if: runner.os == 'Linux'
@@ -80,7 +98,10 @@ jobs:
         if: runner.os == 'Linux'
         uses: softprops/action-gh-release@v2
         with:
-          files: build/bin/${{ matrix.asset_name }}.tar.gz
+          files: |
+            build/bin/${{ matrix.asset_name }}.tar.gz
+            build/*.deb
+            build/*.rpm
 
       - name: Upload macOS artifact to release
         if: runner.os == 'macOS'
