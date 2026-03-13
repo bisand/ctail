@@ -41,10 +41,6 @@ type AppSettings struct {
 	WordWrap      bool          `json:"wordWrap"`
 	RestoreTabs   bool          `json:"restoreTabs"`
 	ActiveProfile string        `json:"activeProfile"`
-	WindowX       int           `json:"windowX"`
-	WindowY       int           `json:"windowY"`
-	WindowWidth   int           `json:"windowWidth"`
-	WindowHeight  int           `json:"windowHeight"`
 	Tabs          []TabState    `json:"tabs"`
 }
 
@@ -61,10 +57,6 @@ func DefaultSettings() AppSettings {
 		WordWrap:        false,
 		RestoreTabs:     true,
 		ActiveProfile:   "Common Logs",
-		WindowX:         -1,
-		WindowY:         -1,
-		WindowWidth:     1200,
-		WindowHeight:    800,
 		Tabs:            []TabState{},
 	}
 }

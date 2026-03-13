@@ -26,10 +26,6 @@ export namespace config {
 	    wordWrap: boolean;
 	    restoreTabs: boolean;
 	    activeProfile: string;
-	    windowX: number;
-	    windowY: number;
-	    windowWidth: number;
-	    windowHeight: number;
 	    tabs: TabState[];
 	
 	    static createFrom(source: any = {}) {
@@ -47,10 +43,6 @@ export namespace config {
 	        this.wordWrap = source["wordWrap"];
 	        this.restoreTabs = source["restoreTabs"];
 	        this.activeProfile = source["activeProfile"];
-	        this.windowX = source["windowX"];
-	        this.windowY = source["windowY"];
-	        this.windowWidth = source["windowWidth"];
-	        this.windowHeight = source["windowHeight"];
 	        this.tabs = this.convertValues(source["tabs"], TabState);
 	    }
 	

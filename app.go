@@ -26,12 +26,11 @@ type TabInfo struct {
 
 // App is the main application struct bound to Wails
 type App struct {
-	ctx             context.Context
-	config          *config.Manager
-	preloadedConfig *config.Manager // set in main() before wails.Run
-	mu              sync.RWMutex
-	tabs            map[string]*TabInfo
-	nextID          int
+	ctx    context.Context
+	config *config.Manager
+	mu     sync.RWMutex
+	tabs   map[string]*TabInfo
+	nextID int
 }
 
 // NewApp creates a new App
@@ -43,47 +42,12 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	if a.preloadedConfig != nil {
-		a.config = a.preloadedConfig
-		a.preloadedConfig = nil
-	} else {
-		cfg, err := config.NewManager()
-		if err != nil {
-			fmt.Println("Warning: could not initialize config:", err)
-			return
-		}
-		a.config = cfg
-	}
-}
-
-// domReady restores saved window position after the webview is ready.
-// Size is already set via Wails options in main().
-// Note: WindowSetPosition is ignored on Wayland by design.
-func (a *App) domReady(ctx context.Context) {
-	if a.config == nil {
+	cfg, err := config.NewManager()
+	if err != nil {
+		fmt.Println("Warning: could not initialize config:", err)
 		return
 	}
-	s := a.config.GetSettings()
-	if s.WindowX >= 0 && s.WindowY >= 0 {
-		wailsRuntime.WindowSetPosition(ctx, s.WindowX, s.WindowY)
-	}
-}
-
-// beforeClose saves window geometry while the window is still alive.
-// On Linux/WebKit, OnShutdown fires too late — the window is already
-// gone and WindowGetSize/WindowGetPosition return zeros.
-// Only saves size/position when the window is NOT maximised, so we
-// don't persist full-screen dimensions as the "normal" window size.
-func (a *App) beforeClose(ctx context.Context) (prevent bool) {
-	if a.config != nil {
-		if !wailsRuntime.WindowIsMaximised(ctx) {
-			s := a.config.GetSettings()
-			s.WindowWidth, s.WindowHeight = wailsRuntime.WindowGetSize(ctx)
-			s.WindowX, s.WindowY = wailsRuntime.WindowGetPosition(ctx)
-			_ = a.config.SaveSettings(s)
-		}
-	}
-	return false
+	a.config = cfg
 }
 
 func (a *App) shutdown(ctx context.Context) {
