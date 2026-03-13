@@ -12,6 +12,7 @@
 - [Highlighting Rules](#highlighting-rules)
 - [Rule Profiles](#rule-profiles)
 - [Settings](#settings)
+- [Themes](#themes)
 - [Menu Bar](#menu-bar)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Linux Installation](#linux-installation)
@@ -155,11 +156,36 @@ Open the Settings panel (gear icon or **View → Toggle Settings**) to configure
 | **Show Line Numbers** | Display line numbers in the gutter | Off |
 | **Word Wrap** | Wrap long lines instead of horizontal scrolling | Off |
 | **Restore Tabs** | Reopen previously open files on startup | On |
-| **Theme** | Dark (Catppuccin Mocha) or Light (Catppuccin Latte) | Dark |
+| **Theme** | Color theme (21 built-in themes) | Catppuccin |
+| **Theme Mode** | Dark or Light variant of the selected theme | Dark |
 
 ### Window State
 
 The application window position, size, and maximised state are automatically saved and restored between sessions.
+
+## Themes
+
+ctail includes 21 built-in color themes, each with dark and light variants. Switch themes in **Settings → Theme** and choose dark or light mode with the **Theme Mode** dropdown.
+
+### Built-In Themes
+
+Catppuccin (default), Catppuccin Frappé, Catppuccin Macchiato, Nord, Tokyo Night, Gruvbox, Dracula, One Dark, Solarized, Everforest, Ayu, Kanagawa, Matrix, Rosé Pine, Monokai, Night Owl, Synthwave '84, Cobalt2, GitHub, Palenight, Zenburn.
+
+### Custom Themes
+
+You can create custom themes by adding a JSON file to the themes directory:
+
+| Platform | Path |
+|----------|------|
+| Linux | `~/.config/ctail/themes/` |
+| Windows | `%APPDATA%\ctail\themes\` |
+| macOS | `~/Library/Application Support/ctail/themes/` |
+
+Custom themes appear alongside built-in themes in the theme picker. See the [Custom Themes Guide](custom-themes.md) for the full JSON format, color property reference, and tips on creating or adapting themes.
+
+### Toggle Theme
+
+Use **View → Toggle Theme** from the menu bar to quickly switch between dark and light mode for the current theme.
 
 ## Menu Bar
 
@@ -256,8 +282,10 @@ Configuration is stored in platform-specific directories:
 ```
 ctail/
 ├── settings.json          # Application settings, window state, open tabs, recent files
-└── profiles/
-    └── common-logs.json   # Highlighting rule profiles
+├── profiles/
+│   └── common-logs.json   # Highlighting rule profiles
+└── themes/
+    └── my-theme.json      # Custom color themes (optional)
 ```
 
 ### settings.json

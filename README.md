@@ -28,7 +28,7 @@
 - **Recent files** — Quick access to recently opened files from the File menu
 - **Native menu bar** — File, Edit, View, and Help menus with standard keyboard accelerators
 - **Search** — Ctrl+F to filter lines within the buffer
-- **Themes** — Dark (Catppuccin Mocha) and Light (Catppuccin Latte)
+- **Themes** — 14 built-in color themes (Catppuccin, Nord, Tokyo Night, Gruvbox, Dracula, One Dark, Solarized, Everforest, Ayu, Kanagawa, Matrix, Rosé Pine, Monokai, and more), each with dark and light modes. Supports [custom themes](docs/custom-themes.md) via JSON files.
 - **Cross-platform** — Linux, Windows, and macOS
 
 ## Quick Start
@@ -115,6 +115,46 @@ Go Backend                          Svelte Frontend
 | **View** | Toggle Settings, Toggle Theme |
 | **Help** | About ctail |
 
+## Themes
+
+ctail ships with **21 built-in color themes**, each with dark and light modes:
+
+| Theme | Description |
+|-------|-------------|
+| Catppuccin | Soothing pastel theme (default) |
+| Catppuccin Frappé | Catppuccin mid-tone variant |
+| Catppuccin Macchiato | Catppuccin warm variant |
+| Nord | Arctic, north-bluish palette |
+| Tokyo Night | Inspired by Tokyo city lights |
+| Gruvbox | Retro groove colors |
+| Dracula | Dark theme for vampires |
+| One Dark | Atom editor's signature theme |
+| Solarized | Precision colors by Ethan Schoonover |
+| Everforest | Comfortable green forest palette |
+| Ayu | Simple, bright colors |
+| Kanagawa | Inspired by Katsushika Hokusai's art |
+| Matrix | Hacker-style green on black |
+| Rosé Pine | All natural pine, faux fur, and a bit of soho vibes |
+| Monokai | Classic Sublime Text colors |
+| Night Owl | Optimized for night owls |
+| Synthwave '84 | Retro-futuristic neon |
+| Cobalt2 | Bold blues by Wes Bos |
+| GitHub | GitHub's own color palette |
+| Palenight | Material palenight colors |
+| Zenburn | Low-contrast, warm palette |
+
+Switch themes in **Settings → Theme** and toggle between dark/light with **View → Toggle Theme**.
+
+### Custom Themes
+
+Create your own themes by dropping a JSON file in the themes directory. See the **[Custom Themes Guide](docs/custom-themes.md)** for full documentation, examples, and tips on adapting VS Code themes.
+
+| Platform | Themes directory |
+|----------|-----------------|
+| Linux | `~/.config/ctail/themes/` |
+| Windows | `%APPDATA%\ctail\themes\` |
+| macOS | `~/Library/Application Support/ctail/themes/` |
+
 ## Configuration
 
 Config files are stored in platform-specific directories:
@@ -145,8 +185,6 @@ See the [User Manual](docs/user-manual.md) for details on all settings and confi
 ### Multi-monitor maximize on Wayland (Linux)
 
 On Wayland with multiple monitors of different resolutions, the maximize button may use the wrong monitor's dimensions. This is an [upstream bug in GTK/WebKit2GTK](https://github.com/wailsapp/wails/issues/2431) affecting all Wails v2 apps.
-
-By default, ctail uses the system's native display backend. On Wayland with multiple monitors of different resolutions, the maximize button may use the wrong monitor's dimensions. This is an [upstream bug in GTK/WebKit2GTK](https://github.com/wailsapp/wails/issues/2431) affecting all Wails v2 apps.
 
 **Workaround:** Use the `--x11` flag to force the X11 backend:
 ```bash
