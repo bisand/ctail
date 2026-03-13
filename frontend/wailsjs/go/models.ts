@@ -30,7 +30,6 @@ export namespace config {
 	    windowY: number;
 	    windowWidth: number;
 	    windowHeight: number;
-	    windowMaximised: boolean;
 	    tabs: TabState[];
 	
 	    static createFrom(source: any = {}) {
@@ -52,7 +51,6 @@ export namespace config {
 	        this.windowY = source["windowY"];
 	        this.windowWidth = source["windowWidth"];
 	        this.windowHeight = source["windowHeight"];
-	        this.windowMaximised = source["windowMaximised"];
 	        this.tabs = this.convertValues(source["tabs"], TabState);
 	    }
 	

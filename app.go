@@ -56,20 +56,14 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
-// domReady restores saved window position and maximised state after the
-// webview is ready. Size is already set via Wails options in main().
+// domReady restores saved window position after the webview is ready.
+// Size is already set via Wails options in main().
 // Note: WindowSetPosition is ignored on Wayland by design.
 func (a *App) domReady(ctx context.Context) {
 	if a.config == nil {
 		return
 	}
 	s := a.config.GetSettings()
-
-	if s.WindowMaximised {
-		wailsRuntime.WindowMaximise(ctx)
-		return
-	}
-
 	if s.WindowX >= 0 && s.WindowY >= 0 {
 		wailsRuntime.WindowSetPosition(ctx, s.WindowX, s.WindowY)
 	}
@@ -81,11 +75,8 @@ func (a *App) domReady(ctx context.Context) {
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	if a.config != nil {
 		s := a.config.GetSettings()
-		s.WindowMaximised = wailsRuntime.WindowIsMaximised(ctx)
-		if !s.WindowMaximised {
-			s.WindowWidth, s.WindowHeight = wailsRuntime.WindowGetSize(ctx)
-			s.WindowX, s.WindowY = wailsRuntime.WindowGetPosition(ctx)
-		}
+		s.WindowWidth, s.WindowHeight = wailsRuntime.WindowGetSize(ctx)
+		s.WindowX, s.WindowY = wailsRuntime.WindowGetPosition(ctx)
 		_ = a.config.SaveSettings(s)
 	}
 	return false

@@ -45,7 +45,6 @@ type AppSettings struct {
 	WindowY       int           `json:"windowY"`
 	WindowWidth   int           `json:"windowWidth"`
 	WindowHeight  int           `json:"windowHeight"`
-	WindowMaximised bool        `json:"windowMaximised"`
 	Tabs          []TabState    `json:"tabs"`
 }
 
@@ -66,7 +65,6 @@ func DefaultSettings() AppSettings {
 		WindowY:         -1,
 		WindowWidth:     1200,
 		WindowHeight:    800,
-		WindowMaximised: false,
 		Tabs:            []TabState{},
 	}
 }
