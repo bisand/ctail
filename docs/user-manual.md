@@ -30,7 +30,10 @@ On first launch, ctail creates a default configuration with the "Common Logs" hi
 
 | Flag | Description |
 |------|-------------|
-| `--wayland` | Use the native Wayland backend (Linux only). By default, ctail uses X11 to avoid multi-monitor issues. |
+| `--x11` | Force the X11 backend (Linux only). Fixes multi-monitor maximize issues on Wayland. |
+| `--wayland` | Force the native Wayland backend (Linux only). |
+
+When no flag is given, the system's default display backend is used.
 
 ## Opening Files
 
@@ -266,4 +269,7 @@ Tabs are saved on every open and close operation, so they should survive crashes
 
 ### Window maximizes to wrong size on multi-monitor (Linux)
 
-This is an [upstream GTK/WebKit2GTK bug](https://github.com/wailsapp/wails/issues/2431). ctail defaults to the X11 backend on Linux to avoid this. If you launched with `--wayland` and experience this issue, run without the flag.
+This is an [upstream GTK/WebKit2GTK bug](https://github.com/wailsapp/wails/issues/2431). Use the `--x11` flag to force the X11 backend as a workaround:
+```bash
+ctail --x11
+```

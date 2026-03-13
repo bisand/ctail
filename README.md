@@ -132,9 +132,11 @@ See the [User Manual](docs/user-manual.md) for details on all settings and confi
 
 On Wayland with multiple monitors of different resolutions, the maximize button may use the wrong monitor's dimensions. This is an [upstream bug in GTK/WebKit2GTK](https://github.com/wailsapp/wails/issues/2431) affecting all Wails v2 apps.
 
-By default on Linux, ctail uses the X11 backend to avoid this issue. If you prefer native Wayland, use the `--wayland` flag:
+By default, ctail uses the system's native display backend. On Wayland with multiple monitors of different resolutions, the maximize button may use the wrong monitor's dimensions. This is an [upstream bug in GTK/WebKit2GTK](https://github.com/wailsapp/wails/issues/2431) affecting all Wails v2 apps.
+
+**Workaround:** Use the `--x11` flag to force the X11 backend:
 ```bash
-ctail --wayland
+ctail --x11
 ```
 
 ## License

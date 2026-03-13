@@ -20,11 +20,16 @@ import (
 var assets embed.FS
 
 func main() {
-	useWayland := flag.Bool("wayland", false, "Use native Wayland backend (may have multi-monitor issues)")
+	useX11 := flag.Bool("x11", false, "Force X11 backend (fixes multi-monitor maximize on Wayland)")
+	useWayland := flag.Bool("wayland", false, "Force native Wayland backend")
 	flag.Parse()
 
-	if runtime.GOOS == "linux" && !*useWayland {
-		os.Setenv("GDK_BACKEND", "x11")
+	if runtime.GOOS == "linux" {
+		if *useX11 {
+			os.Setenv("GDK_BACKEND", "x11")
+		} else if *useWayland {
+			os.Setenv("GDK_BACKEND", "wayland")
+		}
 	}
 
 	app := NewApp()
