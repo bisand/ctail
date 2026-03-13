@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=ctail
+Comment=Cross-platform log tail viewer with regex highlighting
+Exec=ctail
+Icon=ctail
+Terminal=false
+Type=Application
+Categories=Development;Utility;
+Keywords=log;tail;viewer;highlighting;
