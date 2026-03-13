@@ -17,6 +17,7 @@ type Manager struct {
 	configDir  string
 	settings   AppSettings
 	profiles   map[string]Profile
+	themes     map[string]Theme
 }
 
 // NewManager creates a config manager using the platform config directory
@@ -30,14 +31,19 @@ func NewManager() (*Manager, error) {
 		configDir: dir,
 		settings:  DefaultSettings(),
 		profiles:  make(map[string]Profile),
+		themes:    make(map[string]Theme),
 	}
 
 	if err := os.MkdirAll(filepath.Join(dir, "profiles"), 0755); err != nil {
 		return nil, fmt.Errorf("create config dirs: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(dir, "themes"), 0755); err != nil {
+		return nil, fmt.Errorf("create themes dir: %w", err)
+	}
 
 	m.loadSettings()
 	m.loadProfiles()
+	m.loadThemes()
 
 	return m, nil
 }
@@ -161,6 +167,17 @@ func (m *Manager) loadSettings() {
 	var s AppSettings
 	if json.Unmarshal(data, &s) == nil {
 		s.PollInterval = time.Duration(s.PollIntervalMs) * time.Millisecond
+		// Migrate old theme setting ("dark"/"light") to new format
+		if s.Theme == "dark" || s.Theme == "light" {
+			s.ThemeMode = s.Theme
+			s.Theme = "catppuccin"
+		}
+		if s.ThemeMode == "" {
+			s.ThemeMode = "dark"
+		}
+		if s.Theme == "" {
+			s.Theme = "catppuccin"
+		}
 		m.settings = s
 	}
 }
@@ -220,4 +237,81 @@ func sanitizeFilename(name string) string {
 		name = "unnamed"
 	}
 	return name
+}
+
+func (m *Manager) loadThemes() {
+	// Load built-in themes first
+	for _, t := range BuiltInThemes() {
+		m.themes[t.Name] = t
+	}
+
+	// Load custom themes from config dir (override built-ins with same name)
+	themeDir := filepath.Join(m.configDir, "themes")
+	entries, err := os.ReadDir(themeDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(themeDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var t Theme
+		if json.Unmarshal(data, &t) == nil && t.Name != "" {
+			t.BuiltIn = false
+			m.themes[t.Name] = t
+		}
+	}
+}
+
+// ListThemes returns all available themes
+func (m *Manager) ListThemes() []Theme {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	themes := make([]Theme, 0, len(m.themes))
+	for _, t := range m.themes {
+		themes = append(themes, t)
+	}
+	return themes
+}
+
+// GetTheme returns a specific theme by name
+func (m *Manager) GetTheme(name string) (Theme, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t, ok := m.themes[name]
+	return t, ok
+}
+
+// SaveTheme saves a custom theme to disk
+func (m *Manager) SaveTheme(t Theme) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t.BuiltIn = false
+	m.themes[t.Name] = t
+	filename := sanitizeFilename(t.Name) + ".json"
+	return m.writeJSON(filepath.Join(m.configDir, "themes", filename), t)
+}
+
+// DeleteTheme removes a custom theme
+func (m *Manager) DeleteTheme(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.themes[name]
+	if !ok {
+		return fmt.Errorf("theme %q not found", name)
+	}
+	if t.BuiltIn {
+		return fmt.Errorf("cannot delete built-in theme %q", name)
+	}
+	delete(m.themes, name)
+	filename := sanitizeFilename(name) + ".json"
+	path := filepath.Join(m.configDir, "themes", filename)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

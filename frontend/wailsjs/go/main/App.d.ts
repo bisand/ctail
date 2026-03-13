@@ -10,6 +10,8 @@ export function ClearRecentFiles():Promise<void>;
 
 export function CloseTab(arg1:string):Promise<void>;
 
+export function DeleteCustomTheme(arg1:string):Promise<void>;
+
 export function DeleteProfile(arg1:string):Promise<void>;
 
 export function GetAppVersion():Promise<string>;
@@ -30,7 +32,11 @@ export function GetTabTotalLines(arg1:string):Promise<number>;
 
 export function GetTabs():Promise<Array<main.TabInfo>>;
 
+export function GetTheme(arg1:string):Promise<config.Theme>;
+
 export function ListProfiles():Promise<Array<string>>;
+
+export function ListThemes():Promise<Array<config.Theme>>;
 
 export function OpenFileDialog(arg1:string):Promise<string>;
 
@@ -41,6 +47,8 @@ export function RefreshRecentMenu():Promise<void>;
 export function RenameProfile(arg1:string,arg2:string):Promise<void>;
 
 export function RevealInFileManager(arg1:string):Promise<void>;
+
+export function SaveCustomTheme(arg1:config.Theme):Promise<void>;
 
 export function SaveProfile(arg1:config.Profile):Promise<void>;
 

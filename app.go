@@ -418,6 +418,42 @@ func (a *App) GetAppVersion() string {
 	return "0.4.1"
 }
 
+// ListThemes returns all available themes (built-in + custom)
+func (a *App) ListThemes() []config.Theme {
+	if a.config == nil {
+		return config.BuiltInThemes()
+	}
+	return a.config.ListThemes()
+}
+
+// GetTheme returns a specific theme by name
+func (a *App) GetTheme(name string) (config.Theme, error) {
+	if a.config == nil {
+		return config.Theme{}, fmt.Errorf("config not initialized")
+	}
+	t, ok := a.config.GetTheme(name)
+	if !ok {
+		return config.Theme{}, fmt.Errorf("theme %q not found", name)
+	}
+	return t, nil
+}
+
+// SaveCustomTheme saves a user-defined theme
+func (a *App) SaveCustomTheme(t config.Theme) error {
+	if a.config == nil {
+		return fmt.Errorf("config not initialized")
+	}
+	return a.config.SaveTheme(t)
+}
+
+// DeleteCustomTheme removes a user-defined theme
+func (a *App) DeleteCustomTheme(name string) error {
+	if a.config == nil {
+		return fmt.Errorf("config not initialized")
+	}
+	return a.config.DeleteTheme(name)
+}
+
 // RefreshRecentMenu rebuilds the "Open Recent" submenu with current recent files
 func (a *App) RefreshRecentMenu() {
 	if a.recentMenu == nil {

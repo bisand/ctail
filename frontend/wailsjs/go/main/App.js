@@ -14,6 +14,10 @@ export function CloseTab(arg1) {
   return window['go']['main']['App']['CloseTab'](arg1);
 }
 
+export function DeleteCustomTheme(arg1) {
+  return window['go']['main']['App']['DeleteCustomTheme'](arg1);
+}
+
 export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
@@ -54,8 +58,16 @@ export function GetTabs() {
   return window['go']['main']['App']['GetTabs']();
 }
 
+export function GetTheme(arg1) {
+  return window['go']['main']['App']['GetTheme'](arg1);
+}
+
 export function ListProfiles() {
   return window['go']['main']['App']['ListProfiles']();
+}
+
+export function ListThemes() {
+  return window['go']['main']['App']['ListThemes']();
 }
 
 export function OpenFileDialog(arg1) {
@@ -76,6 +88,10 @@ export function RenameProfile(arg1, arg2) {
 
 export function RevealInFileManager(arg1) {
   return window['go']['main']['App']['RevealInFileManager'](arg1);
+}
+
+export function SaveCustomTheme(arg1) {
+  return window['go']['main']['App']['SaveCustomTheme'](arg1);
 }
 
 export function SaveProfile(arg1) {

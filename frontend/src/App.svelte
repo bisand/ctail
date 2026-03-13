@@ -8,8 +8,9 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, SaveSettings, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, SaveSettings, ListProfiles, GetProfile, ListThemes } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
+  import { loadAndApplyTheme } from './lib/utils/themes.js';
 
   let scrollBuffer = 500;
 
@@ -69,7 +70,9 @@
         settings.set(s);
         scrollBuffer = s.scrollBuffer || 500;
         if (s.theme) {
-          document.documentElement.setAttribute('data-theme', s.theme);
+          const themeName = s.theme || 'catppuccin';
+          const themeMode = s.themeMode || 'dark';
+          await loadAndApplyTheme(themeName, themeMode);
         }
       }
     } catch (e) {
@@ -143,10 +146,10 @@
 
     EventsOn('menu:toggle-theme', async () => {
       const currentSettings = $settings;
-      const newTheme = currentSettings.theme === 'dark' ? 'light' : 'dark';
-      const updated = { ...currentSettings, theme: newTheme };
+      const newMode = currentSettings.themeMode === 'dark' ? 'light' : 'dark';
+      const updated = { ...currentSettings, themeMode: newMode };
       settings.set(updated);
-      document.documentElement.setAttribute('data-theme', newTheme);
+      await loadAndApplyTheme(updated.theme || 'catppuccin', newMode);
       try {
         await SaveSettings(updated);
       } catch (e) {

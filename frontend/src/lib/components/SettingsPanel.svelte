@@ -1,13 +1,29 @@
 <script>
   import { settings } from '../stores/settings.js';
   import { profiles, profileNames } from '../stores/rules.js';
-  import { SaveSettings, SaveProfile, DeleteProfile, GetProfile } from '../../../wailsjs/go/main/App.js';
+  import { SaveSettings, SaveProfile, DeleteProfile, GetProfile, ListThemes } from '../../../wailsjs/go/main/App.js';
+  import { loadAndApplyTheme } from '../utils/themes.js';
+  import { onMount } from 'svelte';
 
   let activeSection = 'settings';
   let editingRule = null;
   let editingProfileName = '';
   let newProfileName = '';
   let showNewProfile = false;
+  let availableThemes = [];
+
+  onMount(async () => {
+    try {
+      availableThemes = await ListThemes();
+      // Sort: built-in first, then alphabetical
+      availableThemes.sort((a, b) => {
+        if (a.builtIn !== b.builtIn) return b.builtIn ? 1 : -1;
+        return (a.displayName || a.name).localeCompare(b.displayName || b.name);
+      });
+    } catch (e) {
+      console.error('Failed to load themes:', e);
+    }
+  });
 
   // Rule editor state
   let ruleName = '';
@@ -247,10 +263,26 @@
       </label>
       <label>
         <span>Theme</span>
-        <select value={$settings.theme}
-          on:change={e => {
-            updateSetting('theme', e.target.value);
-            document.documentElement.setAttribute('data-theme', e.target.value);
+        <select value={$settings.theme || 'catppuccin'}
+          on:change={async (e) => {
+            const themeName = e.target.value;
+            const mode = $settings.themeMode || 'dark';
+            updateSetting('theme', themeName);
+            await loadAndApplyTheme(themeName, mode);
+          }}>
+          {#each availableThemes as theme}
+            <option value={theme.name}>{theme.displayName || theme.name}{theme.builtIn ? '' : ' ✦'}</option>
+          {/each}
+        </select>
+      </label>
+      <label>
+        <span>Mode</span>
+        <select value={$settings.themeMode || 'dark'}
+          on:change={async (e) => {
+            const mode = e.target.value;
+            const themeName = $settings.theme || 'catppuccin';
+            updateSetting('themeMode', mode);
+            await loadAndApplyTheme(themeName, mode);
           }}>
           <option value="dark">Dark</option>
           <option value="light">Light</option>
