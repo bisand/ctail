@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.bisand.ctail</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>ctail</name>
+  <summary>Cross-platform log tail viewer with regex highlighting</summary>
+  <description>
+    <p>
+      ctail (color tail) is a desktop log file viewer that lets you tail files in real-time
+      with customizable regex-based highlighting. It supports multiple tabs, drag-and-drop
+      reordering, and over 20 built-in color themes.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Real-time log file tailing with auto-scroll</li>
+      <li>Regex-based highlighting with line and match modes</li>
+      <li>21 built-in themes (dark and light variants)</li>
+      <li>Custom theme support via JSON files</li>
+      <li>Multiple tabs with drag-and-drop reordering</li>
+      <li>Search and filter within log output</li>
+      <li>Configurable rule profiles</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">ctail.desktop</launchable>
+  <url type="homepage">https://github.com/bisand/ctail</url>
+  <url type="bugtracker">https://github.com/bisand/ctail/issues</url>
+  <developer id="io.github.bisand">
+    <name>André Biseth</name>
+  </developer>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Dark theme - tailing a log file</caption>
+      <image type="source">https://raw.githubusercontent.com/bisand/ctail/main/docs/screenshots/dark-theme.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Light theme</caption>
+      <image type="source">https://raw.githubusercontent.com/bisand/ctail/main/docs/screenshots/light-theme.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Rules panel - regex highlighting configuration</caption>
+      <image type="source">https://raw.githubusercontent.com/bisand/ctail/main/docs/screenshots/rules-panel.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Settings panel - themes and preferences</caption>
+      <image type="source">https://raw.githubusercontent.com/bisand/ctail/main/docs/screenshots/settings-panel.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1" />
+  <categories>
+    <category>Development</category>
+    <category>Utility</category>
+  </categories>
+</component>

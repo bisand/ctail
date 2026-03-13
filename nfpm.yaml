@@ -47,6 +47,21 @@ contents:
   - src: build/linux/ctail-16.png
     dst: /usr/share/icons/hicolor/16x16/apps/ctail.png
 
+  - src: build/linux/io.github.bisand.ctail.metainfo.xml
+    dst: /usr/share/metainfo/io.github.bisand.ctail.metainfo.xml
+
+  - src: docs/screenshots/dark-theme.png
+    dst: /usr/share/doc/ctail/screenshots/dark-theme.png
+
+  - src: docs/screenshots/light-theme.png
+    dst: /usr/share/doc/ctail/screenshots/light-theme.png
+
+  - src: docs/screenshots/rules-panel.png
+    dst: /usr/share/doc/ctail/screenshots/rules-panel.png
+
+  - src: docs/screenshots/settings-panel.png
+    dst: /usr/share/doc/ctail/screenshots/settings-panel.png
+
 scripts:
   postinstall: build/linux/postinstall.sh
   postremove: build/linux/postremove.sh
