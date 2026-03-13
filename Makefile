@@ -23,12 +23,28 @@ test:
 
 install:
 	install -Dm755 build/bin/ctail $(DESTDIR)$(PREFIX)/bin/ctail
-	install -Dm644 build/appicon.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/1024x1024/apps/ctail.png
 	install -Dm644 build/linux/ctail.desktop $(DESTDIR)$(PREFIX)/share/applications/ctail.desktop
 	install -Dm644 build/linux/ctail-x11.desktop $(DESTDIR)$(PREFIX)/share/applications/ctail-x11.desktop
+	install -Dm644 build/appicon.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/1024x1024/apps/ctail.png
+	install -Dm644 build/linux/ctail-512.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/512x512/apps/ctail.png
+	install -Dm644 build/linux/ctail-256.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/256x256/apps/ctail.png
+	install -Dm644 build/linux/ctail-128.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/128x128/apps/ctail.png
+	install -Dm644 build/linux/ctail-64.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/64x64/apps/ctail.png
+	install -Dm644 build/linux/ctail-48.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/48x48/apps/ctail.png
+	install -Dm644 build/linux/ctail-32.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/32x32/apps/ctail.png
+	install -Dm644 build/linux/ctail-16.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/16x16/apps/ctail.png
+	-gtk-update-icon-cache -f -t $(DESTDIR)$(PREFIX)/share/icons/hicolor 2>/dev/null || true
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/ctail
-	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/1024x1024/apps/ctail.png
 	rm -f $(DESTDIR)$(PREFIX)/share/applications/ctail.desktop
 	rm -f $(DESTDIR)$(PREFIX)/share/applications/ctail-x11.desktop
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/1024x1024/apps/ctail.png
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/512x512/apps/ctail.png
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/256x256/apps/ctail.png
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/128x128/apps/ctail.png
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/64x64/apps/ctail.png
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/48x48/apps/ctail.png
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/32x32/apps/ctail.png
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/16x16/apps/ctail.png
+	-gtk-update-icon-cache -f -t $(DESTDIR)$(PREFIX)/share/icons/hicolor 2>/dev/null || true
