@@ -415,7 +415,7 @@ func (a *App) ClearRecentFiles() {
 
 // GetAppVersion returns the application version string
 func (a *App) GetAppVersion() string {
-	return "0.4.0"
+	return "0.4.1"
 }
 
 // RefreshRecentMenu rebuilds the "Open Recent" submenu with current recent files
