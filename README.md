@@ -100,6 +100,17 @@ See the [User Manual](docs/user-manual.md) for details on all settings and confi
 | Ctrl+F | Search / filter |
 | Escape | Close search |
 
+## Known Issues
+
+### Multi-monitor maximize on Wayland (Linux)
+
+On Wayland with multiple monitors of different resolutions, the maximize button may use the wrong monitor's dimensions. This is an [upstream bug in GTK/WebKit2GTK](https://github.com/wailsapp/wails/issues/2431) affecting all Wails v2 apps.
+
+**Workaround:** Force X11 backend:
+```bash
+GDK_BACKEND=x11 ./ctail
+```
+
 ## License
 
 MIT
