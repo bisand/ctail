@@ -35,6 +35,9 @@ type App struct {
 	nextID          int
 	recentMenu      *menu.Menu
 	buildNumber     string
+	cachedWinState  config.WindowState
+	winStateMu      sync.Mutex
+	stopWinTracker  chan struct{}
 }
 
 // NewApp creates a new App
@@ -47,6 +50,7 @@ func NewApp(buildNum string) *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.stopWinTracker = make(chan struct{})
 	if a.preloadedConfig != nil {
 		a.config = a.preloadedConfig
 		a.preloadedConfig = nil
@@ -59,10 +63,23 @@ func (a *App) startup(ctx context.Context) {
 		a.config = cfg
 	}
 	a.RefreshRecentMenu()
+
+	// Initialize cached window state from config
+	a.winStateMu.Lock()
+	a.cachedWinState = a.config.GetSettings().Window
+	a.winStateMu.Unlock()
+
+	// Start background goroutine to track window state
+	go a.trackWindowState()
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	// Save window state before closing
+	// Stop the window state tracker
+	if a.stopWinTracker != nil {
+		close(a.stopWinTracker)
+	}
+
+	// Save cached window state
 	a.saveWindowState()
 
 	// Stop tailers with a timeout to avoid hanging on stale remote mounts
@@ -91,23 +108,50 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) saveWindowState() {
-	if a.ctx == nil || a.config == nil {
+	if a.config == nil {
 		return
 	}
-	isMax := wailsRuntime.WindowIsMaximised(a.ctx)
-	settings := a.config.GetSettings()
+	a.winStateMu.Lock()
+	ws := a.cachedWinState
+	a.winStateMu.Unlock()
 
-	if !isMax {
-		// Only save position/size when not maximised
-		w, h := wailsRuntime.WindowGetSize(a.ctx)
-		x, y := wailsRuntime.WindowGetPosition(a.ctx)
-		settings.Window.X = x
-		settings.Window.Y = y
-		settings.Window.Width = w
-		settings.Window.Height = h
+	// Only save if we have valid cached state
+	if ws.Width > 0 && ws.Height > 0 {
+		settings := a.config.GetSettings()
+		settings.Window = ws
+		a.config.SaveSettings(settings)
 	}
-	settings.Window.Maximised = isMax
-	a.config.SaveSettings(settings)
+}
+
+// trackWindowState periodically polls window geometry and caches it.
+// This ensures we have valid state even when the window is destroyed during shutdown.
+func (a *App) trackWindowState() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if a.ctx == nil {
+				continue
+			}
+			isMax := wailsRuntime.WindowIsMaximised(a.ctx)
+			a.winStateMu.Lock()
+			if !isMax {
+				w, h := wailsRuntime.WindowGetSize(a.ctx)
+				x, y := wailsRuntime.WindowGetPosition(a.ctx)
+				if w > 0 && h > 0 {
+					a.cachedWinState.X = x
+					a.cachedWinState.Y = y
+					a.cachedWinState.Width = w
+					a.cachedWinState.Height = h
+				}
+			}
+			a.cachedWinState.Maximised = isMax
+			a.winStateMu.Unlock()
+		case <-a.stopWinTracker:
+			return
+		}
+	}
 }
 
 // restoreWindowState applies saved window geometry after the DOM is ready
