@@ -1,0 +1,41 @@
+2026-03-13 08:00:01.234 [INFO]  Server starting on :8443
+2026-03-13 08:00:01.237 [INFO]  TLS certificate loaded from /etc/ssl/certs/server.pem
+2026-03-13 08:00:01.240 [INFO]  Database pool established — 10 connections ready
+2026-03-13 08:00:01.245 [INFO]  Route registered: GET /api/v1/users
+2026-03-13 08:00:01.245 [INFO]  Route registered: POST /api/v1/users
+2026-03-13 08:00:01.246 [INFO]  Route registered: GET /api/v1/orders
+2026-03-13 08:00:01.246 [INFO]  Route registered: GET /api/v1/health
+2026-03-13 08:00:01.250 [INFO]  Server ready, accepting connections
+2026-03-13 08:00:05.112 [INFO]  192.168.1.42 GET /api/v1/health 200 1ms
+2026-03-13 08:00:12.887 [INFO]  192.168.1.55 GET /api/v1/users 200 23ms
+2026-03-13 08:00:13.004 [DEBUG] Query executed: SELECT * FROM users WHERE active=true (18ms)
+2026-03-13 08:00:15.331 [INFO]  192.168.1.42 POST /api/v1/users 201 45ms
+2026-03-13 08:00:15.340 [DEBUG] Insert: users (id=4871, name="Clara Nilsen")
+2026-03-13 08:00:18.772 [INFO]  192.168.1.80 GET /api/v1/orders 200 31ms
+2026-03-13 08:00:22.105 [WARN]  Slow query detected: SELECT * FROM orders JOIN items ... (512ms)
+2026-03-13 08:00:25.993 [INFO]  192.168.1.55 GET /api/v1/users?page=2 200 19ms
+2026-03-13 08:00:30.441 [INFO]  192.168.1.42 GET /api/v1/health 200 1ms
+2026-03-13 08:00:35.887 [ERROR] 192.168.1.99 GET /api/v1/users/9999 404 2ms — user not found
+2026-03-13 08:00:40.112 [INFO]  192.168.1.80 GET /api/v1/orders?status=pending 200 28ms
+2026-03-13 08:00:42.667 [WARN]  Rate limit approaching for 192.168.1.55 (148/150 req/min)
+2026-03-13 08:00:44.201 [INFO]  192.168.1.55 GET /api/v1/users?page=3 200 17ms
+2026-03-13 08:00:44.890 [ERROR] 192.168.1.55 GET /api/v1/users?page=4 429 0ms — rate limited
+2026-03-13 08:00:45.003 [WARN]  Rate limit exceeded for 192.168.1.55 — 60s cooldown
+2026-03-13 08:00:50.334 [INFO]  192.168.1.42 GET /api/v1/health 200 1ms
+2026-03-13 08:00:55.119 [INFO]  TLS session resumed for 192.168.1.80
+2026-03-13 08:01:02.445 [INFO]  192.168.1.80 POST /api/v1/orders 201 67ms
+2026-03-13 08:01:02.500 [DEBUG] Insert: orders (id=20487, customer_id=312, total=1249.00)
+2026-03-13 08:01:10.778 [INFO]  192.168.1.42 GET /api/v1/health 200 1ms
+2026-03-13 08:01:15.220 [ERROR] Database connection #7 lost — reconnecting
+2026-03-13 08:01:15.335 [WARN]  Connection pool reduced to 9/10
+2026-03-13 08:01:16.012 [INFO]  Database connection #7 re-established
+2026-03-13 08:01:16.015 [INFO]  Connection pool restored to 10/10
+2026-03-13 08:01:20.550 [INFO]  192.168.1.99 GET /api/v1/users/42 200 5ms
+2026-03-13 08:01:25.887 [INFO]  Scheduled task: cleanup expired sessions (removed 23)
+2026-03-13 08:01:30.112 [INFO]  192.168.1.42 GET /api/v1/health 200 1ms
+2026-03-13 08:01:35.778 [WARN]  Certificate expires in 14 days — consider renewal
+2026-03-13 08:01:40.445 [INFO]  192.168.1.80 GET /api/v1/orders/20487 200 8ms
+2026-03-13 08:01:45.990 [ERROR] 10.0.0.5 POST /api/v1/users 400 3ms — validation failed: email format invalid
+2026-03-13 08:01:50.112 [INFO]  192.168.1.42 GET /api/v1/health 200 1ms
+2026-03-13 08:01:55.667 [INFO]  192.168.1.55 GET /api/v1/users 200 21ms
+2026-03-13 08:02:00.334 [INFO]  Metrics flush: 847 requests, avg latency 18ms, p99 512ms

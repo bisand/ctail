@@ -4,6 +4,16 @@ A desktop log file viewer built with [Wails v2](https://wails.io/) (Go backend +
 
 📖 **[User Manual](docs/user-manual.md)** — Full documentation on features, settings, and usage.
 
+## Screenshots
+
+| Dark Theme | Light Theme |
+|:---:|:---:|
+| ![Dark theme](docs/screenshots/dark-theme.png) | ![Light theme](docs/screenshots/light-theme.png) |
+
+| Settings Panel | Rules Editor |
+|:---:|:---:|
+| ![Settings panel](docs/screenshots/settings-panel.png) | ![Rules editor](docs/screenshots/rules-panel.png) |
+
 ## Features
 
 - **Multi-tab interface** — Open multiple log files simultaneously with keyboard navigation (Ctrl+Tab)

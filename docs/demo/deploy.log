@@ -1,0 +1,65 @@
+────────────────────────────────────────────────────
+ Deploy pipeline — project: storefront v2.14.0
+ Triggered by: merge to main (commit a3f8c01)
+────────────────────────────────────────────────────
+
+[2026-03-13 09:15:00] STAGE 1/5: Pre-flight checks
+[2026-03-13 09:15:01] ✓ Branch protection rules satisfied
+[2026-03-13 09:15:01] ✓ Required reviews: 1/2 approved
+[2026-03-13 09:15:01] ✓ Required reviews: 2/2 approved
+[2026-03-13 09:15:02] ✓ CI status: all 247 tests passed
+[2026-03-13 09:15:02] ✓ No security advisories on dependencies
+[2026-03-13 09:15:03] ✓ Docker image storefront:2.14.0-rc1 exists
+
+[2026-03-13 09:15:05] STAGE 2/5: Building production image
+[2026-03-13 09:15:05] Pulling base image node:20-alpine...
+[2026-03-13 09:15:12] Layer 1/6: Installing OS dependencies... done (3.1s)
+[2026-03-13 09:15:18] Layer 2/6: Copying package.json... done (0.2s)
+[2026-03-13 09:15:25] Layer 3/6: npm ci --production... done (6.8s)
+[2026-03-13 09:15:30] Layer 4/6: Copying source... done (0.4s)
+[2026-03-13 09:15:38] Layer 5/6: Building Next.js bundle... done (7.9s)
+[2026-03-13 09:15:40] Layer 6/6: Setting entrypoint... done (0.1s)
+[2026-03-13 09:15:41] Image built: storefront:2.14.0 (182MB)
+[2026-03-13 09:15:45] Pushed to registry: ghcr.io/acme/storefront:2.14.0
+
+[2026-03-13 09:16:00] STAGE 3/5: Database migrations
+[2026-03-13 09:16:01] Connecting to postgres://db-prod.internal:5432/storefront
+[2026-03-13 09:16:02] Migration 047_add_order_notes.sql... applied (120ms)
+[2026-03-13 09:16:02] Migration 048_index_customer_email.sql... applied (890ms)
+[2026-03-13 09:16:03] WARNING: Migration 048 locked table 'customers' for 890ms
+[2026-03-13 09:16:03] All migrations applied successfully (2 pending → 0 pending)
+
+[2026-03-13 09:16:10] STAGE 4/5: Rolling deployment
+[2026-03-13 09:16:10] Cluster: prod-eu-west (3 nodes)
+[2026-03-13 09:16:11] Node prod-1: pulling storefront:2.14.0...
+[2026-03-13 09:16:18] Node prod-1: container started, health check pending...
+[2026-03-13 09:16:22] Node prod-1: ✓ healthy (GET /health → 200 in 12ms)
+[2026-03-13 09:16:23] Node prod-1: draining old container (28 active connections)
+[2026-03-13 09:16:28] Node prod-1: old container stopped gracefully
+[2026-03-13 09:16:30] Node prod-2: pulling storefront:2.14.0...
+[2026-03-13 09:16:36] Node prod-2: container started, health check pending...
+[2026-03-13 09:16:40] Node prod-2: ✓ healthy (GET /health → 200 in 9ms)
+[2026-03-13 09:16:41] Node prod-2: draining old container (31 active connections)
+[2026-03-13 09:16:46] Node prod-2: old container stopped gracefully
+[2026-03-13 09:16:48] Node prod-3: pulling storefront:2.14.0...
+[2026-03-13 09:16:54] Node prod-3: container started, health check pending...
+[2026-03-13 09:16:58] Node prod-3: ✓ healthy (GET /health → 200 in 11ms)
+[2026-03-13 09:16:59] Node prod-3: draining old container (25 active connections)
+[2026-03-13 09:17:04] Node prod-3: old container stopped gracefully
+
+[2026-03-13 09:17:10] STAGE 5/5: Post-deploy verification
+[2026-03-13 09:17:11] Running smoke tests against https://store.acme.io
+[2026-03-13 09:17:12] ✓ Homepage loads (238ms)
+[2026-03-13 09:17:13] ✓ Product listing API responds (45ms)
+[2026-03-13 09:17:14] ✓ Cart operations functional (112ms)
+[2026-03-13 09:17:15] ✓ Checkout flow completes (340ms)
+[2026-03-13 09:17:16] ✓ Static assets served with cache headers
+[2026-03-13 09:17:17] ERROR: Lighthouse performance score 68 (threshold: 75)
+[2026-03-13 09:17:17] WARNING: Performance regression detected — investigate before next deploy
+[2026-03-13 09:17:18] ✓ Error rate: 0.02% (threshold: 1%)
+[2026-03-13 09:17:19] ✓ p95 latency: 210ms (threshold: 500ms)
+
+────────────────────────────────────────────────────
+ Deploy complete: storefront v2.14.0 → prod-eu-west
+ Duration: 2m19s | Status: SUCCESS (with warnings)
+────────────────────────────────────────────────────

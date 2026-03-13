@@ -1,0 +1,41 @@
+Mar 13 07:30:01 gateway systemd[1]: Starting Daily apt download activities...
+Mar 13 07:30:02 gateway systemd[1]: Started Daily apt download activities.
+Mar 13 07:30:05 gateway kernel: [482910.221] usb 3-2: new SuperSpeed USB device number 4 using xhci_hcd
+Mar 13 07:30:05 gateway kernel: [482910.245] usb 3-2: New USB device found, idVendor=0781, idProduct=5583
+Mar 13 07:30:05 gateway kernel: [482910.245] usb 3-2: Product: Ultra Fit
+Mar 13 07:30:06 gateway kernel: [482910.301] sd 6:0:0:0: [sdb] 120127488 512-byte sectors (61.5 GB)
+Mar 13 07:30:06 gateway udisksd[892]: Mounted /dev/sdb1 at /media/backup
+Mar 13 07:30:10 gateway CRON[18244]: (root) CMD (/usr/local/bin/health-check.sh)
+Mar 13 07:30:10 gateway health-check[18245]: Checking 5 services...
+Mar 13 07:30:11 gateway health-check[18245]: ✓ nginx: active (pid 1203, uptime 14d)
+Mar 13 07:30:11 gateway health-check[18245]: ✓ postgres: active (pid 1287, uptime 14d)
+Mar 13 07:30:11 gateway health-check[18245]: ✓ redis: active (pid 1315, uptime 14d)
+Mar 13 07:30:12 gateway health-check[18245]: ✗ elasticsearch: inactive (failed)
+Mar 13 07:30:12 gateway health-check[18245]: WARNING: elasticsearch has been down since 07:15:03
+Mar 13 07:30:12 gateway health-check[18245]: Attempting restart of elasticsearch...
+Mar 13 07:30:14 gateway systemd[1]: Starting Elasticsearch...
+Mar 13 07:30:18 gateway elasticsearch[18301]: [2026-03-13T07:30:18,445] heap size [4g], compressed oops [true]
+Mar 13 07:30:25 gateway elasticsearch[18301]: [2026-03-13T07:30:25,112] loaded module [analysis-common]
+Mar 13 07:30:26 gateway elasticsearch[18301]: [2026-03-13T07:30:26,008] loaded module [transport-netty4]
+Mar 13 07:30:30 gateway systemd[1]: Started Elasticsearch.
+Mar 13 07:30:31 gateway health-check[18245]: ✓ elasticsearch restarted successfully
+Mar 13 07:30:31 gateway health-check[18245]: ✓ certbot: certificate valid (expires 2026-04-22)
+Mar 13 07:30:31 gateway health-check[18245]: Health check complete: 5/5 services running
+Mar 13 07:31:00 gateway sshd[18400]: Accepted publickey for deploy from 10.0.1.50 port 52441
+Mar 13 07:31:00 gateway sshd[18400]: pam_unix(sshd:session): session opened for user deploy
+Mar 13 07:31:15 gateway nginx[1203]: 203.0.113.45 "GET /api/search?q=widgets" 200 4521 "Mozilla/5.0"
+Mar 13 07:31:16 gateway nginx[1203]: 203.0.113.45 "GET /static/app.js" 304 0 "Mozilla/5.0"
+Mar 13 07:31:22 gateway sshd[18455]: Failed password for invalid user admin from 198.51.100.23 port 38912
+Mar 13 07:31:23 gateway sshd[18455]: Failed password for invalid user admin from 198.51.100.23 port 38912
+Mar 13 07:31:24 gateway sshd[18455]: Failed password for invalid user admin from 198.51.100.23 port 38912
+Mar 13 07:31:25 gateway fail2ban[1102]: WARNING [sshd] Ban 198.51.100.23 (3 failures in 5s)
+Mar 13 07:31:25 gateway iptables: DROP INPUT from 198.51.100.23 to 10.0.1.1:22
+Mar 13 07:31:30 gateway postfix/smtpd[18470]: connect from mail.example.com[93.184.216.34]
+Mar 13 07:31:31 gateway postfix/smtpd[18470]: NOQUEUE: reject: RCPT from mail.example.com: 550 User unknown
+Mar 13 07:31:31 gateway postfix/smtpd[18470]: disconnect from mail.example.com
+Mar 13 07:32:00 gateway CRON[18501]: (www-data) CMD (/var/www/app/artisan schedule:run)
+Mar 13 07:32:01 gateway kernel: [483030.115] EXT4-fs (sda2): re-mounted. Quota mode: none.
+Mar 13 07:32:05 gateway smartd[901]: Device: /dev/sda, SMART Health Status: PASSED
+Mar 13 07:32:05 gateway smartd[901]: Device: /dev/sda, Temperature: 38°C (limit: 70°C)
+Mar 13 07:32:10 gateway nginx[1203]: 198.51.100.80 "POST /api/webhook" 200 12 "GitHub-Hookshot/abc123"
+Mar 13 07:32:15 gateway rsyslogd[780]: imjournal: 1247 messages lost due to rate-limiting
