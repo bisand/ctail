@@ -27,12 +27,13 @@ type TabInfo struct {
 
 // App is the main application struct bound to Wails
 type App struct {
-	ctx        context.Context
-	config     *config.Manager
-	mu         sync.RWMutex
-	tabs       map[string]*TabInfo
-	nextID     int
-	recentMenu *menu.Menu
+	ctx             context.Context
+	config          *config.Manager
+	preloadedConfig *config.Manager
+	mu              sync.RWMutex
+	tabs            map[string]*TabInfo
+	nextID          int
+	recentMenu      *menu.Menu
 }
 
 // NewApp creates a new App
@@ -44,12 +45,17 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	cfg, err := config.NewManager()
-	if err != nil {
-		fmt.Println("Warning: could not initialize config:", err)
-		return
+	if a.preloadedConfig != nil {
+		a.config = a.preloadedConfig
+		a.preloadedConfig = nil
+	} else {
+		cfg, err := config.NewManager()
+		if err != nil {
+			fmt.Println("Warning: could not initialize config:", err)
+			return
+		}
+		a.config = cfg
 	}
-	a.config = cfg
 	a.RefreshRecentMenu()
 }
 

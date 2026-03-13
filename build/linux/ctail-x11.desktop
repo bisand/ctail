@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=ctail (X11)
-Comment=ctail with X11 backend (fixes multi-monitor maximize on Wayland)
-Exec=ctail --x11
-Icon=ctail
-Terminal=false
-Type=Application
-Categories=Development;Utility;
-Keywords=log;tail;viewer;highlighting;x11;

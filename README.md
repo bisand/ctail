@@ -16,13 +16,17 @@
 
 ## Features
 
-- **Multi-tab interface** — Open multiple log files simultaneously with keyboard navigation (Ctrl+Tab)
+- **Multi-tab interface** — Open multiple log files simultaneously with keyboard navigation (Ctrl+Tab / Ctrl+Shift+Tab)
+- **Tab drag-and-drop** — Reorder tabs by dragging them to new positions
+- **Tab toggle** — Quick Ctrl+Tab toggles between the two most recent tabs
 - **Real-time tailing** — Follow mode streams new lines as they're written, with automatic enable/disable on scroll
 - **Regex-based highlighting** — Rules with foreground/background colors, bold/italic, line-level or match-level matching
 - **Sliding window buffer** — Memory-bounded scrolling through large files; only a configurable window of lines (default 500) is kept in memory
 - **Profile system** — Multiple highlighting profiles with visual rule preview and drag-and-drop reordering
 - **Non-blocking I/O** — Files on slow or unreachable network mounts won't freeze the UI; all file operations run in the background with timeouts
 - **Session persistence** — Window position/size, open tabs, active profile, and all settings survive restarts
+- **Recent files** — Quick access to recently opened files from the File menu
+- **Native menu bar** — File, Edit, View, and Help menus with standard keyboard accelerators
 - **Search** — Ctrl+F to filter lines within the buffer
 - **Themes** — Dark (Catppuccin Mocha) and Light (Catppuccin Latte)
 - **Cross-platform** — Linux, Windows, and macOS
@@ -55,6 +59,17 @@ make test
 
 > **Note:** On Ubuntu 24.04+ / Zorin OS 18, the `webkit2_41` build tag is required (handled automatically by the Makefile). Override with `make dev TAGS=` on systems with webkit2gtk-4.0.
 
+### Install (Linux)
+
+After building, install system-wide with desktop integration:
+
+```bash
+make build
+sudo make install
+```
+
+This installs the binary to `/usr/local/bin/`, a `.desktop` file for application launchers, and icons at all standard sizes. Uninstall with `sudo make uninstall`.
+
 ## Architecture
 
 ```
@@ -77,6 +92,15 @@ Go Backend                          Svelte Frontend
 - **Communication** via Wails bindings (sync method calls) and events (async streaming)
 - **No external Go dependencies** beyond Wails itself
 
+## Menu Bar
+
+| Menu | Items |
+|------|-------|
+| **File** | Open (Ctrl+O), Open Recent ▸, Close Tab (Ctrl+W), Quit |
+| **Edit** | Copy (Ctrl+C), Select All (Ctrl+A), Find (Ctrl+F) |
+| **View** | Toggle Settings, Toggle Theme |
+| **Help** | About ctail |
+
 ## Configuration
 
 Config files are stored in platform-specific directories:
@@ -95,8 +119,10 @@ See the [User Manual](docs/user-manual.md) for details on all settings and confi
 |----------|--------|
 | Ctrl+O | Open file |
 | Ctrl+W | Close tab |
-| Ctrl+Tab | Next tab |
+| Ctrl+Tab | Next tab / toggle between last two tabs |
 | Ctrl+Shift+Tab | Previous tab |
+| Ctrl+C | Copy |
+| Ctrl+A | Select all |
 | Ctrl+F | Search / filter |
 | Escape | Close search |
 
@@ -106,9 +132,9 @@ See the [User Manual](docs/user-manual.md) for details on all settings and confi
 
 On Wayland with multiple monitors of different resolutions, the maximize button may use the wrong monitor's dimensions. This is an [upstream bug in GTK/WebKit2GTK](https://github.com/wailsapp/wails/issues/2431) affecting all Wails v2 apps.
 
-**Workaround:** Use the `--x11` flag to force the X11 backend:
+By default on Linux, ctail uses the X11 backend to avoid this issue. If you prefer native Wayland, use the `--wayland` flag:
 ```bash
-./ctail --x11
+ctail --wayland
 ```
 
 ## License

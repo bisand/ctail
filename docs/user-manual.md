@@ -6,12 +6,15 @@
 
 - [Getting Started](#getting-started)
 - [Opening Files](#opening-files)
+- [Recent Files](#recent-files)
 - [Tabs](#tabs)
 - [Following & Scrolling](#following--scrolling)
 - [Highlighting Rules](#highlighting-rules)
 - [Rule Profiles](#rule-profiles)
 - [Settings](#settings)
+- [Menu Bar](#menu-bar)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Linux Installation](#linux-installation)
 - [Configuration Files](#configuration-files)
 - [Troubleshooting](#troubleshooting)
 
@@ -23,19 +26,36 @@ ctail is a cross-platform desktop log viewer. Launch the application and open an
 
 On first launch, ctail creates a default configuration with the "Common Logs" highlighting profile and sensible defaults. If you had files open previously, they are automatically restored.
 
+### Command-Line Flags
+
+| Flag | Description |
+|------|-------------|
+| `--wayland` | Use the native Wayland backend (Linux only). By default, ctail uses X11 to avoid multi-monitor issues. |
+
 ## Opening Files
 
-- Press **Ctrl+O** or use the file menu to open the native file dialog.
+- Press **Ctrl+O** or use **File → Open** from the menu bar to open the native file dialog.
+- The file dialog opens at the directory of the currently active tab (if one is open).
 - Select any text file — it opens in a new tab and immediately starts tailing.
-- Files on network mounts (NFS, CIFS, SSHFS) are supported. If the connection is slow or unavailable, the tab shows a loading indicator and the UI remains responsive.
+- Files on network mounts (NFS, CIFS, SSHFS) are supported. If the connection is slow or unavailable, the tab shows a warning indicator and the UI remains responsive.
+
+## Recent Files
+
+The **File → Open Recent** menu shows the last 10 files you opened. Click any entry to reopen it. Use **Clear Recent Files** at the bottom of the submenu to reset the list.
+
+Recent files are persisted across application restarts.
 
 ## Tabs
 
 Each open file gets its own tab in the tab bar at the top of the window.
 
 - **Switch tabs** by clicking on them or pressing **Ctrl+Tab** (next) / **Ctrl+Shift+Tab** (previous).
+- **Toggle between tabs** — A quick Ctrl+Tab press (release, then press again) toggles between the two most recently active tabs.
+- **Reorder tabs** — Drag and drop tabs to rearrange them.
 - **Close a tab** by clicking the × button or pressing **Ctrl+W**.
-- **Loading indicator** — Tabs show a spinner while the file is being read for the first time.
+- **Right-click context menu** — Right-click a tab for Close, Close Others, and Close All options.
+- **Warning indicator** — Tabs show a ⚠ icon when the file is unreachable (e.g., network outage). The indicator clears automatically when the file becomes accessible again.
+- **Update badge** — Inactive tabs show an update dot when new lines arrive.
 - **Tab persistence** — Open tabs are saved automatically. If the application is closed (or force-killed), tabs are restored on next launch. This can be toggled in Settings.
 
 ## Following & Scrolling
@@ -83,7 +103,7 @@ Rules are displayed in a list. **Rules lower in the list take precedence** over 
 
 ### Editing Rules
 
-1. Open the Settings panel (gear icon).
+1. Open the Settings panel (gear icon or **View → Toggle Settings**).
 2. Switch to the **Rules** tab.
 3. Click **+ Add Rule** to create a new rule, or click the ✏ button to edit an existing one.
 4. Fill in the pattern, colors, and match type.
@@ -122,7 +142,7 @@ Ships with rules for common log patterns:
 
 ## Settings
 
-Open the Settings panel to configure:
+Open the Settings panel (gear icon or **View → Toggle Settings**) to configure:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
@@ -138,16 +158,59 @@ Open the Settings panel to configure:
 
 The application window position, size, and maximised state are automatically saved and restored between sessions.
 
+## Menu Bar
+
+ctail includes a native menu bar:
+
+| Menu | Item | Shortcut | Description |
+|------|------|----------|-------------|
+| **File** | Open | Ctrl+O | Open a file via the native file dialog |
+| | Open Recent ▸ | | Submenu of recently opened files |
+| | Close Tab | Ctrl+W | Close the current tab |
+| | Quit | Ctrl+Q | Exit the application |
+| **Edit** | Copy | Ctrl+C | Copy selected text |
+| | Select All | Ctrl+A | Select all text in the log view |
+| | Find | Ctrl+F | Open the search bar |
+| **View** | Toggle Settings | | Show/hide the settings panel |
+| | Toggle Theme | | Switch between dark and light themes |
+| **Help** | About ctail | | Show version, license, and links |
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
 | **Ctrl+O** | Open file |
 | **Ctrl+W** | Close current tab |
-| **Ctrl+Tab** | Next tab |
+| **Ctrl+Tab** | Next tab / toggle between last two tabs |
 | **Ctrl+Shift+Tab** | Previous tab |
+| **Ctrl+C** | Copy |
+| **Ctrl+A** | Select all |
 | **Ctrl+F** | Search / filter |
 | **Escape** | Close search |
+
+## Linux Installation
+
+After building, install system-wide with desktop integration:
+
+```bash
+make build
+sudo make install
+```
+
+This installs:
+- The binary to `/usr/local/bin/ctail`
+- A `.desktop` file for application launchers
+- Icons at all standard sizes (16×16 through 1024×1024)
+
+Uninstall with:
+```bash
+sudo make uninstall
+```
+
+By default on Linux, ctail uses the X11 backend for compatibility with multi-monitor setups. To use native Wayland instead:
+```bash
+ctail --wayland
+```
 
 ## Configuration Files
 
@@ -163,14 +226,14 @@ Configuration is stored in platform-specific directories:
 
 ```
 ctail/
-├── settings.json          # Application settings, window state, open tabs
+├── settings.json          # Application settings, window state, open tabs, recent files
 └── profiles/
     └── common-logs.json   # Highlighting rule profiles
 ```
 
 ### settings.json
 
-Contains all application settings including poll interval, scroll buffer, theme, font size, window geometry, active profile, and the list of open tabs for restoration.
+Contains all application settings including poll interval, scroll buffer, theme, font size, window geometry, active profile, the list of open tabs for restoration, and recently opened files.
 
 ### profiles/*.json
 
@@ -182,7 +245,7 @@ Each file is a named profile containing an array of highlighting rules. Profile 
 
 ctail uses polling (not filesystem watchers) which works reliably over NFS/CIFS/SSHFS. If the mount is slow:
 - Increase the **Poll Interval** to reduce I/O frequency.
-- Files will still open — the tab shows a loading state while waiting.
+- Files will still open — the tab shows a warning indicator while waiting.
 
 ### Application hangs on close
 
@@ -200,3 +263,7 @@ This was addressed in v0.2.0. File operations now have timeouts (3s for shutdown
 Tabs are saved on every open and close operation, so they should survive crashes. If tabs were lost:
 - Check that `settings.json` exists and contains a `"tabs"` array.
 - Ensure **Restore Tabs on Startup** is enabled in Settings.
+
+### Window maximizes to wrong size on multi-monitor (Linux)
+
+This is an [upstream GTK/WebKit2GTK bug](https://github.com/wailsapp/wails/issues/2431). ctail defaults to the X11 backend on Linux to avoid this. If you launched with `--wayland` and experience this issue, run without the flag.

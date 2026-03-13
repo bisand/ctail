@@ -1,9 +1,11 @@
 package main
 
 import (
+	"ctail/internal/config"
 	"embed"
 	"flag"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"github.com/wailsapp/wails/v2"
@@ -18,14 +20,18 @@ import (
 var assets embed.FS
 
 func main() {
-	useX11 := flag.Bool("x11", false, "Force X11 backend (fixes multi-monitor maximize on Wayland)")
+	useWayland := flag.Bool("wayland", false, "Use native Wayland backend (may have multi-monitor issues)")
 	flag.Parse()
 
-	if *useX11 && runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" && !*useWayland {
 		os.Setenv("GDK_BACKEND", "x11")
 	}
 
 	app := NewApp()
+
+	// Pre-load config to populate recent files menu
+	cfg, _ := config.NewManager()
+	app.preloadedConfig = cfg
 
 	appMenu := menu.NewMenu()
 
@@ -35,10 +41,29 @@ func main() {
 		wailsRuntime.EventsEmit(app.ctx, "menu:open-file")
 	})
 
-	// Recent Files submenu — populated dynamically on startup
+	// Recent Files submenu — pre-populated from saved config
 	recentMenu := fileMenu.AddSubmenu("Open Recent")
 	app.recentMenu = recentMenu
-	recentMenu.AddText("(empty)", nil, nil)
+	if cfg != nil {
+		recentFiles := cfg.GetSettings().RecentFiles
+		if len(recentFiles) > 0 {
+			for _, fp := range recentFiles {
+				filePath := fp
+				label := filepath.Base(filePath)
+				recentMenu.AddText(label, nil, func(_ *menu.CallbackData) {
+					wailsRuntime.EventsEmit(app.ctx, "menu:open-recent", filePath)
+				})
+			}
+			recentMenu.AddSeparator()
+			recentMenu.AddText("Clear Recent Files", nil, func(_ *menu.CallbackData) {
+				app.ClearRecentFiles()
+			})
+		} else {
+			recentMenu.AddText("(empty)", nil, nil)
+		}
+	} else {
+		recentMenu.AddText("(empty)", nil, nil)
+	}
 
 	fileMenu.AddSeparator()
 	fileMenu.AddText("Close Tab", keys.CmdOrCtrl("w"), func(_ *menu.CallbackData) {
