@@ -1,11 +1,13 @@
 <script>
   import { onMount } from 'svelte';
-  import { GetAppVersion } from '../../../wailsjs/go/main/App.js';
+  import { GetAppVersion, ListThemes } from '../../../wailsjs/go/main/App.js';
   import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime.js';
+  import { settings } from '../stores/settings.js';
 
   export let show = false;
 
   let version = '';
+  let themeName = '';
 
   onMount(async () => {
     try {
@@ -14,6 +16,21 @@
       version = '0.0.0';
     }
   });
+
+  // Update display name when settings or dialog visibility changes
+  $: if (show) {
+    updateThemeName($settings.theme);
+  }
+
+  async function updateThemeName(themeId) {
+    try {
+      const themes = await ListThemes();
+      const t = themes.find(th => th.Name === themeId);
+      themeName = t ? t.DisplayName : themeId;
+    } catch {
+      themeName = themeId || 'Unknown';
+    }
+  }
 
   function close() {
     show = false;
@@ -53,7 +70,7 @@
       </div>
       <div class="about-credits">
         <p>Built with <button class="inline-link" on:click={() => openLink('https://wails.io')}>Wails</button> &amp; <button class="inline-link" on:click={() => openLink('https://svelte.dev')}>Svelte</button></p>
-        <p>Theme: <button class="inline-link" on:click={() => openLink('https://catppuccin.com')}>Catppuccin</button></p>
+        <p>Theme: {themeName} ({$settings.themeMode})</p>
         <p class="about-license">MIT License</p>
       </div>
       <button class="close-btn" on:click={close}>Close</button>
