@@ -21,7 +21,7 @@ clean:
 test:
 	go test ./internal/... -v
 
-install: build
+install:
 	install -Dm755 build/bin/ctail $(DESTDIR)$(PREFIX)/bin/ctail
 	install -Dm644 build/appicon.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/1024x1024/apps/ctail.png
 	install -Dm644 build/linux/ctail.desktop $(DESTDIR)$(PREFIX)/share/applications/ctail.desktop
