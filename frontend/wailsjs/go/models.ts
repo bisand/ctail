@@ -27,6 +27,7 @@ export namespace config {
 	    restoreTabs: boolean;
 	    activeProfile: string;
 	    tabs: TabState[];
+	    recentFiles: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -44,6 +45,7 @@ export namespace config {
 	        this.restoreTabs = source["restoreTabs"];
 	        this.activeProfile = source["activeProfile"];
 	        this.tabs = this.convertValues(source["tabs"], TabState);
+	        this.recentFiles = source["recentFiles"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

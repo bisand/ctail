@@ -4,13 +4,17 @@
   import TabBar from './lib/components/TabBar.svelte';
   import LogView from './lib/components/LogView.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
+  import AboutDialog from './lib/components/AboutDialog.svelte';
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, SaveSettings, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
   let scrollBuffer = 500;
+
+  // About dialog state
+  let showAbout = false;
 
   // Ctrl+Tab cycling state
   let isCycling = false;
@@ -109,6 +113,43 @@
       if (data.tabId) {
         loadInitialLines(data.tabId);
       }
+    });
+
+    // Menu bar events
+    EventsOn('menu:open-file', () => {
+      openFile();
+    });
+
+    EventsOn('menu:open-recent', (filePath) => {
+      openRecentFile(filePath);
+    });
+
+    EventsOn('menu:close-tab', () => {
+      const tab = $activeTab;
+      if (tab) {
+        tabStore.removeTab(tab.id);
+      }
+    });
+
+    EventsOn('menu:toggle-settings', () => {
+      settingsPanelOpen.update(v => !v);
+    });
+
+    EventsOn('menu:toggle-theme', async () => {
+      const currentSettings = $settings;
+      const newTheme = currentSettings.theme === 'dark' ? 'light' : 'dark';
+      const updated = { ...currentSettings, theme: newTheme };
+      settings.set(updated);
+      document.documentElement.setAttribute('data-theme', newTheme);
+      try {
+        await SaveSettings(updated);
+      } catch (e) {
+        console.error('Failed to save theme:', e);
+      }
+    });
+
+    EventsOn('menu:about', () => {
+      showAbout = true;
     });
 
     // Restore previously open tabs (non-blocking — tabs appear immediately)
@@ -238,6 +279,16 @@
       console.error('Failed to open file:', e);
     }
   }
+
+  async function openRecentFile(filePath) {
+    try {
+      const tabId = await OpenTab(filePath);
+      const fileName = filePath.split(/[/\\]/).pop();
+      tabStore.addTab(tabId, filePath, fileName);
+    } catch (e) {
+      console.error('Failed to open recent file:', e);
+    }
+  }
 </script>
 
 <div class="app">
@@ -250,6 +301,8 @@
     {/if}
   </div>
 </div>
+
+<AboutDialog bind:show={showAbout} />
 
 <style>
   .app {

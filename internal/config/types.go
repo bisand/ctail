@@ -42,6 +42,7 @@ type AppSettings struct {
 	RestoreTabs   bool          `json:"restoreTabs"`
 	ActiveProfile string        `json:"activeProfile"`
 	Tabs          []TabState    `json:"tabs"`
+	RecentFiles   []string      `json:"recentFiles"`
 }
 
 // DefaultSettings returns sensible defaults
@@ -58,6 +59,7 @@ func DefaultSettings() AppSettings {
 		RestoreTabs:     true,
 		ActiveProfile:   "Common Logs",
 		Tabs:            []TabState{},
+		RecentFiles:     []string{},
 	}
 }
 

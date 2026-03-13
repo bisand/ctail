@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wailsapp/wails/v2/pkg/menu"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -26,11 +27,12 @@ type TabInfo struct {
 
 // App is the main application struct bound to Wails
 type App struct {
-	ctx    context.Context
-	config *config.Manager
-	mu     sync.RWMutex
-	tabs   map[string]*TabInfo
-	nextID int
+	ctx        context.Context
+	config     *config.Manager
+	mu         sync.RWMutex
+	tabs       map[string]*TabInfo
+	nextID     int
+	recentMenu *menu.Menu
 }
 
 // NewApp creates a new App
@@ -48,6 +50,7 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.config = cfg
+	a.RefreshRecentMenu()
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -174,6 +177,9 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	if err := t.Start(); err != nil {
 		return id, nil // still return tab id — error will come via event
 	}
+
+	// Track in recent files
+	a.AddRecentFile(filePath)
 
 	return id, nil
 }
@@ -343,5 +349,84 @@ func (a *App) ValidateRegex(pattern string) string {
 		return err.Error()
 	}
 	return ""
+}
+
+// --- Recent Files ---
+
+const maxRecentFiles = 10
+
+// GetRecentFiles returns the recent files list
+func (a *App) GetRecentFiles() []string {
+	if a.config == nil {
+		return nil
+	}
+	return a.config.GetSettings().RecentFiles
+}
+
+// AddRecentFile adds a file path to the recent files list (most recent first, capped)
+func (a *App) AddRecentFile(filePath string) {
+	if a.config == nil || filePath == "" {
+		return
+	}
+	settings := a.config.GetSettings()
+	// Remove duplicates
+	filtered := make([]string, 0, len(settings.RecentFiles))
+	for _, f := range settings.RecentFiles {
+		if f != filePath {
+			filtered = append(filtered, f)
+		}
+	}
+	// Prepend
+	settings.RecentFiles = append([]string{filePath}, filtered...)
+	if len(settings.RecentFiles) > maxRecentFiles {
+		settings.RecentFiles = settings.RecentFiles[:maxRecentFiles]
+	}
+	_ = a.config.SaveSettings(settings)
+	a.RefreshRecentMenu()
+}
+
+// ClearRecentFiles empties the recent files list
+func (a *App) ClearRecentFiles() {
+	if a.config == nil {
+		return
+	}
+	settings := a.config.GetSettings()
+	settings.RecentFiles = []string{}
+	_ = a.config.SaveSettings(settings)
+	a.RefreshRecentMenu()
+}
+
+// GetAppVersion returns the application version string
+func (a *App) GetAppVersion() string {
+	return "0.4.0"
+}
+
+// RefreshRecentMenu rebuilds the "Open Recent" submenu with current recent files
+func (a *App) RefreshRecentMenu() {
+	if a.recentMenu == nil {
+		return
+	}
+	a.recentMenu.Items = nil
+
+	recentFiles := a.GetRecentFiles()
+	if len(recentFiles) == 0 {
+		a.recentMenu.AddText("(empty)", nil, nil)
+	} else {
+		for _, fp := range recentFiles {
+			filePath := fp // capture for closure
+			label := filepath.Base(filePath)
+			a.recentMenu.AddText(label, nil, func(_ *menu.CallbackData) {
+				wailsRuntime.EventsEmit(a.ctx, "menu:open-recent", filePath)
+			})
+		}
+		a.recentMenu.AddSeparator()
+		a.recentMenu.AddText("Clear Recent Files", nil, func(_ *menu.CallbackData) {
+			a.ClearRecentFiles()
+		})
+	}
+
+	if a.ctx != nil {
+		wailsRuntime.MenuUpdateApplicationMenu(a.ctx)
+	}
 }
 

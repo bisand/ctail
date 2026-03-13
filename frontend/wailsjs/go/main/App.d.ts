@@ -4,11 +4,19 @@ import {config} from '../models';
 import {tailer} from '../models';
 import {main} from '../models';
 
+export function AddRecentFile(arg1:string):Promise<void>;
+
+export function ClearRecentFiles():Promise<void>;
+
 export function CloseTab(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
 
+export function GetAppVersion():Promise<string>;
+
 export function GetProfile(arg1:string):Promise<config.Profile>;
+
+export function GetRecentFiles():Promise<Array<string>>;
 
 export function GetSavedTabs():Promise<Array<config.TabState>>;
 
@@ -27,6 +35,8 @@ export function ListProfiles():Promise<Array<string>>;
 export function OpenFileDialog(arg1:string):Promise<string>;
 
 export function OpenTab(arg1:string):Promise<string>;
+
+export function RefreshRecentMenu():Promise<void>;
 
 export function RenameProfile(arg1:string,arg2:string):Promise<void>;
 
