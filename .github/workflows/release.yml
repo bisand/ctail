@@ -9,7 +9,10 @@ permissions:
 
 jobs:
   build:
+    permissions:
+      contents: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
