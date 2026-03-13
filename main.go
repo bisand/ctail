@@ -20,13 +20,9 @@ func main() {
 	// Load saved window geometry before creating the window so Wails
 	// uses the correct initial size (avoids a visible resize flash).
 	width, height := 1200, 800
-	startState := options.Normal
 	cfg, err := config.NewManager()
 	if err == nil {
 		s := cfg.GetSettings()
-		if s.WindowMaximised {
-			startState = options.Maximised
-		}
 		if s.WindowWidth > 0 && s.WindowHeight > 0 {
 			width = s.WindowWidth
 			height = s.WindowHeight
@@ -41,7 +37,6 @@ func main() {
 		Height:           height,
 		MinWidth:         800,
 		MinHeight:        500,
-		WindowStartState: startState,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
