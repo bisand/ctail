@@ -115,6 +115,12 @@
       }
     });
 
+    EventsOn('tab:focus', (tabId) => {
+      if (tabId) {
+        activeTab.set(tabId);
+      }
+    });
+
     // Menu bar events
     EventsOn('menu:open-file', () => {
       openFile();

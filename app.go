@@ -126,6 +126,17 @@ func (a *App) OpenTab(filePath string) (string, error) {
 		return "", fmt.Errorf("no file path provided")
 	}
 
+	// If the file is already open, focus that tab instead
+	a.mu.RLock()
+	for _, tab := range a.tabs {
+		if tab.FilePath == filePath {
+			a.mu.RUnlock()
+			wailsRuntime.EventsEmit(a.ctx, "tab:focus", tab.ID)
+			return tab.ID, nil
+		}
+	}
+	a.mu.RUnlock()
+
 	a.mu.Lock()
 	a.nextID++
 	id := fmt.Sprintf("tab-%d", a.nextID)
