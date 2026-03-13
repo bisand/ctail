@@ -72,7 +72,10 @@ jobs:
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
           VERSION_TAG="${{ github.event.release.tag_name }}"
           VERSION="${VERSION_TAG#v}"
-          export VERSION="${VERSION}.${{ steps.buildnum.outputs.BUILD_NUMBER }}"
+          FULL_VERSION="${VERSION}.${{ steps.buildnum.outputs.BUILD_NUMBER }}"
+          # Inject package version into metainfo so GNOME Software shows release details
+          sed -i "0,/<release version=\"[^\"]*\"/{s/<release version=\"[^\"]*\"/<release version=\"${FULL_VERSION}\"/}" build/linux/io.github.bisand.ctail.metainfo.xml
+          export VERSION="${FULL_VERSION}"
           nfpm package --packager deb --target build/
           nfpm package --packager rpm --target build/
 

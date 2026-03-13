@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=ctail
-Comment=Cross-platform log tail viewer with regex highlighting
+Comment=Log file viewer with real-time tailing and regex highlighting
 Exec=ctail
 Icon=ctail
 Terminal=false

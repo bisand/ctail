@@ -52,7 +52,11 @@ uninstall:
 	-gtk-update-icon-cache -f -t $(DESTDIR)$(PREFIX)/share/icons/hicolor 2>/dev/null || true
 
 package-deb: build
+	sed -i '0,/<release version="[^"]*"/{s/<release version="[^"]*"/<release version="$(VERSION).$(BUILD_NUMBER)"/}' build/linux/io.github.bisand.ctail.metainfo.xml
 	export VERSION=$(VERSION).$(BUILD_NUMBER) && $(NFPM) package --packager deb --target build/
+	git checkout build/linux/io.github.bisand.ctail.metainfo.xml
 
 package-rpm: build
+	sed -i '0,/<release version="[^"]*"/{s/<release version="[^"]*"/<release version="$(VERSION).$(BUILD_NUMBER)"/}' build/linux/io.github.bisand.ctail.metainfo.xml
 	export VERSION=$(VERSION).$(BUILD_NUMBER) && $(NFPM) package --packager rpm --target build/
+	git checkout build/linux/io.github.bisand.ctail.metainfo.xml

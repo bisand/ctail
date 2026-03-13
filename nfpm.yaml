@@ -5,7 +5,7 @@ version: ${VERSION}
 section: utils
 priority: optional
 maintainer: André Biseth <https://github.com/bisand>
-description: Cross-platform log tail viewer with regex highlighting
+description: Log file viewer with real-time tailing and regex highlighting
 vendor: bisand
 homepage: https://github.com/bisand/ctail
 license: MIT
