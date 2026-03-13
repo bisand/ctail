@@ -1,6 +1,6 @@
 <script>
   import { tabs, activeTabId, tabStore } from '../stores/tabs.js';
-  import { CloseTab } from '../../../wailsjs/go/main/App.js';
+  import { CloseTab, RevealInFileManager } from '../../../wailsjs/go/main/App.js';
 
   function switchTab(id) {
     tabStore.setActive(id);
@@ -13,17 +13,123 @@
   }
 
   export let onAddTab;
+
+  // Drag and drop reordering
+  let dragIndex = -1;
+  let dropIndex = -1;
+
+  function handleDragStart(e, index) {
+    dragIndex = index;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+    e.currentTarget.classList.add('dragging');
+  }
+
+  function handleDragOver(e, index) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (index !== dragIndex) {
+      dropIndex = index;
+    }
+  }
+
+  function handleDragLeave() {
+    dropIndex = -1;
+  }
+
+  function handleDrop(e, index) {
+    e.preventDefault();
+    if (dragIndex >= 0 && dragIndex !== index) {
+      tabStore.moveTab(dragIndex, index);
+    }
+    dragIndex = -1;
+    dropIndex = -1;
+  }
+
+  function handleDragEnd(e) {
+    e.currentTarget.classList.remove('dragging');
+    dragIndex = -1;
+    dropIndex = -1;
+  }
+
+  // Tab context menu
+  let ctxMenu = { visible: false, x: 0, y: 0, tabId: null, tabIndex: -1 };
+
+  function handleTabContext(e, tab, index) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { visible: true, x: e.clientX, y: e.clientY, tabId: tab.id, tabIndex: index };
+  }
+
+  function closeCtxMenu() {
+    ctxMenu = { ...ctxMenu, visible: false };
+  }
+
+  $: ctxTab = ctxMenu.tabId ? $tabs.find(t => t.id === ctxMenu.tabId) : null;
+
+  function ctxClose() {
+    if (ctxMenu.tabId) {
+      CloseTab(ctxMenu.tabId);
+      tabStore.removeTab(ctxMenu.tabId);
+    }
+    closeCtxMenu();
+  }
+
+  function ctxCloseOthers() {
+    const keepId = ctxMenu.tabId;
+    const toClose = $tabs.filter(t => t.id !== keepId);
+    for (const t of toClose) {
+      CloseTab(t.id);
+      tabStore.removeTab(t.id);
+    }
+    closeCtxMenu();
+  }
+
+  function ctxCloseToRight() {
+    const idx = ctxMenu.tabIndex;
+    const toClose = $tabs.slice(idx + 1);
+    for (const t of toClose) {
+      CloseTab(t.id);
+      tabStore.removeTab(t.id);
+    }
+    closeCtxMenu();
+  }
+
+  function ctxCopyPath() {
+    if (ctxTab) {
+      navigator.clipboard.writeText(ctxTab.filePath);
+    }
+    closeCtxMenu();
+  }
+
+  function ctxReveal() {
+    if (ctxTab) {
+      RevealInFileManager(ctxTab.filePath);
+    }
+    closeCtxMenu();
+  }
 </script>
+
+<svelte:window on:click={closeCtxMenu} />
 
 <div class="tab-bar">
   <div class="tabs-scroll">
-    {#each $tabs as tab (tab.id)}
+    {#each $tabs as tab, i (tab.id)}
       <div
         class="tab"
         class:active={$activeTabId === tab.id}
         class:loading={tab.status === 'loading'}
         class:error={tab.status === 'error'}
+        class:drop-before={dropIndex === i && dragIndex > i}
+        class:drop-after={dropIndex === i && dragIndex < i}
+        draggable="true"
         on:click={() => switchTab(tab.id)}
+        on:dragstart={(e) => handleDragStart(e, i)}
+        on:dragover={(e) => handleDragOver(e, i)}
+        on:dragleave={handleDragLeave}
+        on:drop={(e) => handleDrop(e, i)}
+        on:dragend={handleDragEnd}
+        on:contextmenu={(e) => handleTabContext(e, tab, i)}
         title={tab.status === 'error' ? `${tab.filePath}\n⚠ ${tab.errorMessage}` : tab.filePath}
       >
         {#if tab.status === 'loading'}
@@ -40,6 +146,27 @@
     {/each}
   </div>
   <button class="add-tab-btn" on:click={onAddTab} title="Open file">+</button>
+
+  {#if ctxMenu.visible}
+    <div class="tab-ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px" on:click|stopPropagation>
+      <button class="ctx-item" on:click={ctxClose}>
+        Close <span class="ctx-key">Ctrl+W</span>
+      </button>
+      <button class="ctx-item" on:click={ctxCloseOthers} disabled={$tabs.length < 2}>
+        Close others
+      </button>
+      <button class="ctx-item" on:click={ctxCloseToRight} disabled={ctxMenu.tabIndex >= $tabs.length - 1}>
+        Close to the right
+      </button>
+      <div class="ctx-separator"></div>
+      <button class="ctx-item" on:click={ctxCopyPath}>
+        Copy file path
+      </button>
+      <button class="ctx-item" on:click={ctxReveal}>
+        Reveal in file manager
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -76,11 +203,24 @@
     cursor: pointer;
     position: relative;
     white-space: nowrap;
+    transition: opacity 0.15s;
     --wails-draggable: no-drag;
   }
 
   .tab:hover {
     background: var(--bg-hover);
+  }
+
+  .tab.dragging {
+    opacity: 0.4;
+  }
+
+  .tab.drop-before {
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .tab.drop-after {
+    box-shadow: inset -3px 0 0 var(--accent);
   }
 
   .tab.active {
@@ -165,5 +305,53 @@
   .add-tab-btn:hover {
     background: var(--bg-hover);
     color: var(--accent);
+  }
+
+  .tab-ctx-menu {
+    position: fixed;
+    z-index: 1000;
+    background: var(--bg-surface, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 0;
+    min-width: 180px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    user-select: none;
+  }
+
+  .ctx-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-primary);
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    gap: 8px;
+  }
+
+  .ctx-item:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+
+  .ctx-item:disabled {
+    color: var(--text-muted);
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  .ctx-key {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .ctx-separator {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
   }
 </style>

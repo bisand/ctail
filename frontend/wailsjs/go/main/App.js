@@ -42,8 +42,8 @@ export function ListProfiles() {
   return window['go']['main']['App']['ListProfiles']();
 }
 
-export function OpenFileDialog() {
-  return window['go']['main']['App']['OpenFileDialog']();
+export function OpenFileDialog(arg1) {
+  return window['go']['main']['App']['OpenFileDialog'](arg1);
 }
 
 export function OpenTab(arg1) {
@@ -54,12 +54,20 @@ export function RenameProfile(arg1, arg2) {
   return window['go']['main']['App']['RenameProfile'](arg1, arg2);
 }
 
+export function RevealInFileManager(arg1) {
+  return window['go']['main']['App']['RevealInFileManager'](arg1);
+}
+
 export function SaveProfile(arg1) {
   return window['go']['main']['App']['SaveProfile'](arg1);
 }
 
 export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
+}
+
+export function SaveTabOrder(arg1) {
+  return window['go']['main']['App']['SaveTabOrder'](arg1);
 }
 
 export function SetTabProfile(arg1, arg2) {

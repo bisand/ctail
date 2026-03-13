@@ -17,6 +17,7 @@
   --badge-color: #f9e2af;
   --scrollbar-track: #181825;
   --scrollbar-thumb: #45475a;
+  color-scheme: dark;
 }
 
 [data-theme="light"] {
@@ -38,6 +39,7 @@
   --badge-color: #df8e1d;
   --scrollbar-track: #e6e9ef;
   --scrollbar-thumb: #bcc0cc;
+  color-scheme: light;
 }
 
 * {
@@ -96,6 +98,11 @@ input, select {
   padding: 4px 8px;
   font-size: 13px;
   outline: none;
+}
+
+select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 input:focus, select:focus {

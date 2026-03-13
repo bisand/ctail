@@ -24,15 +24,19 @@ export function GetTabs():Promise<Array<main.TabInfo>>;
 
 export function ListProfiles():Promise<Array<string>>;
 
-export function OpenFileDialog():Promise<string>;
+export function OpenFileDialog(arg1:string):Promise<string>;
 
 export function OpenTab(arg1:string):Promise<string>;
 
 export function RenameProfile(arg1:string,arg2:string):Promise<void>;
 
+export function RevealInFileManager(arg1:string):Promise<void>;
+
 export function SaveProfile(arg1:config.Profile):Promise<void>;
 
 export function SaveSettings(arg1:config.AppSettings):Promise<void>;
+
+export function SaveTabOrder(arg1:Array<config.TabState>):Promise<void>;
 
 export function SetTabProfile(arg1:string,arg2:string):Promise<void>;
 

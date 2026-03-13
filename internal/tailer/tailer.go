@@ -28,6 +28,7 @@ type Tailer struct {
 	fileSize    int64
 	lineOffsets []int64 // byte offset of each line start (0-indexed: lineOffsets[0] = line 1)
 	running     bool
+	inError     bool // true when the last poll attempt failed
 	stopCh      chan struct{}
 
 	onLines     func([]Line)
@@ -92,6 +93,9 @@ func (t *Tailer) startLoop() {
 	select {
 	case err := <-initDone:
 		if err != nil {
+			t.mu.Lock()
+			t.inError = true
+			t.mu.Unlock()
 			if t.onError != nil {
 				t.onError(err)
 			}
@@ -310,6 +314,9 @@ func (t *Tailer) pollLoop() {
 func (t *Tailer) poll() {
 	info, err := os.Stat(t.filePath)
 	if err != nil {
+		t.mu.Lock()
+		t.inError = true
+		t.mu.Unlock()
 		if t.onError != nil {
 			t.onError(err)
 		}
@@ -319,9 +326,16 @@ func (t *Tailer) poll() {
 	currentSize := info.Size()
 
 	t.mu.Lock()
+	wasInError := t.inError
+	t.inError = false
 	prevSize := t.fileSize
 	prevOffset := t.offset
 	t.mu.Unlock()
+
+	// File is accessible again after an error — notify frontend
+	if wasInError && t.onReady != nil {
+		t.onReady()
+	}
 
 	// No new data
 	if currentSize == prevOffset {
@@ -331,6 +345,9 @@ func (t *Tailer) poll() {
 	// Only open the file when there's something to read
 	f, err := os.Open(t.filePath)
 	if err != nil {
+		t.mu.Lock()
+		t.inError = true
+		t.mu.Unlock()
 		if t.onError != nil {
 			t.onError(err)
 		}

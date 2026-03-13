@@ -168,6 +168,15 @@ function createTabStore() {
         return state;
       });
     },
+    moveTab(fromIndex, toIndex) {
+      update(state => {
+        if (fromIndex < 0 || fromIndex >= state.tabs.length) return state;
+        if (toIndex < 0 || toIndex >= state.tabs.length) return state;
+        const [tab] = state.tabs.splice(fromIndex, 1);
+        state.tabs.splice(toIndex, 0, tab);
+        return state;
+      });
+    },
     reset() {
       set({ tabs: [], activeTabId: null });
     }

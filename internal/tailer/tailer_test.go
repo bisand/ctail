@@ -282,6 +282,66 @@ func TestTailerReadRangeAfterAppend(t *testing.T) {
 	}
 }
 
+func TestTailerErrorRecovery(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var errors []string
+	readyCount := 0
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.OnError(func(err error) {
+		mu.Lock()
+		errors = append(errors, err.Error())
+		mu.Unlock()
+	})
+	tail.OnReady(func() {
+		mu.Lock()
+		readyCount++
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	if readyCount != 1 {
+		t.Errorf("expected 1 initial ready, got %d", readyCount)
+	}
+	mu.Unlock()
+
+	// Remove the file to trigger errors
+	os.Remove(path)
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	if len(errors) == 0 {
+		t.Error("expected at least one error after file removal")
+	}
+	mu.Unlock()
+
+	// Recreate the file — should trigger recovery (onReady again)
+	if err := os.WriteFile(path, []byte("line 2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	if readyCount < 2 {
+		t.Errorf("expected onReady to fire again after recovery, got readyCount=%d", readyCount)
+	}
+	mu.Unlock()
+}
+
 // Simple int to string for test use
 func itoa(n int) string {
 	if n == 0 {

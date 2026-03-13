@@ -6,7 +6,9 @@ import (
 	"ctail/internal/rules"
 	"ctail/internal/tailer"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -24,11 +26,12 @@ type TabInfo struct {
 
 // App is the main application struct bound to Wails
 type App struct {
-	ctx     context.Context
-	config  *config.Manager
-	mu      sync.RWMutex
-	tabs    map[string]*TabInfo
-	nextID  int
+	ctx             context.Context
+	config          *config.Manager
+	preloadedConfig *config.Manager // set in main() before wails.Run
+	mu              sync.RWMutex
+	tabs            map[string]*TabInfo
+	nextID          int
 }
 
 // NewApp creates a new App
@@ -60,28 +63,42 @@ func (a *App) persistTabs() {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	cfg, err := config.NewManager()
-	if err != nil {
-		fmt.Println("Warning: could not initialize config:", err)
-		return
-	}
-	a.config = cfg
-
-	// Restore window position, size, and maximised state
-	s := cfg.GetSettings()
-	if s.WindowWidth > 0 && s.WindowHeight > 0 {
-		wailsRuntime.WindowSetSize(ctx, s.WindowWidth, s.WindowHeight)
-	}
-	if s.WindowX >= 0 && s.WindowY >= 0 {
-		wailsRuntime.WindowSetPosition(ctx, s.WindowX, s.WindowY)
-	}
-	if s.WindowMaximised {
-		wailsRuntime.WindowMaximise(ctx)
+	if a.preloadedConfig != nil {
+		a.config = a.preloadedConfig
+		a.preloadedConfig = nil
+	} else {
+		cfg, err := config.NewManager()
+		if err != nil {
+			fmt.Println("Warning: could not initialize config:", err)
+			return
+		}
+		a.config = cfg
 	}
 }
 
-func (a *App) shutdown(ctx context.Context) {
-	// Save window position, size, and state
+// domReady restores saved window position and maximised state after the
+// webview is ready. Size is already set via Wails options in main().
+// Note: WindowSetPosition is ignored on Wayland by design.
+func (a *App) domReady(ctx context.Context) {
+	if a.config == nil {
+		return
+	}
+	s := a.config.GetSettings()
+
+	if s.WindowMaximised {
+		wailsRuntime.WindowMaximise(ctx)
+		return
+	}
+
+	if s.WindowX >= 0 && s.WindowY >= 0 {
+		wailsRuntime.WindowSetPosition(ctx, s.WindowX, s.WindowY)
+	}
+}
+
+// beforeClose saves window geometry while the window is still alive.
+// On Linux/WebKit, OnShutdown fires too late — the window is already
+// gone and WindowGetSize/WindowGetPosition return zeros.
+func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	if a.config != nil {
 		s := a.config.GetSettings()
 		s.WindowMaximised = wailsRuntime.WindowIsMaximised(ctx)
@@ -91,7 +108,10 @@ func (a *App) shutdown(ctx context.Context) {
 		}
 		_ = a.config.SaveSettings(s)
 	}
+	return false
+}
 
+func (a *App) shutdown(ctx context.Context) {
 	// Save open tabs (also saved on every open/close, but do it here too)
 	a.persistTabs()
 
@@ -120,15 +140,35 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 }
 
-// OpenFileDialog opens a native file dialog and returns the selected path
-func (a *App) OpenFileDialog() (string, error) {
+// OpenFileDialog opens a native file dialog and returns the selected path.
+// defaultDir is optional — when non-empty the dialog starts in that directory.
+func (a *App) OpenFileDialog(defaultDir string) (string, error) {
 	return wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
-		Title: "Open Log File",
+		Title:            "Open Log File",
+		DefaultDirectory: defaultDir,
 		Filters: []wailsRuntime.FileFilter{
 			{DisplayName: "Log Files", Pattern: "*.log;*.txt;*.out"},
 			{DisplayName: "All Files", Pattern: "*"},
 		},
 	})
+}
+
+// RevealInFileManager opens the system file manager showing the directory
+// that contains the given file path.
+func (a *App) RevealInFileManager(filePath string) error {
+	dir := filepath.Dir(filePath)
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "linux":
+		cmd = exec.Command("xdg-open", dir)
+	case "darwin":
+		cmd = exec.Command("open", "-R", filePath)
+	case "windows":
+		cmd = exec.Command("explorer", "/select,", filePath)
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+	return cmd.Start()
 }
 
 // OpenTab opens a new tab tailing the given file.
@@ -192,9 +232,6 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	a.tabs[id] = tab
 	a.mu.Unlock()
 
-	// Persist tabs so they survive a force-kill
-	go a.persistTabs()
-
 	// Start tailing in the background — never blocks
 	if err := t.Start(); err != nil {
 		return id, nil // still return tab id — error will come via event
@@ -215,9 +252,6 @@ func (a *App) CloseTab(tabID string) {
 	if ok && tab.tailer != nil {
 		go tab.tailer.Stop()
 	}
-
-	// Persist tabs so they survive a force-kill
-	go a.persistTabs()
 }
 
 // GetTabLines returns the current buffered lines for a tab
@@ -290,6 +324,17 @@ func (a *App) GetSavedTabs() []config.TabState {
 		return nil
 	}
 	return settings.Tabs
+}
+
+// SaveTabOrder persists the current tab list in display order.
+// Called from the frontend whenever tabs are opened, closed, or reordered.
+func (a *App) SaveTabOrder(tabStates []config.TabState) {
+	if a.config == nil {
+		return
+	}
+	settings := a.config.GetSettings()
+	settings.Tabs = tabStates
+	_ = a.config.SaveSettings(settings)
 }
 
 // GetSettings returns app settings

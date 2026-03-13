@@ -215,9 +215,65 @@
   $: filteredLines = searchQuery
     ? lines.filter(l => l.text.toLowerCase().includes(searchQuery.toLowerCase()))
     : lines;
+
+  // Context menu state
+  let contextMenu = { visible: false, x: 0, y: 0 };
+
+  function handleContextMenu(e) {
+    e.preventDefault();
+    contextMenu = { visible: true, x: e.clientX, y: e.clientY };
+  }
+
+  function closeContextMenu() {
+    contextMenu = { ...contextMenu, visible: false };
+  }
+
+  function getSelectedText() {
+    return window.getSelection()?.toString() || '';
+  }
+
+  function ctxCopy() {
+    const text = getSelectedText();
+    if (text) navigator.clipboard.writeText(text);
+    closeContextMenu();
+  }
+
+  function ctxCopyAll() {
+    const text = filteredLines.map(l => l.text).join('\n');
+    navigator.clipboard.writeText(text);
+    closeContextMenu();
+  }
+
+  function ctxSelectAll() {
+    if (!container) return;
+    const range = document.createRange();
+    range.selectNodeContents(container);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    closeContextMenu();
+  }
+
+  function ctxSearch() {
+    const text = getSelectedText();
+    searchVisible = true;
+    if (text) searchQuery = text;
+    closeContextMenu();
+  }
+
+  function ctxScrollToBottom() {
+    scrollToBottom();
+    closeContextMenu();
+  }
+
+  function ctxClearSearch() {
+    searchQuery = '';
+    searchVisible = false;
+    closeContextMenu();
+  }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window on:keydown={handleKeydown} on:click={closeContextMenu} />
 
 <div class="log-view" data-wordwrap={$settings.wordWrap}>
   {#if searchVisible}
@@ -238,7 +294,7 @@
   {/if}
 
   {#if currentTab}
-    <div class="log-container" bind:this={container} on:scroll={handleScroll} on:wheel={handleWheel}>
+    <div class="log-container" bind:this={container} on:scroll={handleScroll} on:wheel={handleWheel} on:contextmenu={handleContextMenu}>
       {#each filteredLines as line (line.number)}
         <LogLine
           {line}
@@ -289,6 +345,37 @@
         </label>
       </div>
     </div>
+
+    {#if contextMenu.visible}
+      <div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px" on:click|stopPropagation>
+        <button class="ctx-item" on:click={ctxCopy} disabled={!getSelectedText()}>
+          Copy <span class="ctx-key">Ctrl+C</span>
+        </button>
+        <button class="ctx-item" on:click={ctxCopyAll}>
+          Copy all lines
+        </button>
+        <div class="ctx-separator"></div>
+        <button class="ctx-item" on:click={ctxSelectAll}>
+          Select all <span class="ctx-key">Ctrl+A</span>
+        </button>
+        <div class="ctx-separator"></div>
+        <button class="ctx-item" on:click={ctxSearch}>
+          {getSelectedText() ? 'Search selection' : 'Search'} <span class="ctx-key">Ctrl+F</span>
+        </button>
+        {#if searchVisible}
+          <button class="ctx-item" on:click={ctxClearSearch}>
+            Clear search
+          </button>
+        {/if}
+        <div class="ctx-separator"></div>
+        <button class="ctx-item" on:click={ctxScrollToBottom} disabled={autoScroll}>
+          Scroll to bottom
+        </button>
+        <button class="ctx-item" on:click={toggleFollow}>
+          {autoScroll ? 'Unfollow' : 'Follow'} tail
+        </button>
+      </div>
+    {/if}
   {:else}
     <div class="empty-state centered">
       <p class="big">ctail</p>
@@ -462,5 +549,54 @@
 
   .search-close:hover {
     background: var(--bg-hover);
+  }
+
+  .context-menu {
+    position: fixed;
+    z-index: 1000;
+    background: var(--bg-surface, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 0;
+    min-width: 180px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    user-select: none;
+  }
+
+  .ctx-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-primary);
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    gap: 8px;
+  }
+
+  .ctx-item:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+
+  .ctx-item:disabled {
+    color: var(--text-muted);
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  .ctx-key {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: inherit;
+  }
+
+  .ctx-separator {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
   }
 </style>

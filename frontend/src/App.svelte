@@ -7,10 +7,39 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, ListProfiles, GetProfile } from '../wailsjs/go/main/App.js';
   import { EventsOn } from '../wailsjs/runtime/runtime.js';
 
   let scrollBuffer = 500;
+
+  // Ctrl+Tab cycling state
+  let isCycling = false;
+  let cycleIndex = -1;
+  let tabIdBeforeCycle = null; // tab we were on when a cycle session started
+  let lastCycleEndTime = 0;   // timestamp when Ctrl was released after cycling
+  const TOGGLE_THRESHOLD_MS = 1000; // quick re-press window for toggle
+
+  // Track the previous tab for toggle: set when a cycle session ends
+  let previousTabId = null;
+
+  // Persist tab order to backend whenever tabs change
+  let tabsInitialized = false;
+  $: if (tabsInitialized && $tabs) {
+    const tabStates = $tabs.map(t => ({
+      filePath: t.filePath,
+      profileId: t.profile || '',
+      autoScroll: t.autoScroll || true,
+    }));
+    SaveTabOrder(tabStates).catch(() => {});
+  }
+
+  // If the previous tab gets closed, clear it
+  $: {
+    const ids = new Set($tabs.map(t => t.id));
+    if (previousTabId && !ids.has(previousTabId)) {
+      previousTabId = null;
+    }
+  }
 
   // Load initial lines for a tab after it becomes ready
   async function loadInitialLines(tabId) {
@@ -104,20 +133,36 @@
       console.error('Failed to restore tabs:', e);
     }
 
-    // Keyboard shortcuts
-    window.addEventListener('keydown', handleGlobalKeydown);
+    // Enable tab order persistence now that restoration is complete
+    tabsInitialized = true;
+
+    // Keyboard shortcuts — use capture phase so WebKit doesn't swallow
+    // key combos like Ctrl+Shift+Tab before they reach our handler.
+    window.addEventListener('keydown', handleGlobalKeydown, true);
+    window.addEventListener('keyup', handleGlobalKeyup, true);
 
     return () => {
-      window.removeEventListener('keydown', handleGlobalKeydown);
+      window.removeEventListener('keydown', handleGlobalKeydown, true);
+      window.removeEventListener('keyup', handleGlobalKeyup, true);
     };
   });
+
+  function handleGlobalKeyup(e) {
+    if ((e.key === 'Control' || !e.ctrlKey) && isCycling) {
+      isCycling = false;
+      previousTabId = tabIdBeforeCycle;
+      lastCycleEndTime = Date.now();
+      cycleIndex = -1;
+      tabIdBeforeCycle = null;
+    }
+  }
 
   function handleGlobalKeydown(e) {
     if (e.ctrlKey && e.key === 'o') {
       e.preventDefault();
       openFile();
     }
-    if (e.ctrlKey && e.key === 'w') {
+    if (e.ctrlKey && (e.key === 'w' || e.key === 'F4')) {
       e.preventDefault();
       const tab = $activeTab;
       if (tab) {
@@ -127,19 +172,63 @@
     }
     if (e.ctrlKey && e.key === 'Tab') {
       e.preventDefault();
-      const allTabs = $tabs;
-      if (allTabs.length < 2) return;
+      handleTabCycle(e.shiftKey);
+    }
+    // Ctrl+PageDown / Ctrl+PageUp as alternative tab cycling keys
+    // (Ctrl+Shift+Tab is intercepted by WebKit on some platforms)
+    if (e.ctrlKey && e.key === 'PageDown') {
+      e.preventDefault();
+      handleTabCycle(false);
+    }
+    if (e.ctrlKey && e.key === 'PageUp') {
+      e.preventDefault();
+      handleTabCycle(true);
+    }
+  }
+
+  function handleTabCycle(reverse) {
+    const allTabs = $tabs;
+    if (allTabs.length < 2) return;
+
+    if (!isCycling) {
+      isCycling = true;
+      tabIdBeforeCycle = $activeTab?.id;
+
+      // Quick re-press after a previous cycle: toggle back
+      const elapsed = Date.now() - lastCycleEndTime;
+      if (previousTabId && elapsed < TOGGLE_THRESHOLD_MS) {
+        tabStore.setActive(previousTabId);
+        cycleIndex = allTabs.findIndex(t => t.id === previousTabId);
+        return;
+      }
+
+      // Normal first press: move to next/prev in visual order
       const currentIdx = allTabs.findIndex(t => t.id === $activeTab?.id);
-      const nextIdx = e.shiftKey
+      cycleIndex = reverse
         ? (currentIdx - 1 + allTabs.length) % allTabs.length
         : (currentIdx + 1) % allTabs.length;
-      tabStore.setActive(allTabs[nextIdx].id);
+      tabStore.setActive(allTabs[cycleIndex].id);
+    } else {
+      // Subsequent presses while Ctrl held: cycle in visual order
+      if (reverse) {
+        cycleIndex = (cycleIndex - 1 + allTabs.length) % allTabs.length;
+      } else {
+        cycleIndex = (cycleIndex + 1) % allTabs.length;
+      }
+      tabStore.setActive(allTabs[cycleIndex].id);
     }
   }
 
   async function openFile() {
     try {
-      const path = await OpenFileDialog();
+      // Default to the active tab's directory if one is open
+      let defaultDir = '';
+      const tab = $activeTab;
+      if (tab && tab.filePath) {
+        const sep = tab.filePath.includes('\\') ? '\\' : '/';
+        defaultDir = tab.filePath.substring(0, tab.filePath.lastIndexOf(sep));
+      }
+      const path = await OpenFileDialog(defaultDir);
       if (!path) return;
       const tabId = await OpenTab(path);
       const fileName = path.split(/[/\\]/).pop();
