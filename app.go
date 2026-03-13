@@ -72,12 +72,16 @@ func (a *App) domReady(ctx context.Context) {
 // beforeClose saves window geometry while the window is still alive.
 // On Linux/WebKit, OnShutdown fires too late — the window is already
 // gone and WindowGetSize/WindowGetPosition return zeros.
+// Only saves size/position when the window is NOT maximised, so we
+// don't persist full-screen dimensions as the "normal" window size.
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	if a.config != nil {
-		s := a.config.GetSettings()
-		s.WindowWidth, s.WindowHeight = wailsRuntime.WindowGetSize(ctx)
-		s.WindowX, s.WindowY = wailsRuntime.WindowGetPosition(ctx)
-		_ = a.config.SaveSettings(s)
+		if !wailsRuntime.WindowIsMaximised(ctx) {
+			s := a.config.GetSettings()
+			s.WindowWidth, s.WindowHeight = wailsRuntime.WindowGetSize(ctx)
+			s.WindowX, s.WindowY = wailsRuntime.WindowGetPosition(ctx)
+			_ = a.config.SaveSettings(s)
+		}
 	}
 	return false
 }
