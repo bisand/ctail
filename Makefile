@@ -1,7 +1,8 @@
 TAGS ?= webkit2_41
 PREFIX ?= /usr/local
+NFPM ?= $(shell go env GOPATH)/bin/nfpm
 
-.PHONY: dev build build-windows build-macos clean test install uninstall
+.PHONY: dev build build-windows build-macos clean test install uninstall package-deb package-rpm
 
 dev:
 	wails dev -tags $(TAGS)
@@ -46,3 +47,9 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/32x32/apps/ctail.png
 	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/16x16/apps/ctail.png
 	-gtk-update-icon-cache -f -t $(DESTDIR)$(PREFIX)/share/icons/hicolor 2>/dev/null || true
+
+package-deb: build
+	$(NFPM) package --packager deb --target build/
+
+package-rpm: build
+	$(NFPM) package --packager rpm --target build/

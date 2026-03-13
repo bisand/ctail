@@ -193,6 +193,22 @@ ctail includes a native menu bar:
 
 ## Linux Installation
 
+### Using deb/rpm packages (recommended)
+
+Pre-built packages include all dependencies:
+
+```bash
+# Debian/Ubuntu (24.04+)
+sudo dpkg -i ctail_0.4.0_amd64.deb
+
+# Fedora/RHEL
+sudo rpm -i ctail-0.4.0-1.x86_64.rpm
+```
+
+The packages depend on `libgtk-3-0` and `libwebkit2gtk-4.1-0`, which are installed automatically.
+
+### From source
+
 After building, install system-wide with desktop integration:
 
 ```bash
@@ -208,6 +224,16 @@ This installs:
 Uninstall with:
 ```bash
 sudo make uninstall
+```
+
+### Building packages from source
+
+Requires [nfpm](https://nfpm.goreleaser.com/):
+
+```bash
+go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+make package-deb    # builds .deb
+make package-rpm    # builds .rpm
 ```
 
 By default on Linux, ctail uses the X11 backend for compatibility with multi-monitor setups. To use native Wayland instead:

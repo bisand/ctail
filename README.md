@@ -70,6 +70,20 @@ sudo make install
 
 This installs the binary to `/usr/local/bin/`, a `.desktop` file for application launchers, and icons at all standard sizes. Uninstall with `sudo make uninstall`.
 
+### Linux Packages (deb/rpm)
+
+Build `.deb` or `.rpm` packages with proper dependencies (`libgtk-3-0`, `libwebkit2gtk-4.1-0`):
+
+```bash
+# Requires nfpm: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+make package-deb    # → build/ctail_0.4.0_amd64.deb
+make package-rpm    # → build/ctail-0.4.0-1.x86_64.rpm
+
+# Install
+sudo dpkg -i build/ctail_0.4.0_amd64.deb   # Debian/Ubuntu
+sudo rpm -i build/ctail-0.4.0-1.x86_64.rpm  # Fedora/RHEL
+```
+
 ## Architecture
 
 ```

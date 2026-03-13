@@ -1,0 +1,52 @@
+name: ctail
+arch: amd64
+platform: linux
+version: v0.4.0
+section: utils
+priority: optional
+maintainer: André Biseth <https://github.com/bisand>
+description: Cross-platform log tail viewer with regex highlighting
+vendor: bisand
+homepage: https://github.com/bisand/ctail
+license: MIT
+
+depends:
+  - libgtk-3-0
+  - libwebkit2gtk-4.1-0
+
+contents:
+  - src: build/bin/ctail
+    dst: /usr/local/bin/ctail
+    file_info:
+      mode: 0755
+
+  - src: build/linux/ctail.desktop
+    dst: /usr/share/applications/ctail.desktop
+
+  - src: build/appicon.png
+    dst: /usr/share/icons/hicolor/1024x1024/apps/ctail.png
+
+  - src: build/linux/ctail-512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/ctail.png
+
+  - src: build/linux/ctail-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/ctail.png
+
+  - src: build/linux/ctail-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/ctail.png
+
+  - src: build/linux/ctail-64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/ctail.png
+
+  - src: build/linux/ctail-48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/ctail.png
+
+  - src: build/linux/ctail-32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/ctail.png
+
+  - src: build/linux/ctail-16.png
+    dst: /usr/share/icons/hicolor/16x16/apps/ctail.png
+
+scripts:
+  postinstall: build/linux/postinstall.sh
+  postremove: build/linux/postremove.sh

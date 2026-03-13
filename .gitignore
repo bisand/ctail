@@ -1,3 +1,5 @@
 build/bin
+build/*.deb
+build/*.rpm
 node_modules
 frontend/dist
