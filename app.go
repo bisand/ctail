@@ -497,7 +497,7 @@ func (a *App) ClearRecentFiles() {
 	a.RefreshRecentMenu()
 }
 
-const appVersion = "0.5.1"
+const appVersion = "0.5.2"
 
 // GetAppVersion returns the application version string
 func (a *App) GetAppVersion() string {
