@@ -171,6 +171,8 @@ ctail includes 21 built-in color themes, each with dark and light variants. Swit
 
 Catppuccin (default), Catppuccin Frappé, Catppuccin Macchiato, Nord, Tokyo Night, Gruvbox, Dracula, One Dark, Solarized, Everforest, Ayu, Kanagawa, Matrix, Rosé Pine, Monokai, Night Owl, Synthwave '84, Cobalt2, GitHub, Palenight, Zenburn.
 
+Theme palettes are inspired by and adapted from [OpenCode](https://github.com/anomalyco/opencode) by [Anomaly](https://anomaly.co/).
+
 ### Custom Themes
 
 You can create custom themes by adding a JSON file to the themes directory:

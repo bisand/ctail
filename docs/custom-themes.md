@@ -2,6 +2,8 @@
 
 ctail supports custom color themes via JSON files. You can create your own themes to match your preferred color palette, or tweak an existing built-in theme.
 
+> 🎨 ctail's built-in theme palettes are inspired by and adapted from [OpenCode](https://github.com/anomalyco/opencode) by [Anomaly](https://anomaly.co/). If you enjoy the themes, check out their project — it's a fantastic terminal-based AI coding tool with beautiful design.
+
 ## Quick Start
 
 1. Create a JSON file in your themes directory:

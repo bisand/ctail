@@ -28,7 +28,7 @@
 - **Recent files** — Quick access to recently opened files from the File menu
 - **Native menu bar** — File, Edit, View, and Help menus with standard keyboard accelerators
 - **Search** — Ctrl+F to filter lines within the buffer
-- **Themes** — 14 built-in color themes (Catppuccin, Nord, Tokyo Night, Gruvbox, Dracula, One Dark, Solarized, Everforest, Ayu, Kanagawa, Matrix, Rosé Pine, Monokai, and more), each with dark and light modes. Supports [custom themes](docs/custom-themes.md) via JSON files.
+- **Themes** — 21 built-in color themes (Catppuccin, Nord, Tokyo Night, Gruvbox, Dracula, One Dark, Solarized, Everforest, Ayu, Kanagawa, Matrix, Rosé Pine, Monokai, and more), each with dark and light modes. Supports [custom themes](docs/custom-themes.md) via JSON files.
 - **Cross-platform** — Linux, Windows, and macOS
 
 ## Quick Start
@@ -144,6 +144,8 @@ ctail ships with **21 built-in color themes**, each with dark and light modes:
 | Zenburn | Low-contrast, warm palette |
 
 Switch themes in **Settings → Theme** and toggle between dark/light with **View → Toggle Theme**.
+
+> 🎨 **Credits:** The built-in theme palettes are inspired by and adapted from [OpenCode](https://github.com/anomalyco/opencode) by [Anomaly](https://anomaly.co/), which provides a wonderful collection of editor color themes. Thank you for making great design accessible to everyone!
 
 ### Custom Themes
 
