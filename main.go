@@ -39,6 +39,19 @@ func main() {
 		wailsRuntime.Quit(app.ctx)
 	})
 
+	// Edit menu
+	editMenu := appMenu.AddSubmenu("Edit")
+	editMenu.AddText("Copy", keys.CmdOrCtrl("c"), func(_ *menu.CallbackData) {
+		wailsRuntime.EventsEmit(app.ctx, "menu:copy")
+	})
+	editMenu.AddText("Select All", keys.CmdOrCtrl("a"), func(_ *menu.CallbackData) {
+		wailsRuntime.EventsEmit(app.ctx, "menu:select-all")
+	})
+	editMenu.AddSeparator()
+	editMenu.AddText("Find...", keys.CmdOrCtrl("f"), func(_ *menu.CallbackData) {
+		wailsRuntime.EventsEmit(app.ctx, "menu:find")
+	})
+
 	// View menu
 	viewMenu := appMenu.AddSubmenu("View")
 	viewMenu.AddText("Settings", keys.CmdOrCtrl(","), func(_ *menu.CallbackData) {

@@ -39,6 +39,14 @@
   $: tabStatus = currentTab ? currentTab.status : null;
   $: tabError = currentTab ? currentTab.errorMessage : '';
 
+  onMount(() => {
+    function handleMenuFind() {
+      searchVisible = true;
+    }
+    window.addEventListener('ctail:find', handleMenuFind);
+    return () => window.removeEventListener('ctail:find', handleMenuFind);
+  });
+
   afterUpdate(() => {
     if (autoScroll && container) {
       container.scrollTop = container.scrollHeight;

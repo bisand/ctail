@@ -152,6 +152,18 @@
       showAbout = true;
     });
 
+    EventsOn('menu:copy', () => {
+      document.execCommand('copy');
+    });
+
+    EventsOn('menu:select-all', () => {
+      document.execCommand('selectAll');
+    });
+
+    EventsOn('menu:find', () => {
+      window.dispatchEvent(new CustomEvent('ctail:find'));
+    });
+
     // Restore previously open tabs (non-blocking — tabs appear immediately)
     try {
       const savedTabs = await GetSavedTabs();
