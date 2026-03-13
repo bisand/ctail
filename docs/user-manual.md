@@ -1,5 +1,7 @@
 # ctail User Manual
 
+**ctail** (color tail) is a cross-platform desktop log file viewer with real-time tailing and regex-based color highlighting.
+
 ## Table of Contents
 
 - [Getting Started](#getting-started)

@@ -1,6 +1,6 @@
 # ctail — Cross-Platform Log Tail Viewer with Highlighting
 
-A desktop log file viewer built with [Wails v2](https://wails.io/) (Go backend + Svelte frontend), inspired by BareTail. Supports Windows, Linux, and macOS.
+**ctail** — short for **color tail** — is a desktop log file viewer built with [Wails v2](https://wails.io/) (Go backend + Svelte frontend). Think `tail -f`, but with regex-powered color highlighting, multiple tabs, and a full GUI. Inspired by BareTail. Supports Windows, Linux, and macOS.
 
 📖 **[User Manual](docs/user-manual.md)** — Full documentation on features, settings, and usage.
 
