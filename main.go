@@ -2,6 +2,9 @@ package main
 
 import (
 	"embed"
+	"flag"
+	"os"
+	"runtime"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -15,6 +18,13 @@ import (
 var assets embed.FS
 
 func main() {
+	useX11 := flag.Bool("x11", false, "Force X11 backend (fixes multi-monitor maximize on Wayland)")
+	flag.Parse()
+
+	if *useX11 && runtime.GOOS == "linux" {
+		os.Setenv("GDK_BACKEND", "x11")
+	}
+
 	app := NewApp()
 
 	appMenu := menu.NewMenu()
