@@ -29,6 +29,9 @@ func main() {
 			os.Setenv("GDK_BACKEND", "x11")
 		} else if *useWayland {
 			os.Setenv("GDK_BACKEND", "wayland")
+		} else {
+			// Default to X11 for better multi-monitor support, but allow Wayland if available
+			os.Setenv("GDK_BACKEND", "x11")
 		}
 	}
 
@@ -109,12 +112,12 @@ func main() {
 	})
 
 	err := wails.Run(&options.App{
-		Title:    "ctail",
-		Width:    1200,
-		Height:   800,
-		MinWidth: 800,
+		Title:     "ctail",
+		Width:     1200,
+		Height:    800,
+		MinWidth:  800,
 		MinHeight: 500,
-		Menu:     appMenu,
+		Menu:      appMenu,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
