@@ -116,15 +116,12 @@ func main() {
 		wailsRuntime.EventsEmit(app.ctx, "menu:about")
 	})
 
-	hasSavedPosition := savedWindow.Width > 0 && savedWindow.Height > 0
-
 	err := wails.Run(&options.App{
 		Title:     "ctail",
 		Width:     initialWidth,
 		Height:    initialHeight,
 		MinWidth:  800,
 		MinHeight: 500,
-		StartHidden: hasSavedPosition,
 		Menu:      appMenu,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
@@ -133,12 +130,6 @@ func main() {
 		OnStartup:        app.startup,
 		OnDomReady:       app.restoreWindowState,
 		OnShutdown:       app.shutdown,
-		WindowStartState: func() options.WindowStartState {
-			if savedWindow.Maximised {
-				return options.Maximised
-			}
-			return options.Normal
-		}(),
 		Bind: []interface{}{
 			app,
 		},

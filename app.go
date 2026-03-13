@@ -154,73 +154,21 @@ func (a *App) trackWindowState() {
 	}
 }
 
-// restoreWindowState applies saved window geometry after the DOM is ready.
-// It validates the saved position against available screens to handle
-// disconnected monitors, then shows the window (started hidden to avoid flicker).
+// restoreWindowState applies saved window geometry after the DOM is ready
 func (a *App) restoreWindowState(ctx context.Context) {
 	if a.config == nil {
-		wailsRuntime.WindowShow(a.ctx)
 		return
 	}
 	ws := a.config.GetSettings().Window
-
-	if ws.Width <= 0 || ws.Height <= 0 {
-		wailsRuntime.WindowShow(a.ctx)
-		return
+	if ws.Width > 0 && ws.Height > 0 {
+		wailsRuntime.WindowSetSize(a.ctx, ws.Width, ws.Height)
 	}
-
-	positionValid := a.isPositionOnScreen(ws.X, ws.Y, ws.Width, ws.Height)
-
-	wailsRuntime.WindowSetSize(a.ctx, ws.Width, ws.Height)
-
-	if positionValid {
+	if ws.X != 0 || ws.Y != 0 {
 		wailsRuntime.WindowSetPosition(a.ctx, ws.X, ws.Y)
-	} else {
-		wailsRuntime.WindowCenter(a.ctx)
 	}
-
 	if ws.Maximised {
 		wailsRuntime.WindowMaximise(a.ctx)
 	}
-
-	wailsRuntime.WindowShow(a.ctx)
-}
-
-// isPositionOnScreen checks if the window position overlaps with any available screen.
-// Returns true if at least part of the window title bar area is visible on some screen.
-func (a *App) isPositionOnScreen(x, y, w, h int) bool {
-	screens, err := wailsRuntime.ScreenGetAll(a.ctx)
-	if err != nil || len(screens) == 0 {
-		// Can't determine screens — trust the saved position
-		return x != 0 || y != 0
-	}
-
-	// Build total virtual screen bounds from all screens.
-	// Wails Screen doesn't expose position offsets, so we use a heuristic:
-	// compute total width (sum of all screen widths) and max height.
-	totalWidth := 0
-	maxHeight := 0
-	for _, s := range screens {
-		sw := s.Size.Width
-		sh := s.Size.Height
-		if sw == 0 {
-			sw = s.Width
-		}
-		if sh == 0 {
-			sh = s.Height
-		}
-		totalWidth += sw
-		if sh > maxHeight {
-			maxHeight = sh
-		}
-	}
-
-	// Window is "on screen" if its top-left corner + some margin is within the virtual area
-	margin := 100
-	if x+margin > totalWidth || y+margin > maxHeight || x+w < 0 || y+h < 0 {
-		return false
-	}
-	return true
 }
 
 // OpenFileDialog opens a native file dialog and returns the selected path.
