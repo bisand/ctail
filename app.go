@@ -44,10 +44,7 @@ type App struct {
 	cachedWinState  config.WindowState
 	winStateMu      sync.Mutex
 	stopWinTracker  chan struct{}
-	// OAuth device flow state
-	pendingDeviceCode   string
-	pendingPollInterval int
-	pendingAuthCancel   context.CancelFunc
+	copilotCancel   context.CancelFunc // cancels a running device-flow poll
 }
 
 // NewApp creates a new App
@@ -668,6 +665,46 @@ func (a *App) RefreshRecentMenu() {
 	}
 }
 
+// StartCopilotAuth initiates the GitHub OAuth device flow for Copilot.
+// Returns the user code and verification URI for the user to complete in their browser.
+func (a *App) StartCopilotAuth() (*ai.DeviceCodeResponse, error) {
+	// Cancel any previous poll
+	if a.copilotCancel != nil {
+		a.copilotCancel()
+		a.copilotCancel = nil
+	}
+	return ai.RequestDeviceCode()
+}
+
+// CompleteCopilotAuth polls for the OAuth token after the user authorises.
+// Blocks until the user completes auth, the flow times out, or a new auth starts.
+// On success, saves the token to settings and returns true.
+func (a *App) CompleteCopilotAuth(deviceCode string, interval int) (bool, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.copilotCancel = cancel
+
+	token, err := ai.PollForToken(ctx, deviceCode, interval)
+	if err != nil {
+		return false, err
+	}
+
+	// Verify the token works by doing a test exchange
+	_, err = ai.ExchangeCopilotToken(token)
+	if err != nil {
+		return false, fmt.Errorf("signed in but Copilot access denied: %w\nMake sure your GitHub account has an active Copilot subscription", err)
+	}
+
+	// Save the OAuth token
+	s := a.config.GetSettings()
+	s.AIProvider = string(ai.ProviderCopilot)
+	s.AIKey = token
+	s.AIEndpoint = ""
+	if err := a.config.SaveSettings(s); err != nil {
+		return false, fmt.Errorf("save settings: %w", err)
+	}
+	return true, nil
+}
+
 // newAIClient builds an AI client from current settings.
 func (a *App) newAIClient() (*ai.Client, error) {
 	s := a.config.GetSettings()
@@ -690,6 +727,13 @@ func (a *App) newAIClient() (*ai.Client, error) {
 		if model == "" {
 			model = "gpt-4o-mini"
 		}
+	case ai.ProviderGitHubModels:
+		if endpoint == "" {
+			endpoint = "https://models.inference.ai.azure.com"
+		}
+		if model == "" {
+			model = "gpt-4o-mini"
+		}
 	case ai.ProviderCopilot:
 		if endpoint == "" {
 			endpoint = "https://api.githubcopilot.com"
@@ -697,13 +741,13 @@ func (a *App) newAIClient() (*ai.Client, error) {
 		if model == "" {
 			model = "gpt-4o"
 		}
-		// Exchange the stored OAuth token for a short-lived Copilot API token
+		// Exchange the OAuth token for a short-lived Copilot API token
 		ct, err := ai.ExchangeCopilotToken(s.AIKey)
 		if err != nil {
 			return nil, fmt.Errorf("Copilot token exchange failed: %w", err)
 		}
 		return ai.NewClient(ai.Config{
-			Provider: ai.ProviderCopilot,
+			Provider: provider,
 			Endpoint: endpoint,
 			APIKey:   ct.Token,
 			Model:    model,
@@ -720,7 +764,7 @@ func (a *App) newAIClient() (*ai.Client, error) {
 		Endpoint: endpoint,
 		APIKey:   s.AIKey,
 		Model:    model,
-		Timeout:  30 * time.Second,
+		Timeout:  60 * time.Second,
 	}), nil
 }
 
@@ -843,72 +887,5 @@ func truncateStr(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// StartCopilotAuth initiates the GitHub OAuth device flow for Copilot.
-// Returns the user code and verification URI. The frontend should display these
-// and open the URI in a browser. Call CompleteCopilotAuth to wait for completion.
-func (a *App) StartCopilotAuth() (map[string]string, error) {
-	dcr, err := ai.RequestDeviceCode()
-	if err != nil {
-		return nil, fmt.Errorf("failed to start GitHub sign-in: %w", err)
-	}
-
-	// Cancel any previous polling goroutine
-	a.mu.Lock()
-	if a.pendingAuthCancel != nil {
-		a.pendingAuthCancel()
-	}
-	a.pendingDeviceCode = dcr.DeviceCode
-	a.pendingPollInterval = dcr.Interval
-	a.pendingAuthCancel = nil
-	a.mu.Unlock()
-
-	return map[string]string{
-		"userCode":        dcr.UserCode,
-		"verificationUri": dcr.VerificationURI,
-	}, nil
-}
-
-// CompleteCopilotAuth polls GitHub until the user completes authorization.
-// On success, saves the token to settings and returns true.
-func (a *App) CompleteCopilotAuth() (bool, error) {
-	a.mu.Lock()
-	deviceCode := a.pendingDeviceCode
-	interval := a.pendingPollInterval
-	// Create cancellable context so a new auth attempt can stop this one
-	ctx, cancel := context.WithCancel(context.Background())
-	a.pendingAuthCancel = cancel
-	a.mu.Unlock()
-
-	if deviceCode == "" {
-		cancel()
-		return false, fmt.Errorf("no pending authorization — call StartCopilotAuth first")
-	}
-
-	token, err := ai.PollForToken(ctx, deviceCode, interval)
-
-	// Clear pending state
-	a.mu.Lock()
-	a.pendingDeviceCode = ""
-	a.pendingPollInterval = 0
-	a.pendingAuthCancel = nil
-	a.mu.Unlock()
-	cancel()
-
-	if err != nil {
-		return false, err
-	}
-
-	// Save token and configure Copilot provider
-	s := a.config.GetSettings()
-	s.AIProvider = "copilot"
-	s.AIKey = token
-	s.AIEndpoint = "https://api.githubcopilot.com"
-	if s.AIModel == "" {
-		s.AIModel = "gpt-4o"
-	}
-	a.config.SaveSettings(s)
-
-	return true, nil
-}
 
 

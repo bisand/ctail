@@ -3,6 +3,7 @@
 import {config} from '../models';
 import {tailer} from '../models';
 import {main} from '../models';
+import {ai} from '../models';
 
 export function AddRecentFile(arg1:string):Promise<void>;
 
@@ -12,7 +13,7 @@ export function ClearRecentFiles():Promise<void>;
 
 export function CloseTab(arg1:string):Promise<void>;
 
-export function CompleteCopilotAuth():Promise<boolean>;
+export function CompleteCopilotAuth(arg1:string,arg2:number):Promise<boolean>;
 
 export function DeleteCustomTheme(arg1:string):Promise<void>;
 
@@ -66,6 +67,6 @@ export function SaveTabOrder(arg1:Array<config.TabState>):Promise<void>;
 
 export function SetTabProfile(arg1:string,arg2:string):Promise<void>;
 
-export function StartCopilotAuth():Promise<Record<string, string>>;
+export function StartCopilotAuth():Promise<ai.DeviceCodeResponse>;
 
 export function ValidateRegex(arg1:string):Promise<string>;

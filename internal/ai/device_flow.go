@@ -160,6 +160,7 @@ type CopilotToken struct {
 }
 
 // ExchangeCopilotToken exchanges a GitHub OAuth token for a short-lived Copilot API token.
+// Sends required editor headers so GitHub recognises us as a valid Copilot integration.
 func ExchangeCopilotToken(oauthToken string) (*CopilotToken, error) {
 	req, err := http.NewRequest("GET", "https://api.github.com/copilot_internal/v2/token", nil)
 	if err != nil {
@@ -167,6 +168,7 @@ func ExchangeCopilotToken(oauthToken string) (*CopilotToken, error) {
 	}
 	req.Header.Set("Authorization", "token "+oauthToken)
 	req.Header.Set("Accept", "application/json")
+	setCopilotHeaders(req)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -181,7 +183,7 @@ func ExchangeCopilotToken(oauthToken string) (*CopilotToken, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token exchange returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("Copilot token exchange failed (%d): %s", resp.StatusCode, truncateStr(string(body), 300))
 	}
 
 	var ct CopilotToken
@@ -192,4 +194,19 @@ func ExchangeCopilotToken(oauthToken string) (*CopilotToken, error) {
 		return nil, fmt.Errorf("empty token in exchange response")
 	}
 	return &ct, nil
+}
+
+// setCopilotHeaders adds the editor identification headers required by the Copilot API.
+func setCopilotHeaders(req *http.Request) {
+	req.Header.Set("Editor-Version", "vscode/1.100.0")
+	req.Header.Set("Editor-Plugin-Version", "copilot/1.300.0")
+	req.Header.Set("User-Agent", "GithubCopilot/1.300.0")
+	req.Header.Set("Copilot-Integration-Id", "vscode-chat")
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

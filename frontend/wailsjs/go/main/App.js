@@ -18,8 +18,8 @@ export function CloseTab(arg1) {
   return window['go']['main']['App']['CloseTab'](arg1);
 }
 
-export function CompleteCopilotAuth() {
-  return window['go']['main']['App']['CompleteCopilotAuth']();
+export function CompleteCopilotAuth(arg1, arg2) {
+  return window['go']['main']['App']['CompleteCopilotAuth'](arg1, arg2);
 }
 
 export function DeleteCustomTheme(arg1) {

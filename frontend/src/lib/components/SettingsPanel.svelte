@@ -1,7 +1,7 @@
 <script>
   import { settings } from '../stores/settings.js';
   import { profiles, profileNames } from '../stores/rules.js';
-  import { SaveSettings, SaveProfile, DeleteProfile, GetProfile, ListThemes, StartCopilotAuth, CompleteCopilotAuth, GetSettings } from '../../../wailsjs/go/main/App.js';
+  import { SaveSettings, SaveProfile, DeleteProfile, GetProfile, ListThemes, StartCopilotAuth, CompleteCopilotAuth } from '../../../wailsjs/go/main/App.js';
   import { loadAndApplyTheme } from '../utils/themes.js';
   import { onMount } from 'svelte';
   import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime.js';
@@ -13,31 +13,45 @@
   let showNewProfile = false;
   let availableThemes = [];
 
-  // GitHub Copilot OAuth device flow state
-  let copilotSigningIn = false;
+  // Copilot OAuth device flow state
+  let copilotAuthState = 'idle'; // idle | authorizing | success | error
   let copilotUserCode = '';
+  let copilotVerifyURL = '';
   let copilotError = '';
 
   async function startCopilotSignIn() {
-    copilotSigningIn = true;
-    copilotUserCode = '';
+    copilotAuthState = 'authorizing';
     copilotError = '';
     try {
-      const result = await StartCopilotAuth();
-      copilotUserCode = result.userCode;
-      BrowserOpenURL(result.verificationUri);
-      // Poll for completion — blocks until user authorizes or timeout
-      const success = await CompleteCopilotAuth();
-      if (success) {
+      const dcr = await StartCopilotAuth();
+      copilotUserCode = dcr.user_code;
+      copilotVerifyURL = dcr.verification_uri;
+      BrowserOpenURL(dcr.verification_uri);
+
+      // Poll in background (blocking RPC — works fine per prior testing)
+      const ok = await CompleteCopilotAuth(dcr.device_code, dcr.interval);
+      if (ok) {
+        copilotAuthState = 'success';
+        // Reload settings to reflect saved provider/key
+        const { GetSettings } = await import('../../../wailsjs/go/main/App.js');
         const s = await GetSettings();
-        if (s) settings.set(s);
-        copilotUserCode = '';
+        settings.set(s);
+      } else {
+        copilotAuthState = 'error';
+        copilotError = 'Authorization failed';
       }
     } catch (e) {
-      copilotError = String(e);
-    } finally {
-      copilotSigningIn = false;
+      copilotAuthState = 'error';
+      copilotError = e?.message || String(e);
     }
+  }
+
+  function disconnectCopilot() {
+    if (!confirm('Disconnect from GitHub Copilot?')) return;
+    updateSetting('aiProvider', '');
+    updateSetting('aiKey', '');
+    copilotAuthState = 'idle';
+    copilotUserCode = '';
   }
 
   onMount(async () => {
@@ -450,35 +464,56 @@
           <option value="">Not configured</option>
           <option value="openai">OpenAI</option>
           <option value="copilot">GitHub Copilot</option>
+          <option value="github">GitHub Models (PAT)</option>
           <option value="custom">Custom (OpenAI-compatible)</option>
         </select>
       </label>
 
       {#if $settings.aiProvider}
         {#if $settings.aiProvider === 'copilot'}
-          {#if $settings.aiKey}
+          <!-- Copilot: device flow sign-in -->
+          {#if $settings.aiKey && copilotAuthState !== 'authorizing'}
             <div class="copilot-status">
-              <span class="copilot-connected">✓ Connected to GitHub Copilot</span>
-              <button class="btn-small" on:click={() => { updateSetting('aiKey', ''); }}>Disconnect</button>
+              <span class="copilot-connected">✓ Connected to Copilot</span>
+              <button class="btn-small btn-danger" on:click={disconnectCopilot}>Disconnect</button>
+            </div>
+            <label>
+              <span>Model <small>(leave empty for default: gpt-4o)</small></span>
+              <input type="text" placeholder="gpt-4o"
+                value={$settings.aiModel || ''}
+                on:change={e => updateSetting('aiModel', e.target.value.trim())} />
+            </label>
+          {:else if copilotAuthState === 'authorizing'}
+            <div class="copilot-code">
+              <p>Enter this code on GitHub:</p>
+              <div class="code-row">
+                <span class="user-code">{copilotUserCode}</span>
+                <button class="btn-copy" title="Copy code" on:click={() => { navigator.clipboard.writeText(copilotUserCode); }}>📋</button>
+              </div>
+              <p class="copilot-hint">Waiting for authorization…</p>
             </div>
           {:else}
-            <button class="btn-copilot" on:click={startCopilotSignIn} disabled={copilotSigningIn}>
-              {copilotSigningIn ? '⏳ Waiting for authorization...' : '🔗 Sign in with GitHub'}
+            <button class="btn-copilot" on:click={startCopilotSignIn}>
+              Sign in with GitHub
             </button>
-            {#if copilotUserCode}
-              <div class="copilot-code">
-                <p>Enter this code on GitHub:</p>
-                <span class="user-code">{copilotUserCode}</span>
-                <p class="copilot-hint">A browser window has opened. Paste the code and authorize.</p>
-              </div>
-            {/if}
-            {#if copilotError}
-              <div class="ai-settings-error">{copilotError}</div>
-            {/if}
+            <p class="ai-settings-hint-small">Requires an active <a href="#" on:click|preventDefault={() => BrowserOpenURL('https://github.com/features/copilot')}>Copilot subscription</a>.</p>
           {/if}
+          {#if copilotAuthState === 'error'}
+            <p class="ai-error">{copilotError}</p>
+          {/if}
+        {:else if $settings.aiProvider === 'github'}
+          <label>
+            <span>GitHub Personal Access Token</span>
+            <input type="password" placeholder="ghp_..."
+              value={$settings.aiKey || ''}
+              on:change={e => updateSetting('aiKey', e.target.value.trim())} />
+          </label>
+          <p class="ai-settings-hint-small">
+            Create a <a href="#" on:click|preventDefault={() => BrowserOpenURL('https://github.com/settings/tokens?type=beta')}>PAT</a> with <code>models:read</code> scope.
+          </p>
           <label>
             <span>Model <small>(leave empty for default)</small></span>
-            <input type="text" placeholder="gpt-4o"
+            <input type="text" placeholder="gpt-4o-mini"
               value={$settings.aiModel || ''}
               on:change={e => updateSetting('aiModel', e.target.value.trim())} />
           </label>
@@ -842,6 +877,22 @@
     line-height: 1.4;
   }
 
+  .ai-settings-hint-small {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 2px 0 4px;
+    line-height: 1.4;
+  }
+  .ai-settings-hint-small a {
+    color: var(--accent);
+  }
+  .ai-settings-hint-small code {
+    background: var(--bg-primary);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+
   .ai-settings-error {
     padding: 6px 8px;
     border-radius: 4px;
@@ -859,6 +910,7 @@
     font-weight: 600;
     font-size: 12px;
     cursor: pointer;
+    border: none;
   }
 
   .btn-copilot:disabled {
@@ -893,6 +945,27 @@
     color: var(--text-secondary);
   }
 
+  .code-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn-copy {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  .btn-copy:hover {
+    background: var(--bg-hover, var(--border));
+  }
+
   .user-code {
     font-size: 20px;
     font-weight: 700;
@@ -906,4 +979,11 @@
     color: var(--text-muted) !important;
     font-size: 10px !important;
   }
+
+  .ai-error {
+    color: var(--red, #f38ba8);
+    font-size: 11px;
+    margin: 4px 0;
+  }
+
 </style>

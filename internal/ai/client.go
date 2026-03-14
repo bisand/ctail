@@ -14,9 +14,10 @@ import (
 type Provider string
 
 const (
-	ProviderOpenAI  Provider = "openai"
-	ProviderCopilot Provider = "copilot"
-	ProviderCustom  Provider = "custom"
+	ProviderOpenAI       Provider = "openai"
+	ProviderGitHubModels Provider = "github"
+	ProviderCopilot      Provider = "copilot"
+	ProviderCustom       Provider = "custom"
 )
 
 // Config holds settings for the AI client.
@@ -75,10 +76,14 @@ func NewClient(cfg Config) *Client {
 // completionsURL returns the full chat completions endpoint.
 func (c *Client) completionsURL() string {
 	base := strings.TrimRight(c.cfg.Endpoint, "/")
-	if c.cfg.Provider == ProviderCopilot {
+	switch c.cfg.Provider {
+	case ProviderGitHubModels:
 		return base + "/chat/completions"
+	case ProviderCopilot:
+		return base + "/chat/completions"
+	default:
+		return base + "/v1/chat/completions"
 	}
-	return base + "/v1/chat/completions"
 }
 
 // Chat sends a list of messages and returns the assistant's reply.
@@ -100,8 +105,7 @@ func (c *Client) Chat(messages []Message) (string, error) {
 	switch c.cfg.Provider {
 	case ProviderCopilot:
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-		req.Header.Set("Editor-Version", "ctail/1.0")
-		req.Header.Set("Copilot-Integration-Id", "ctail")
+		setCopilotHeaders(req)
 	default:
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	}
