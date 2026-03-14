@@ -374,15 +374,17 @@
           <label>
             <span>Foreground</span>
             <div class="color-input">
-              <input type="color" bind:value={ruleForeground} />
-              <input type="text" bind:value={ruleForeground} />
+              <input type="color" value={ruleForeground || '#ffffff'} on:input={e => ruleForeground = e.target.value} />
+              <input type="text" bind:value={ruleForeground} placeholder="transparent" />
+              <button class="color-clear" on:click={() => ruleForeground = ''} title="Clear (transparent)">✕</button>
             </div>
           </label>
           <label>
             <span>Background</span>
             <div class="color-input">
-              <input type="color" bind:value={ruleBackground} />
-              <input type="text" bind:value={ruleBackground} />
+              <input type="color" value={ruleBackground || '#000000'} on:input={e => ruleBackground = e.target.value} />
+              <input type="text" bind:value={ruleBackground} placeholder="transparent" />
+              <button class="color-clear" on:click={() => ruleBackground = ''} title="Clear (transparent)">✕</button>
             </div>
           </label>
           <label class="toggle-label">
@@ -675,6 +677,26 @@
 
   .color-input input[type="text"] {
     flex: 1;
+  }
+
+  .color-clear {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .color-clear:hover {
+    background: var(--bg-hover);
+    color: var(--red, #f38ba8);
   }
 
   .editor-actions {
