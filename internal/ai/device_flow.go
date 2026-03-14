@@ -2,6 +2,7 @@ package ai
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,8 +62,8 @@ func RequestDeviceCode() (*DeviceCodeResponse, error) {
 }
 
 // PollForToken polls GitHub until the user completes the device flow authorization.
-// Returns the OAuth access token. Blocks until success, expiry, or error.
-func PollForToken(deviceCode string, interval int) (string, error) {
+// Returns the OAuth access token. Blocks until success, expiry, cancel, or error.
+func PollForToken(ctx context.Context, deviceCode string, interval int) (string, error) {
 	if interval < 5 {
 		interval = 5
 	}
@@ -74,23 +75,31 @@ func PollForToken(deviceCode string, interval int) (string, error) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("authorization cancelled")
 		case <-deadline:
 			return "", fmt.Errorf("device flow timed out — please try again")
 		case <-ticker.C:
-			token, done, err := checkDeviceAuth(deviceCode)
+			token, done, slowDown, err := checkDeviceAuth(deviceCode)
 			if err != nil {
 				return "", err
 			}
 			if done {
 				return token, nil
 			}
+			if slowDown {
+				// GitHub requires us to increase interval by 5 seconds
+				interval += 5
+				ticker.Stop()
+				ticker = time.NewTicker(time.Duration(interval) * time.Second)
+			}
 		}
 	}
 }
 
 // checkDeviceAuth makes a single poll request.
-// Returns (token, true, nil) on success, ("", false, nil) if still pending.
-func checkDeviceAuth(deviceCode string) (string, bool, error) {
+// Returns (token, done, slowDown, err).
+func checkDeviceAuth(deviceCode string) (string, bool, bool, error) {
 	payload, _ := json.Marshal(map[string]string{
 		"client_id":   copilotClientID,
 		"device_code": deviceCode,
@@ -99,7 +108,7 @@ func checkDeviceAuth(deviceCode string) (string, bool, error) {
 
 	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", bytes.NewReader(payload))
 	if err != nil {
-		return "", false, fmt.Errorf("create request: %w", err)
+		return "", false, false, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -107,13 +116,13 @@ func checkDeviceAuth(deviceCode string) (string, bool, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", false, fmt.Errorf("poll request failed: %w", err)
+		return "", false, false, fmt.Errorf("poll request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", false, fmt.Errorf("read response: %w", err)
+		return "", false, false, fmt.Errorf("read response: %w", err)
 	}
 
 	var result struct {
@@ -122,25 +131,25 @@ func checkDeviceAuth(deviceCode string) (string, bool, error) {
 		ErrorDesc   string `json:"error_description"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", false, fmt.Errorf("parse response: %w", err)
+		return "", false, false, fmt.Errorf("parse response: %w", err)
 	}
 
 	switch result.Error {
 	case "":
 		if result.AccessToken != "" {
-			return result.AccessToken, true, nil
+			return result.AccessToken, true, false, nil
 		}
-		return "", false, fmt.Errorf("empty token in response")
+		return "", false, false, fmt.Errorf("empty token in response")
 	case "authorization_pending":
-		return "", false, nil // still waiting
+		return "", false, false, nil
 	case "slow_down":
-		return "", false, nil // will respect interval
+		return "", false, true, nil
 	case "expired_token":
-		return "", false, fmt.Errorf("authorization expired — please try again")
+		return "", false, false, fmt.Errorf("authorization expired — please try again")
 	case "access_denied":
-		return "", false, fmt.Errorf("authorization denied by user")
+		return "", false, false, fmt.Errorf("authorization denied by user")
 	default:
-		return "", false, fmt.Errorf("GitHub error: %s — %s", result.Error, result.ErrorDesc)
+		return "", false, false, fmt.Errorf("GitHub error: %s — %s", result.Error, result.ErrorDesc)
 	}
 }
 

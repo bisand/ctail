@@ -45,8 +45,9 @@ type App struct {
 	winStateMu      sync.Mutex
 	stopWinTracker  chan struct{}
 	// OAuth device flow state
-	pendingDeviceCode  string
+	pendingDeviceCode   string
 	pendingPollInterval int
+	pendingAuthCancel   context.CancelFunc
 }
 
 // NewApp creates a new App
@@ -851,10 +852,14 @@ func (a *App) StartCopilotAuth() (map[string]string, error) {
 		return nil, fmt.Errorf("failed to start GitHub sign-in: %w", err)
 	}
 
-	// Store device code for the polling step
+	// Cancel any previous polling goroutine
 	a.mu.Lock()
+	if a.pendingAuthCancel != nil {
+		a.pendingAuthCancel()
+	}
 	a.pendingDeviceCode = dcr.DeviceCode
 	a.pendingPollInterval = dcr.Interval
+	a.pendingAuthCancel = nil
 	a.mu.Unlock()
 
 	return map[string]string{
@@ -866,22 +871,28 @@ func (a *App) StartCopilotAuth() (map[string]string, error) {
 // CompleteCopilotAuth polls GitHub until the user completes authorization.
 // On success, saves the token to settings and returns true.
 func (a *App) CompleteCopilotAuth() (bool, error) {
-	a.mu.RLock()
+	a.mu.Lock()
 	deviceCode := a.pendingDeviceCode
 	interval := a.pendingPollInterval
-	a.mu.RUnlock()
+	// Create cancellable context so a new auth attempt can stop this one
+	ctx, cancel := context.WithCancel(context.Background())
+	a.pendingAuthCancel = cancel
+	a.mu.Unlock()
 
 	if deviceCode == "" {
+		cancel()
 		return false, fmt.Errorf("no pending authorization — call StartCopilotAuth first")
 	}
 
-	token, err := ai.PollForToken(deviceCode, interval)
+	token, err := ai.PollForToken(ctx, deviceCode, interval)
 
 	// Clear pending state
 	a.mu.Lock()
 	a.pendingDeviceCode = ""
 	a.pendingPollInterval = 0
+	a.pendingAuthCancel = nil
 	a.mu.Unlock()
+	cancel()
 
 	if err != nil {
 		return false, err
