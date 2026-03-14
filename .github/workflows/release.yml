@@ -63,7 +63,9 @@ jobs:
         id: versioninfo
         shell: bash
         run: |
-          echo "BUILD_NUMBER=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          PREV=$(cat BUILD_NUMBER 2>/dev/null || echo 0)
+          BUILD_NUM=$((PREV + 1))
+          echo "BUILD_NUMBER=${BUILD_NUM}" >> $GITHUB_OUTPUT
           TAG="${GITHUB_REF_NAME#v}"
           echo "VERSION=${TAG}" >> $GITHUB_OUTPUT
 
@@ -122,3 +124,34 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build/bin/${{ matrix.asset_name }}.zip
+
+  update-version:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Update VERSION and BUILD_NUMBER
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "${TAG}" > VERSION
+          PREV=$(cat BUILD_NUMBER 2>/dev/null || echo 0)
+          echo "$((PREV + 1))" > BUILD_NUMBER
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION BUILD_NUMBER
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "ci: update VERSION to ${GITHUB_REF_NAME#v} and bump BUILD_NUMBER [skip ci]"
+            git push
+          fi

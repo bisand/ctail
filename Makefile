@@ -1,33 +1,32 @@
 TAGS ?= webkit2_41
 PREFIX ?= /usr/local
 NFPM ?= $(shell go env GOPATH)/bin/nfpm
-BUILD_NUMBER := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
 
-# Resolve version: gh release (GitHub truth) → git tag → VERSION file → fallback
-VERSION := $(shell \
-	gh release view --json tagName -q '.tagName' 2>/dev/null | sed 's/^v//' \
-	|| git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' \
-	|| cat VERSION 2>/dev/null \
-	|| echo 0.0.0-dev)
+# Read version from tracked file
+VERSION := $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
 
-# Cache resolved version locally for reference
-$(shell echo $(VERSION) > VERSION)
-
-LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
+# Build number — read from file, targets that produce binaries bump it
+BUILD_NUMBER := $(shell cat BUILD_NUMBER 2>/dev/null || echo 0)
 
 .PHONY: dev build build-windows build-macos clean test install uninstall package-deb package-rpm
 
 dev:
-	wails dev -tags $(TAGS)
+	wails dev -tags $(TAGS) -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
 
 build:
-	wails build -tags $(TAGS) $(LDFLAGS)
+	$(eval BUILD_NUMBER := $(shell echo $$(( $(BUILD_NUMBER) + 1 ))))
+	@echo $(BUILD_NUMBER) > BUILD_NUMBER
+	wails build -tags $(TAGS) -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
 
 build-windows:
-	wails build -platform windows/amd64
+	$(eval BUILD_NUMBER := $(shell echo $$(( $(BUILD_NUMBER) + 1 ))))
+	@echo $(BUILD_NUMBER) > BUILD_NUMBER
+	wails build -platform windows/amd64 -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
 
 build-macos:
-	wails build -platform darwin/universal
+	$(eval BUILD_NUMBER := $(shell echo $$(( $(BUILD_NUMBER) + 1 ))))
+	@echo $(BUILD_NUMBER) > BUILD_NUMBER
+	wails build -platform darwin/universal -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
 
 clean:
 	rm -rf build/bin
