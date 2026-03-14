@@ -99,3 +99,143 @@ func TestEngineNoRules(t *testing.T) {
 		t.Error("no rules should produce no matches")
 	}
 }
+
+func TestEngineInvalidPattern(t *testing.T) {
+	e := NewEngine()
+	err := e.SetRules([]RuleInput{
+		{ID: "bad", Pattern: `[invalid`, MatchType: "match", Enabled: true, Priority: 50},
+	})
+	if err != nil {
+		t.Error("SetRules should not return error for invalid patterns (skips them)")
+	}
+	result := e.Apply("test")
+	if len(result.Matches) > 0 {
+		t.Error("invalid pattern should be skipped")
+	}
+}
+
+func TestEngineEmptyPattern(t *testing.T) {
+	e := NewEngine()
+	e.SetRules([]RuleInput{
+		{ID: "empty", Pattern: ``, MatchType: "match", Enabled: true, Priority: 50, Foreground: "#fff"},
+	})
+	// Empty pattern matches everything — just ensure no panic
+	result := e.Apply("test")
+	_ = result
+}
+
+func TestEngineLineAndMatchCombination(t *testing.T) {
+	e := NewEngine()
+	e.SetRules([]RuleInput{
+		{ID: "line", Pattern: `ERROR`, MatchType: "line", Foreground: "#ff0000", Enabled: true, Priority: 100},
+		{ID: "word", Pattern: `\d+`, MatchType: "match", Foreground: "#00ff00", Enabled: true, Priority: 50},
+	})
+
+	result := e.Apply("ERROR code 42")
+	if !result.FullLine {
+		t.Error("expected full line match from ERROR rule")
+	}
+	if result.Foreground != "#ff0000" {
+		t.Errorf("expected line color #ff0000, got %s", result.Foreground)
+	}
+	// match rules should still produce matches even with a line match
+	if len(result.Matches) != 1 {
+		t.Errorf("expected 1 word match (42), got %d", len(result.Matches))
+	}
+}
+
+func TestEngineItalicBold(t *testing.T) {
+	e := NewEngine()
+	e.SetRules([]RuleInput{
+		{ID: "styled", Pattern: `WARN`, MatchType: "line", Foreground: "#ffaa00",
+			Bold: true, Italic: true, Enabled: true, Priority: 50},
+	})
+
+	result := e.Apply("WARN: something")
+	if !result.Bold {
+		t.Error("expected bold")
+	}
+	if !result.Italic {
+		t.Error("expected italic")
+	}
+}
+
+func TestEngineMatchStyles(t *testing.T) {
+	e := NewEngine()
+	e.SetRules([]RuleInput{
+		{ID: "ip", Pattern: `\d+\.\d+\.\d+\.\d+`, MatchType: "match",
+			Foreground: "#00ffff", Background: "#003333", Bold: true, Italic: true,
+			Enabled: true, Priority: 50},
+	})
+
+	result := e.Apply("Connected from 192.168.1.1")
+	if len(result.Matches) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(result.Matches))
+	}
+	m := result.Matches[0]
+	if m.Foreground != "#00ffff" {
+		t.Errorf("foreground = %q", m.Foreground)
+	}
+	if m.Background != "#003333" {
+		t.Errorf("background = %q", m.Background)
+	}
+	if !m.Bold {
+		t.Error("expected bold")
+	}
+	if !m.Italic {
+		t.Error("expected italic")
+	}
+	if m.RuleID != "ip" {
+		t.Errorf("ruleID = %q, want ip", m.RuleID)
+	}
+}
+
+func TestEngineEmptyText(t *testing.T) {
+	e := NewEngine()
+	e.SetRules([]RuleInput{
+		{ID: "any", Pattern: `.+`, MatchType: "match", Enabled: true, Priority: 50},
+	})
+
+	result := e.Apply("")
+	if result.FullLine || len(result.Matches) > 0 {
+		t.Error("empty text should produce no matches")
+	}
+}
+
+func TestEngineConcurrentApply(t *testing.T) {
+	e := NewEngine()
+	e.SetRules([]RuleInput{
+		{ID: "num", Pattern: `\d+`, MatchType: "match", Foreground: "#fff", Enabled: true, Priority: 50},
+	})
+
+	done := make(chan bool, 10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			for j := 0; j < 100; j++ {
+				result := e.Apply("test 123 line")
+				if len(result.Matches) != 1 {
+					t.Errorf("expected 1 match, got %d", len(result.Matches))
+				}
+			}
+			done <- true
+		}()
+	}
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}
+
+func TestValidatePatternEdgeCases(t *testing.T) {
+	// Valid patterns
+	for _, p := range []string{`.*`, `\d+`, `(?i)error`, `^$`, `a{3,5}`, `(a|b)`} {
+		if err := ValidatePattern(p); err != nil {
+			t.Errorf("ValidatePattern(%q) should pass, got %v", p, err)
+		}
+	}
+	// Invalid patterns
+	for _, p := range []string{`[unclosed`, `(?P<wrong`, `*repeat`} {
+		if err := ValidatePattern(p); err == nil {
+			t.Errorf("ValidatePattern(%q) should fail", p)
+		}
+	}
+}

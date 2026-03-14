@@ -13,6 +13,13 @@ import (
 // Copilot editor integrations use this public client ID for the device flow.
 const copilotClientID = "Iv1.b507a08c87ecfe98"
 
+// Endpoints are package-level vars so tests can override them.
+var (
+	deviceCodeEndpoint = "https://github.com/login/device/code"
+	pollEndpoint       = "https://github.com/login/oauth/access_token"
+	exchangeEndpoint   = "https://api.github.com/copilot_internal/v2/token"
+)
+
 // DeviceCodeResponse is returned when initiating the device flow.
 type DeviceCodeResponse struct {
 	DeviceCode      string `json:"device_code"`
@@ -30,7 +37,7 @@ func RequestDeviceCode() (*DeviceCodeResponse, error) {
 		"scope":     "read:user",
 	})
 
-	req, err := http.NewRequest("POST", "https://github.com/login/device/code", bytes.NewReader(payload))
+	req, err := http.NewRequest("POST", deviceCodeEndpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -61,11 +68,15 @@ func RequestDeviceCode() (*DeviceCodeResponse, error) {
 	return &dcr, nil
 }
 
+// minPollInterval is the minimum polling interval in seconds.
+// GitHub requires at least 5 seconds between polls.
+var minPollInterval = 5
+
 // PollForToken polls GitHub until the user completes the device flow authorization.
 // Returns the OAuth access token. Blocks until success, expiry, cancel, or error.
 func PollForToken(ctx context.Context, deviceCode string, interval int) (string, error) {
-	if interval < 5 {
-		interval = 5
+	if interval < minPollInterval {
+		interval = minPollInterval
 	}
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
@@ -106,7 +117,7 @@ func checkDeviceAuth(deviceCode string) (string, bool, bool, error) {
 		"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
 	})
 
-	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", bytes.NewReader(payload))
+	req, err := http.NewRequest("POST", pollEndpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", false, false, fmt.Errorf("create request: %w", err)
 	}
@@ -162,7 +173,7 @@ type CopilotToken struct {
 // ExchangeCopilotToken exchanges a GitHub OAuth token for a short-lived Copilot API token.
 // Sends required editor headers so GitHub recognises us as a valid Copilot integration.
 func ExchangeCopilotToken(oauthToken string) (*CopilotToken, error) {
-	req, err := http.NewRequest("GET", "https://api.github.com/copilot_internal/v2/token", nil)
+	req, err := http.NewRequest("GET", exchangeEndpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
