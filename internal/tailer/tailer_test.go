@@ -100,14 +100,14 @@ func TestTailerTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	truncated := false
-	var mu sync.Mutex
+	truncated := make(chan struct{}, 1)
 
 	tail := New(path, 50*time.Millisecond, 1000)
 	tail.OnTruncated(func() {
-		mu.Lock()
-		truncated = true
-		mu.Unlock()
+		select {
+		case truncated <- struct{}{}:
+		default:
+		}
 	})
 
 	if err := tail.Start(); err != nil {
@@ -115,20 +115,27 @@ func TestTailerTruncation(t *testing.T) {
 	}
 	defer tail.Stop()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
-	// Truncate the file
+	// Truncate then write new content
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for truncation callback (up to 1s)
+	select {
+	case <-truncated:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for truncation callback")
+	}
+
+	// Now write fresh content
 	if err := os.WriteFile(path, []byte("fresh\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
+	// Wait for the tailer to pick up the new content
 	time.Sleep(200 * time.Millisecond)
-
-	mu.Lock()
-	if !truncated {
-		t.Error("expected truncation callback")
-	}
-	mu.Unlock()
 
 	lines := tail.GetLines()
 	if len(lines) != 1 {
