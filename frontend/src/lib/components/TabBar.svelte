@@ -78,6 +78,8 @@
   function ctxCloseOthers() {
     const keepId = ctxMenu.tabId;
     const toClose = $tabs.filter(t => t.id !== keepId);
+    if (toClose.length === 0) { closeCtxMenu(); return; }
+    if (!confirm(`Close ${toClose.length} other tab${toClose.length > 1 ? 's' : ''}?`)) { closeCtxMenu(); return; }
     for (const t of toClose) {
       CloseTab(t.id);
       tabStore.removeTab(t.id);
@@ -88,6 +90,8 @@
   function ctxCloseToRight() {
     const idx = ctxMenu.tabIndex;
     const toClose = $tabs.slice(idx + 1);
+    if (toClose.length === 0) { closeCtxMenu(); return; }
+    if (!confirm(`Close ${toClose.length} tab${toClose.length > 1 ? 's' : ''} to the right?`)) { closeCtxMenu(); return; }
     for (const t of toClose) {
       CloseTab(t.id);
       tabStore.removeTab(t.id);

@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Copilot editor integrations use this public client ID for the device flow.
-const copilotClientID = "Iv1.b507a08c87ecfe98"
+// Copilot uses this public client ID for the device flow (updated 2025).
+const copilotClientID = "Iv23li1BMMe2RGAuhf8j"
 
 // DeviceCodeResponse is returned when initiating the device flow.
 type DeviceCodeResponse struct {
@@ -27,7 +27,7 @@ type DeviceCodeResponse struct {
 func RequestDeviceCode() (*DeviceCodeResponse, error) {
 	data := url.Values{
 		"client_id": {copilotClientID},
-		"scope":     {"read:user"},
+		"scope":     {"copilot"},
 	}
 
 	req, err := http.NewRequest("POST", "https://github.com/login/device/code", strings.NewReader(data.Encode()))

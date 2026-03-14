@@ -215,6 +215,8 @@
   }
 
   async function deleteRule(ruleId) {
+    const rule = currentRules.find(r => r.id === ruleId);
+    if (!confirm(`Delete rule "${rule?.name || ruleId}"?`)) return;
     const updatedRules = currentRules.filter(r => r.id !== ruleId);
     await saveRules(updatedRules);
   }
@@ -239,6 +241,7 @@
 
   async function deleteCurrentProfile() {
     if ($profileNames.length <= 1) return;
+    if (!confirm(`Delete profile "${selectedProfile}"? This cannot be undone.`)) return;
     await DeleteProfile(selectedProfile);
     profiles.update(all => {
       const copy = { ...all };
@@ -388,6 +391,7 @@
       </div>
 
       <button class="btn-add-rule" on:click={startNewRule}>+ Add Rule</button>
+      <button class="btn-add-rule ai-generate" on:click={() => window.dispatchEvent(new CustomEvent('ctail:open-ai'))} title="Use AI to generate rules from your logs">🤖 AI Generate Rules</button>
 
       {#if editingRule}
         <div class="rule-editor">
@@ -744,6 +748,17 @@
   .btn-add-rule:hover {
     border-color: var(--accent);
     color: var(--accent);
+  }
+
+  .btn-add-rule.ai-generate {
+    margin-top: 4px;
+    border-style: solid;
+    border-color: var(--accent);
+    opacity: 0.7;
+  }
+
+  .btn-add-rule.ai-generate:hover {
+    opacity: 1;
   }
 
   .rule-editor {
