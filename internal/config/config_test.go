@@ -23,8 +23,8 @@ func TestDefaultSettings(t *testing.T) {
 	if s.DisplayBackend != "auto" {
 		t.Errorf("expected auto display backend, got %s", s.DisplayBackend)
 	}
-	if !s.CheckForUpdates {
-		t.Error("expected CheckForUpdates to default to true")
+	if s.DisableUpdateCheck {
+		t.Error("expected DisableUpdateCheck to default to false (updates enabled)")
 	}
 	if s.Window.Width != 1200 || s.Window.Height != 800 {
 		t.Errorf("expected default window 1200x800, got %dx%d", s.Window.Width, s.Window.Height)

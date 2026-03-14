@@ -51,6 +51,7 @@ export namespace config {
 	    recentFiles: string[];
 	    window: WindowState;
 	    displayBackend: string;
+	    disableUpdateCheck: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -72,6 +73,7 @@ export namespace config {
 	        this.recentFiles = source["recentFiles"];
 	        this.window = this.convertValues(source["window"], WindowState);
 	        this.displayBackend = source["displayBackend"];
+	        this.disableUpdateCheck = source["disableUpdateCheck"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

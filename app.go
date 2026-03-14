@@ -79,7 +79,7 @@ func (a *App) startup(ctx context.Context) {
 	go a.trackWindowState()
 
 	// Check for updates in background (once per startup)
-	if a.config.GetSettings().CheckForUpdates {
+	if !a.config.GetSettings().DisableUpdateCheck {
 		go a.checkForUpdates()
 	}
 }

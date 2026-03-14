@@ -55,7 +55,7 @@ type AppSettings struct {
 	RecentFiles   []string      `json:"recentFiles"`
 	Window        WindowState   `json:"window"`
 	DisplayBackend string       `json:"displayBackend"` // "auto", "x11", or "wayland"
-	CheckForUpdates bool        `json:"checkForUpdates"`
+	DisableUpdateCheck bool     `json:"disableUpdateCheck"`
 }
 
 // DefaultSettings returns sensible defaults
@@ -79,7 +79,7 @@ func DefaultSettings() AppSettings {
 			Height: 800,
 		},
 		DisplayBackend: "auto",
-		CheckForUpdates: true,
+		DisableUpdateCheck: false,
 	}
 }
 

@@ -298,8 +298,8 @@
         </select>
       </label>
       <label class="toggle-label">
-        <input type="checkbox" checked={$settings.checkForUpdates !== false}
-          on:change={(e) => updateSetting('checkForUpdates', e.target.checked)} />
+        <input type="checkbox" checked={!$settings.disableUpdateCheck}
+          on:change={(e) => updateSetting('disableUpdateCheck', !e.target.checked)} />
         <span>Check for updates on startup</span>
       </label>
     </div>
