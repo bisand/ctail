@@ -6,6 +6,7 @@ import (
 	"ctail/internal/rules"
 	"ctail/internal/tailer"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -174,6 +175,24 @@ func (a *App) restoreWindowState(ctx context.Context) {
 // OpenFileDialog opens a native file dialog and returns the selected path.
 // defaultDir is optional — when non-empty the dialog starts in that directory.
 func (a *App) OpenFileDialog(defaultDir string) (string, error) {
+	// Validate the default directory is accessible with a short timeout
+	// to avoid freezing the UI when the path is on a stale network mount.
+	if defaultDir != "" {
+		ch := make(chan bool, 1)
+		go func() {
+			_, err := os.Stat(defaultDir)
+			ch <- err == nil
+		}()
+		select {
+		case ok := <-ch:
+			if !ok {
+				defaultDir = ""
+			}
+		case <-time.After(2 * time.Second):
+			defaultDir = "" // stale mount, fall back to system default
+		}
+	}
+
 	return wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title:            "Open Log File",
 		DefaultDirectory: defaultDir,

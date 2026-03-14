@@ -284,6 +284,11 @@ func (t *Tailer) pollLoop() {
 	ticker := time.NewTicker(t.pollInterval)
 	defer ticker.Stop()
 
+	// pollActive tracks whether a poll goroutine is currently running.
+	// This prevents spawning new goroutines while one is blocked on I/O
+	// (e.g. stale network mount), avoiding unbounded goroutine leaks.
+	pollActive := make(chan struct{}, 1)
+
 	for {
 		select {
 		case <-t.stopCh:
@@ -294,19 +299,40 @@ func (t *Tailer) pollLoop() {
 			t.mu.RUnlock()
 			ticker.Reset(interval)
 
-			// Run poll in a goroutine so a blocked file I/O
-			// (e.g. stale remote mount) doesn't prevent shutdown.
-			pollDone := make(chan struct{})
-			go func() {
-				t.poll()
-				close(pollDone)
-			}()
-
+			// Skip this tick if a previous poll is still running
 			select {
-			case <-pollDone:
-			case <-t.stopCh:
-				return
+			case pollActive <- struct{}{}:
+				// Got the slot — spawn poll goroutine
+			default:
+				// Previous poll still in progress, skip
+				continue
 			}
+
+			go func() {
+				defer func() { <-pollActive }()
+
+				pollDone := make(chan struct{})
+				go func() {
+					t.poll()
+					close(pollDone)
+				}()
+
+				select {
+				case <-pollDone:
+				case <-t.stopCh:
+					return
+				case <-time.After(15 * time.Second):
+					// Poll timed out (likely stale mount) — report error and move on.
+					// The blocked goroutine will eventually return when the OS times out.
+					t.mu.Lock()
+					wasInError := t.inError
+					t.inError = true
+					t.mu.Unlock()
+					if !wasInError && t.onError != nil {
+						t.onError(fmt.Errorf("timeout polling %s (file may be on an unreachable mount)", t.filePath))
+					}
+				}
+			}()
 		}
 	}
 }
