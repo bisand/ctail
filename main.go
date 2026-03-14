@@ -111,8 +111,18 @@ func main() {
 		wailsRuntime.EventsEmit(app.ctx, "menu:toggle-theme")
 	})
 
+	// Tools menu
+	toolsMenu := appMenu.AddSubmenu("Tools")
+	toolsMenu.AddText("AI Assistant...", keys.Combo("a", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
+		wailsRuntime.EventsEmit(app.ctx, "menu:ai-assistant")
+	})
+
 	// Help menu
 	helpMenu := appMenu.AddSubmenu("Help")
+	helpMenu.AddText("Check for Updates", nil, func(_ *menu.CallbackData) {
+		wailsRuntime.EventsEmit(app.ctx, "menu:check-updates")
+	})
+	helpMenu.AddSeparator()
 	helpMenu.AddText("About ctail", nil, func(_ *menu.CallbackData) {
 		wailsRuntime.EventsEmit(app.ctx, "menu:about")
 	})

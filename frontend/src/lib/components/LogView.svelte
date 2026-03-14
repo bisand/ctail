@@ -279,6 +279,11 @@
     searchVisible = false;
     closeContextMenu();
   }
+
+  function ctxAskAI() {
+    window.dispatchEvent(new CustomEvent('ctail:open-ai'));
+    closeContextMenu();
+  }
 </script>
 
 <svelte:window on:keydown={handleKeydown} on:click={closeContextMenu} />
@@ -381,6 +386,10 @@
         </button>
         <button class="ctx-item" on:click={toggleFollow}>
           {autoScroll ? 'Unfollow' : 'Follow'} tail
+        </button>
+        <div class="ctx-separator"></div>
+        <button class="ctx-item" on:click={ctxAskAI}>
+          🤖 Ask AI about logs <span class="ctx-key">Ctrl+Shift+A</span>
         </button>
       </div>
     {/if}

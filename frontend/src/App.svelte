@@ -9,7 +9,7 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, SaveSettings, ListProfiles, GetProfile, ListThemes } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates } from '../wailsjs/go/main/App.js';
   import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
   import { loadAndApplyTheme } from './lib/utils/themes.js';
 
@@ -180,6 +180,14 @@
       window.dispatchEvent(new CustomEvent('ctail:find'));
     });
 
+    EventsOn('menu:ai-assistant', () => {
+      showAI = true;
+    });
+
+    EventsOn('menu:check-updates', async () => {
+      await ManualCheckForUpdates();
+    });
+
     EventsOn('app:update-available', (data) => {
       updateAvailable = data;
     });
@@ -213,6 +221,7 @@
     // key combos like Ctrl+Shift+Tab before they reach our handler.
     window.addEventListener('keydown', handleGlobalKeydown, true);
     window.addEventListener('keyup', handleGlobalKeyup, true);
+    window.addEventListener('ctail:open-ai', () => { showAI = true; });
 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);

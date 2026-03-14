@@ -82,6 +82,10 @@ export function ListThemes() {
   return window['go']['main']['App']['ListThemes']();
 }
 
+export function ManualCheckForUpdates() {
+  return window['go']['main']['App']['ManualCheckForUpdates']();
+}
+
 export function OpenFileDialog(arg1) {
   return window['go']['main']['App']['OpenFileDialog'](arg1);
 }

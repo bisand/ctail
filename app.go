@@ -173,15 +173,24 @@ func (a *App) trackWindowState() {
 func (a *App) checkForUpdates() {
 	// Small delay to let the UI fully load
 	time.Sleep(3 * time.Second)
+	a.doUpdateCheck()
+}
 
+// ManualCheckForUpdates is called from the Help menu. Returns a user-facing message.
+func (a *App) ManualCheckForUpdates() string {
+	return a.doUpdateCheck()
+}
+
+// doUpdateCheck queries GitHub and emits an event if an update is available.
+func (a *App) doUpdateCheck() string {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get("https://api.github.com/repos/bisand/ctail/releases/latest")
 	if err != nil {
-		return
+		return "Failed to check for updates: " + err.Error()
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return
+		return "Failed to check for updates (HTTP " + fmt.Sprintf("%d", resp.StatusCode) + ")"
 	}
 
 	var release struct {
@@ -190,7 +199,7 @@ func (a *App) checkForUpdates() {
 		Body    string `json:"body"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return
+		return "Failed to parse update info"
 	}
 
 	latest := strings.TrimPrefix(release.TagName, "v")
@@ -199,7 +208,9 @@ func (a *App) checkForUpdates() {
 			"version": latest,
 			"url":     release.HTMLURL,
 		})
+		return "Update available: v" + latest
 	}
+	return "You're up to date (v" + a.version + ")"
 }
 
 // compareVersions compares two semver strings (e.g. "0.5.3" vs "0.5.2").
