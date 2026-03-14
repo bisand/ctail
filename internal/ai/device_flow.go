@@ -1,17 +1,16 @@
 package ai
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 )
 
-// Copilot uses this public client ID for the device flow (updated 2025).
-const copilotClientID = "Iv23li1BMMe2RGAuhf8j"
+// Copilot editor integrations use this public client ID for the device flow.
+const copilotClientID = "Iv1.b507a08c87ecfe98"
 
 // DeviceCodeResponse is returned when initiating the device flow.
 type DeviceCodeResponse struct {
@@ -25,16 +24,16 @@ type DeviceCodeResponse struct {
 // RequestDeviceCode initiates the GitHub OAuth device flow.
 // Returns the device code response containing the user code to display.
 func RequestDeviceCode() (*DeviceCodeResponse, error) {
-	data := url.Values{
-		"client_id": {copilotClientID},
-		"scope":     {"copilot"},
-	}
+	payload, _ := json.Marshal(map[string]string{
+		"client_id": copilotClientID,
+		"scope":     "read:user",
+	})
 
-	req, err := http.NewRequest("POST", "https://github.com/login/device/code", strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", "https://github.com/login/device/code", bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -92,17 +91,17 @@ func PollForToken(deviceCode string, interval int) (string, error) {
 // checkDeviceAuth makes a single poll request.
 // Returns (token, true, nil) on success, ("", false, nil) if still pending.
 func checkDeviceAuth(deviceCode string) (string, bool, error) {
-	data := url.Values{
-		"client_id":   {copilotClientID},
-		"device_code": {deviceCode},
-		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
-	}
+	payload, _ := json.Marshal(map[string]string{
+		"client_id":   copilotClientID,
+		"device_code": deviceCode,
+		"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
+	})
 
-	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", bytes.NewReader(payload))
 	if err != nil {
 		return "", false, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
