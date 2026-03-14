@@ -75,7 +75,7 @@ jobs:
       - name: Build deb and rpm packages
         if: runner.os == 'Linux'
         run: |
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.1
           FULL_VERSION="${{ steps.versioninfo.outputs.VERSION }}.${{ steps.versioninfo.outputs.BUILD_NUMBER }}"
           sed -i "0,/<release version=\"[^\"]*\"/{s/<release version=\"[^\"]*\"/<release version=\"${FULL_VERSION}\"/}" build/linux/io.github.bisand.ctail.metainfo.xml
           export VERSION="${FULL_VERSION}"
