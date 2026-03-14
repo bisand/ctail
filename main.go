@@ -13,11 +13,15 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+//go:embed build/appicon.png
+var appIcon []byte
 
 // Set via -ldflags at build time
 var buildNumber = "dev"
@@ -141,6 +145,10 @@ func main() {
 		OnStartup:        app.startup,
 		OnDomReady:       app.restoreWindowState,
 		OnShutdown:       app.shutdown,
+		Linux: &linux.Options{
+			Icon:        appIcon,
+			ProgramName: "ctail",
+		},
 		Bind: []interface{}{
 			app,
 		},
