@@ -45,7 +45,7 @@ export function ListProfiles():Promise<Array<string>>;
 
 export function ListThemes():Promise<Array<config.Theme>>;
 
-export function ManualCheckForUpdates():Promise<string>;
+export function ManualCheckForUpdates():Promise<main.UpdateCheckResult>;
 
 export function OpenFileDialog(arg1:string):Promise<string>;
 

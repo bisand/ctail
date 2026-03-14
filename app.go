@@ -32,19 +32,29 @@ type TabInfo struct {
 
 // App is the main application struct bound to Wails
 type App struct {
-	ctx             context.Context
-	config          *config.Manager
-	preloadedConfig *config.Manager
-	mu              sync.RWMutex
-	tabs            map[string]*TabInfo
-	nextID          int
-	recentMenu      *menu.Menu
-	version         string
-	buildNumber     string
-	cachedWinState  config.WindowState
-	winStateMu      sync.Mutex
-	stopWinTracker  chan struct{}
-	copilotCancel   context.CancelFunc // cancels a running device-flow poll
+	ctx               context.Context
+	config            *config.Manager
+	preloadedConfig   *config.Manager
+	mu                sync.RWMutex
+	tabs              map[string]*TabInfo
+	nextID            int
+	recentMenu        *menu.Menu
+	version           string
+	buildNumber       string
+	cachedWinState    config.WindowState
+	winStateMu        sync.Mutex
+	stopWinTracker    chan struct{}
+	stopUpdateChecker chan struct{}
+	copilotCancel     context.CancelFunc // cancels a running device-flow poll
+}
+
+// UpdateCheckResult is returned by ManualCheckForUpdates for the frontend dialog
+type UpdateCheckResult struct {
+	UpdateAvailable bool   `json:"updateAvailable"`
+	LatestVersion   string `json:"latestVersion"`
+	CurrentVersion  string `json:"currentVersion"`
+	URL             string `json:"url"`
+	Error           string `json:"error"`
 }
 
 // NewApp creates a new App
@@ -59,6 +69,7 @@ func NewApp(ver string, buildNum string) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.stopWinTracker = make(chan struct{})
+	a.stopUpdateChecker = make(chan struct{})
 	if a.preloadedConfig != nil {
 		a.config = a.preloadedConfig
 		a.preloadedConfig = nil
@@ -80,9 +91,9 @@ func (a *App) startup(ctx context.Context) {
 	// Start background goroutine to track window state
 	go a.trackWindowState()
 
-	// Check for updates in background (once per startup)
+	// Start periodic update checker
 	if !a.config.GetSettings().DisableUpdateCheck {
-		go a.checkForUpdates()
+		go a.periodicUpdateCheck()
 	}
 }
 
@@ -90,6 +101,11 @@ func (a *App) shutdown(ctx context.Context) {
 	// Stop the window state tracker
 	if a.stopWinTracker != nil {
 		close(a.stopWinTracker)
+	}
+
+	// Stop the periodic update checker
+	if a.stopUpdateChecker != nil {
+		close(a.stopUpdateChecker)
 	}
 
 	// Save cached window state
@@ -167,48 +183,80 @@ func (a *App) trackWindowState() {
 	}
 }
 
-// checkForUpdates queries the GitHub releases API and emits an event if a newer version exists.
-func (a *App) checkForUpdates() {
+// periodicUpdateCheck runs an update check at startup (after a short delay) and
+// then repeats at the configured interval (UpdateCheckIntervalHours).
+func (a *App) periodicUpdateCheck() {
 	// Small delay to let the UI fully load
 	time.Sleep(3 * time.Second)
-	a.doUpdateCheck()
+	a.doSilentUpdateCheck()
+
+	hours := a.config.GetSettings().UpdateCheckIntervalHours
+	if hours <= 0 {
+		hours = 24
+	}
+	ticker := time.NewTicker(time.Duration(hours) * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			a.doSilentUpdateCheck()
+		case <-a.stopUpdateChecker:
+			return
+		}
+	}
 }
 
-// ManualCheckForUpdates is called from the Help menu. Returns a user-facing message.
-func (a *App) ManualCheckForUpdates() string {
-	return a.doUpdateCheck()
+// doSilentUpdateCheck queries GitHub and emits an event only when an update is available.
+func (a *App) doSilentUpdateCheck() {
+	result := a.fetchLatestRelease()
+	if result.UpdateAvailable {
+		wailsRuntime.EventsEmit(a.ctx, "app:update-available", map[string]string{
+			"version": result.LatestVersion,
+			"url":     result.URL,
+		})
+	}
 }
 
-// doUpdateCheck queries GitHub and emits an event if an update is available.
-func (a *App) doUpdateCheck() string {
+// ManualCheckForUpdates is called from the Help menu. Returns a structured result for the dialog.
+func (a *App) ManualCheckForUpdates() UpdateCheckResult {
+	return a.fetchLatestRelease()
+}
+
+// fetchLatestRelease queries the GitHub releases API and returns the result.
+func (a *App) fetchLatestRelease() UpdateCheckResult {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get("https://api.github.com/repos/bisand/ctail/releases/latest")
 	if err != nil {
-		return "Failed to check for updates: " + err.Error()
+		return UpdateCheckResult{CurrentVersion: a.version, Error: "Failed to check for updates: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "Failed to check for updates (HTTP " + fmt.Sprintf("%d", resp.StatusCode) + ")"
+		return UpdateCheckResult{CurrentVersion: a.version, Error: "Failed to check for updates (HTTP " + fmt.Sprintf("%d", resp.StatusCode) + ")"}
 	}
 
 	var release struct {
 		TagName string `json:"tag_name"`
 		HTMLURL string `json:"html_url"`
-		Body    string `json:"body"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "Failed to parse update info"
+		return UpdateCheckResult{CurrentVersion: a.version, Error: "Failed to parse update info"}
 	}
 
 	latest := strings.TrimPrefix(release.TagName, "v")
 	if latest != "" && compareVersions(latest, a.version) > 0 {
-		wailsRuntime.EventsEmit(a.ctx, "app:update-available", map[string]string{
-			"version": latest,
-			"url":     release.HTMLURL,
-		})
-		return "Update available: v" + latest
+		return UpdateCheckResult{
+			UpdateAvailable: true,
+			LatestVersion:   latest,
+			CurrentVersion:  a.version,
+			URL:             release.HTMLURL,
+		}
 	}
-	return "You're up to date (v" + a.version + ")"
+	return UpdateCheckResult{
+		UpdateAvailable: false,
+		CurrentVersion:  a.version,
+		LatestVersion:   latest,
+	}
 }
 
 // compareVersions compares two semver strings (e.g. "0.5.3" vs "0.5.2").

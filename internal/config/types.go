@@ -55,7 +55,8 @@ type AppSettings struct {
 	RecentFiles   []string      `json:"recentFiles"`
 	Window        WindowState   `json:"window"`
 	DisplayBackend string       `json:"displayBackend"` // "auto", "x11", or "wayland"
-	DisableUpdateCheck bool     `json:"disableUpdateCheck"`
+	DisableUpdateCheck       bool `json:"disableUpdateCheck"`
+	UpdateCheckIntervalHours int  `json:"updateCheckIntervalHours"`
 	// AI assistant settings
 	AIProvider string `json:"aiProvider"` // "openai", "copilot", "custom", or ""
 	AIEndpoint string `json:"aiEndpoint"`
@@ -84,7 +85,8 @@ func DefaultSettings() AppSettings {
 			Height: 800,
 		},
 		DisplayBackend: "auto",
-		DisableUpdateCheck: false,
+		DisableUpdateCheck:       false,
+		UpdateCheckIntervalHours: 24,
 	}
 }
 

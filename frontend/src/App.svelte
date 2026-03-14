@@ -6,6 +6,7 @@
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import AboutDialog from './lib/components/AboutDialog.svelte';
   import AIDialog from './lib/components/AIDialog.svelte';
+  import UpdateDialog from './lib/components/UpdateDialog.svelte';
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
@@ -20,6 +21,10 @@
 
   // AI dialog state
   let showAI = false;
+
+  // Update dialog state
+  let showUpdateDialog = false;
+  let updateCheckResult = null;
 
   // Update notification state
   let updateAvailable = null; // { version, url }
@@ -185,7 +190,18 @@
     });
 
     EventsOn('menu:check-updates', async () => {
-      await ManualCheckForUpdates();
+      try {
+        const result = await ManualCheckForUpdates();
+        updateCheckResult = result;
+        showUpdateDialog = true;
+        // Also show the silent banner if update is available
+        if (result.updateAvailable) {
+          updateAvailable = { version: result.latestVersion, url: result.url };
+        }
+      } catch (e) {
+        updateCheckResult = { error: String(e), currentVersion: '' };
+        showUpdateDialog = true;
+      }
     });
 
     EventsOn('app:update-available', (data) => {
@@ -356,6 +372,7 @@
 
 <AboutDialog bind:show={showAbout} />
 <AIDialog bind:show={showAI} />
+<UpdateDialog bind:show={showUpdateDialog} result={updateCheckResult} />
 
 <style>
   .app {

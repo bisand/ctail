@@ -346,8 +346,22 @@
       <label class="toggle-label">
         <input type="checkbox" checked={!$settings.disableUpdateCheck}
           on:change={(e) => updateSetting('disableUpdateCheck', !e.target.checked)} />
-        <span>Check for updates on startup</span>
+        <span>Check for updates automatically</span>
       </label>
+      {#if !$settings.disableUpdateCheck}
+        <label>
+          <span>Update check interval</span>
+          <select value={$settings.updateCheckIntervalHours || 24}
+            on:change={(e) => updateSetting('updateCheckIntervalHours', parseInt(e.target.value))}>
+            <option value={1}>Every hour</option>
+            <option value={6}>Every 6 hours</option>
+            <option value={12}>Every 12 hours</option>
+            <option value={24}>Every 24 hours</option>
+            <option value={72}>Every 3 days</option>
+            <option value={168}>Every week</option>
+          </select>
+        </label>
+      {/if}
     </div>
 
   {:else if activeSection === 'rules'}

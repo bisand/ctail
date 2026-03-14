@@ -77,6 +77,7 @@ export namespace config {
 	    window: WindowState;
 	    displayBackend: string;
 	    disableUpdateCheck: boolean;
+	    updateCheckIntervalHours: number;
 	    aiProvider: string;
 	    aiEndpoint: string;
 	    aiKey: string;
@@ -103,6 +104,7 @@ export namespace config {
 	        this.window = this.convertValues(source["window"], WindowState);
 	        this.displayBackend = source["displayBackend"];
 	        this.disableUpdateCheck = source["disableUpdateCheck"];
+	        this.updateCheckIntervalHours = source["updateCheckIntervalHours"];
 	        this.aiProvider = source["aiProvider"];
 	        this.aiEndpoint = source["aiEndpoint"];
 	        this.aiKey = source["aiKey"];
@@ -297,6 +299,26 @@ export namespace main {
 	        this.filePath = source["filePath"];
 	        this.fileName = source["fileName"];
 	        this.profile = source["profile"];
+	    }
+	}
+	export class UpdateCheckResult {
+	    updateAvailable: boolean;
+	    latestVersion: string;
+	    currentVersion: string;
+	    url: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateCheckResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.updateAvailable = source["updateAvailable"];
+	        this.latestVersion = source["latestVersion"];
+	        this.currentVersion = source["currentVersion"];
+	        this.url = source["url"];
+	        this.error = source["error"];
 	    }
 	}
 
