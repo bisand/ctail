@@ -12,6 +12,8 @@ export function ClearRecentFiles():Promise<void>;
 
 export function CloseTab(arg1:string):Promise<void>;
 
+export function CompleteCopilotAuth():Promise<boolean>;
+
 export function DeleteCustomTheme(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
@@ -61,5 +63,7 @@ export function SaveSettings(arg1:config.AppSettings):Promise<void>;
 export function SaveTabOrder(arg1:Array<config.TabState>):Promise<void>;
 
 export function SetTabProfile(arg1:string,arg2:string):Promise<void>;
+
+export function StartCopilotAuth():Promise<Record<string, string>>;
 
 export function ValidateRegex(arg1:string):Promise<string>;

@@ -1,9 +1,10 @@
 <script>
   import { settings } from '../stores/settings.js';
   import { profiles, profileNames } from '../stores/rules.js';
-  import { SaveSettings, SaveProfile, DeleteProfile, GetProfile, ListThemes } from '../../../wailsjs/go/main/App.js';
+  import { SaveSettings, SaveProfile, DeleteProfile, GetProfile, ListThemes, StartCopilotAuth, CompleteCopilotAuth } from '../../../wailsjs/go/main/App.js';
   import { loadAndApplyTheme } from '../utils/themes.js';
   import { onMount } from 'svelte';
+  import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime.js';
 
   let activeSection = 'settings';
   let editingRule = null;
@@ -11,6 +12,35 @@
   let newProfileName = '';
   let showNewProfile = false;
   let availableThemes = [];
+
+  // GitHub Copilot OAuth device flow state
+  let copilotSigningIn = false;
+  let copilotUserCode = '';
+  let copilotError = '';
+
+  async function startCopilotSignIn() {
+    copilotSigningIn = true;
+    copilotUserCode = '';
+    copilotError = '';
+    try {
+      const result = await StartCopilotAuth();
+      copilotUserCode = result.userCode;
+      BrowserOpenURL(result.verificationUri);
+      // Poll for completion in background
+      const success = await CompleteCopilotAuth();
+      if (success) {
+        // Refresh settings from backend
+        const { GetSettings } = await import('../../../wailsjs/go/main/App.js');
+        const s = await GetSettings();
+        if (s) settings.set(s);
+        copilotUserCode = '';
+      }
+    } catch (e) {
+      copilotError = String(e);
+    } finally {
+      copilotSigningIn = false;
+    }
+  }
 
   onMount(async () => {
     try {
@@ -423,24 +453,53 @@
       </label>
 
       {#if $settings.aiProvider}
-        <label>
-          <span>API Endpoint {#if $settings.aiProvider === 'openai'}<small>(default: api.openai.com)</small>{/if}</span>
-          <input type="text" placeholder={$settings.aiProvider === 'copilot' ? 'api.githubcopilot.com' : $settings.aiProvider === 'openai' ? 'api.openai.com' : 'https://your-server.com'}
-            value={$settings.aiEndpoint || ''}
-            on:change={e => updateSetting('aiEndpoint', e.target.value.trim())} />
-        </label>
-        <label>
-          <span>API Key</span>
-          <input type="password" placeholder="sk-... or GitHub token"
-            value={$settings.aiKey || ''}
-            on:change={e => updateSetting('aiKey', e.target.value.trim())} />
-        </label>
-        <label>
-          <span>Model <small>(leave empty for default)</small></span>
-          <input type="text" placeholder={$settings.aiProvider === 'copilot' ? 'gpt-4o' : 'gpt-4o-mini'}
-            value={$settings.aiModel || ''}
-            on:change={e => updateSetting('aiModel', e.target.value.trim())} />
-        </label>
+        {#if $settings.aiProvider === 'copilot'}
+          {#if $settings.aiKey}
+            <div class="copilot-status">
+              <span class="copilot-connected">✓ Connected to GitHub Copilot</span>
+              <button class="btn-small" on:click={() => { updateSetting('aiKey', ''); }}>Disconnect</button>
+            </div>
+          {:else}
+            <button class="btn-copilot" on:click={startCopilotSignIn} disabled={copilotSigningIn}>
+              {copilotSigningIn ? '⏳ Waiting for authorization...' : '🔗 Sign in with GitHub'}
+            </button>
+            {#if copilotUserCode}
+              <div class="copilot-code">
+                <p>Enter this code on GitHub:</p>
+                <span class="user-code">{copilotUserCode}</span>
+                <p class="copilot-hint">A browser window has opened. Paste the code and authorize.</p>
+              </div>
+            {/if}
+            {#if copilotError}
+              <div class="ai-settings-error">{copilotError}</div>
+            {/if}
+          {/if}
+          <label>
+            <span>Model <small>(leave empty for default)</small></span>
+            <input type="text" placeholder="gpt-4o"
+              value={$settings.aiModel || ''}
+              on:change={e => updateSetting('aiModel', e.target.value.trim())} />
+          </label>
+        {:else}
+          <label>
+            <span>API Endpoint {#if $settings.aiProvider === 'openai'}<small>(default: api.openai.com)</small>{/if}</span>
+            <input type="text" placeholder={$settings.aiProvider === 'openai' ? 'api.openai.com' : 'https://your-server.com'}
+              value={$settings.aiEndpoint || ''}
+              on:change={e => updateSetting('aiEndpoint', e.target.value.trim())} />
+          </label>
+          <label>
+            <span>API Key</span>
+            <input type="password" placeholder="sk-..."
+              value={$settings.aiKey || ''}
+              on:change={e => updateSetting('aiKey', e.target.value.trim())} />
+          </label>
+          <label>
+            <span>Model <small>(leave empty for default)</small></span>
+            <input type="text" placeholder="gpt-4o-mini"
+              value={$settings.aiModel || ''}
+              on:change={e => updateSetting('aiModel', e.target.value.trim())} />
+          </label>
+        {/if}
         <p class="ai-settings-hint">Use <strong>Ctrl+Shift+A</strong> to open the AI assistant dialog.</p>
       {/if}
     </div>
@@ -768,5 +827,70 @@
     color: var(--text-muted);
     margin: 4px 0 0;
     line-height: 1.4;
+  }
+
+  .ai-settings-error {
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: rgba(255, 100, 100, 0.1);
+    border: 1px solid rgba(255, 100, 100, 0.3);
+    color: var(--red, #f38ba8);
+    font-size: 11px;
+  }
+
+  .btn-copilot {
+    padding: 8px 12px;
+    background: var(--accent);
+    color: var(--bg-primary);
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .btn-copilot:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+
+  .copilot-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .copilot-connected {
+    font-size: 12px;
+    color: var(--green, #a6e3a1);
+    font-weight: 600;
+  }
+
+  .copilot-code {
+    text-align: center;
+    padding: 10px;
+    background: var(--bg-surface);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+
+  .copilot-code p {
+    margin: 0 0 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .user-code {
+    font-size: 20px;
+    font-weight: 700;
+    font-family: monospace;
+    letter-spacing: 3px;
+    color: var(--accent);
+  }
+
+  .copilot-hint {
+    margin-top: 8px !important;
+    color: var(--text-muted) !important;
+    font-size: 10px !important;
   }
 </style>

@@ -18,6 +18,10 @@ export function CloseTab(arg1) {
   return window['go']['main']['App']['CloseTab'](arg1);
 }
 
+export function CompleteCopilotAuth() {
+  return window['go']['main']['App']['CompleteCopilotAuth']();
+}
+
 export function DeleteCustomTheme(arg1) {
   return window['go']['main']['App']['DeleteCustomTheme'](arg1);
 }
@@ -116,6 +120,10 @@ export function SaveTabOrder(arg1) {
 
 export function SetTabProfile(arg1, arg2) {
   return window['go']['main']['App']['SetTabProfile'](arg1, arg2);
+}
+
+export function StartCopilotAuth() {
+  return window['go']['main']['App']['StartCopilotAuth']();
 }
 
 export function ValidateRegex(arg1) {
