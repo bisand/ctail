@@ -863,41 +863,45 @@ func (a *App) StartCopilotAuth() (map[string]string, error) {
 	}, nil
 }
 
-// CompleteCopilotAuth polls GitHub until the user completes authorization.
-// On success, saves the token to settings and returns true.
-func (a *App) CompleteCopilotAuth() (bool, error) {
+// CompleteCopilotAuth starts polling GitHub in the background.
+// Emits "copilot:auth-success" or "copilot:auth-error" events when done.
+func (a *App) CompleteCopilotAuth() {
 	a.mu.RLock()
 	deviceCode := a.pendingDeviceCode
 	interval := a.pendingPollInterval
 	a.mu.RUnlock()
 
 	if deviceCode == "" {
-		return false, fmt.Errorf("no pending authorization — call StartCopilotAuth first")
+		wailsRuntime.EventsEmit(a.ctx, "copilot:auth-error", "No pending authorization — call StartCopilotAuth first")
+		return
 	}
 
-	token, err := ai.PollForToken(deviceCode, interval)
+	go func() {
+		token, err := ai.PollForToken(deviceCode, interval)
 
-	// Clear pending state
-	a.mu.Lock()
-	a.pendingDeviceCode = ""
-	a.pendingPollInterval = 0
-	a.mu.Unlock()
+		// Clear pending state
+		a.mu.Lock()
+		a.pendingDeviceCode = ""
+		a.pendingPollInterval = 0
+		a.mu.Unlock()
 
-	if err != nil {
-		return false, err
-	}
+		if err != nil {
+			wailsRuntime.EventsEmit(a.ctx, "copilot:auth-error", err.Error())
+			return
+		}
 
-	// Save token and configure Copilot provider
-	s := a.config.GetSettings()
-	s.AIProvider = "copilot"
-	s.AIKey = token
-	s.AIEndpoint = "https://api.githubcopilot.com"
-	if s.AIModel == "" {
-		s.AIModel = "gpt-4o"
-	}
-	a.config.SaveSettings(s)
+		// Save token and configure Copilot provider
+		s := a.config.GetSettings()
+		s.AIProvider = "copilot"
+		s.AIKey = token
+		s.AIEndpoint = "https://api.githubcopilot.com"
+		if s.AIModel == "" {
+			s.AIModel = "gpt-4o"
+		}
+		a.config.SaveSettings(s)
 
-	return true, nil
+		wailsRuntime.EventsEmit(a.ctx, "copilot:auth-success")
+	}()
 }
 
 

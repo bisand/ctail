@@ -12,7 +12,7 @@ export function ClearRecentFiles():Promise<void>;
 
 export function CloseTab(arg1:string):Promise<void>;
 
-export function CompleteCopilotAuth():Promise<boolean>;
+export function CompleteCopilotAuth():Promise<void>;
 
 export function DeleteCustomTheme(arg1:string):Promise<void>;
 
