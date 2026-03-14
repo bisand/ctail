@@ -14,6 +14,10 @@
 |:---:|:---:|
 | ![Settings panel](docs/screenshots/settings-panel.png) | ![Rules editor](docs/screenshots/rules-panel.png) |
 
+| AI Assistant | AI Rule Generation |
+|:---:|:---:|
+| ![AI assistant](docs/screenshots/ai-assistant-ask.png) | ![AI rule generation](docs/screenshots/ai-assistant-rules.png) |
+
 ## Features
 
 - **Multi-tab interface** — Open multiple log files simultaneously with keyboard navigation (Ctrl+Tab / Ctrl+Shift+Tab)

@@ -119,6 +119,10 @@ Connect to any OpenAI-compatible API server. This includes:
 
 ## Using the AI Assistant
 
+| Ask AI about Logs | AI-Generated Rules |
+|:---:|:---:|
+| ![AI assistant dialog](screenshots/ai-assistant-ask.png) | ![AI rule generation](screenshots/ai-assistant-rules.png) |
+
 ### Opening the AI Dialog
 
 - **Menu bar**: Tools → AI Assistant... (**Ctrl+Shift+A**)
