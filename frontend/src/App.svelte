@@ -9,13 +9,16 @@
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
   import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, SaveSettings, ListProfiles, GetProfile, ListThemes } from '../wailsjs/go/main/App.js';
-  import { EventsOn } from '../wailsjs/runtime/runtime.js';
+  import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
   import { loadAndApplyTheme } from './lib/utils/themes.js';
 
   let scrollBuffer = 500;
 
   // About dialog state
   let showAbout = false;
+
+  // Update notification state
+  let updateAvailable = null; // { version, url }
 
   // Ctrl+Tab cycling state
   let isCycling = false;
@@ -173,6 +176,10 @@
       window.dispatchEvent(new CustomEvent('ctail:find'));
     });
 
+    EventsOn('app:update-available', (data) => {
+      updateAvailable = data;
+    });
+
     // Restore previously open tabs (non-blocking — tabs appear immediately)
     try {
       const savedTabs = await GetSavedTabs();
@@ -313,6 +320,13 @@
 </script>
 
 <div class="app">
+  {#if updateAvailable}
+    <div class="update-banner">
+      <span>🎉 ctail v{updateAvailable.version} is available!</span>
+      <button class="update-link" on:click={() => BrowserOpenURL(updateAvailable.url)}>View release</button>
+      <button class="update-dismiss" on:click={() => updateAvailable = null}>✕</button>
+    </div>
+  {/if}
   <Toolbar onOpenFile={openFile} />
   <TabBar onAddTab={openFile} />
   <div class="main-area">
@@ -336,5 +350,44 @@
     flex: 1;
     display: flex;
     overflow: hidden;
+  }
+
+  .update-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--accent);
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .update-link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12px;
+    text-decoration: underline;
+    padding: 0;
+  }
+
+  .update-link:hover {
+    color: var(--text-primary);
+  }
+
+  .update-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+  }
+
+  .update-dismiss:hover {
+    color: var(--text-primary);
   }
 </style>

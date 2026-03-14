@@ -297,6 +297,11 @@
           <option value="wayland">Wayland</option>
         </select>
       </label>
+      <label class="toggle-label">
+        <input type="checkbox" checked={$settings.checkForUpdates !== false}
+          on:change={(e) => updateSetting('checkForUpdates', e.target.checked)} />
+        <span>Check for updates on startup</span>
+      </label>
     </div>
 
   {:else if activeSection === 'rules'}

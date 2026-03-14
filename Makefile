@@ -1,9 +1,9 @@
 TAGS ?= webkit2_41
 PREFIX ?= /usr/local
 NFPM ?= $(shell go env GOPATH)/bin/nfpm
-VERSION ?= 0.5.0
+VERSION := $(shell cat VERSION 2>/dev/null || echo 0.0.0)
 BUILD_NUMBER := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
-LDFLAGS := -ldflags "-X main.buildNumber=$(BUILD_NUMBER)"
+LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
 
 .PHONY: dev build build-windows build-macos clean test install uninstall package-deb package-rpm
 

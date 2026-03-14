@@ -59,24 +59,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - name: Get build number
-        id: buildnum
+      - name: Get version info
+        id: versioninfo
         shell: bash
-        run: echo "BUILD_NUMBER=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+        run: |
+          echo "BUILD_NUMBER=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+          echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
 
       - name: Build
         shell: bash
         run: |
-          wails build -platform ${{ matrix.platform }} ${{ matrix.tags && format('-tags {0}', matrix.tags) || '' }} -ldflags "-X main.buildNumber=${{ steps.buildnum.outputs.BUILD_NUMBER }}"
+          wails build -platform ${{ matrix.platform }} ${{ matrix.tags && format('-tags {0}', matrix.tags) || '' }} -ldflags "-X main.version=${{ steps.versioninfo.outputs.VERSION }} -X main.buildNumber=${{ steps.versioninfo.outputs.BUILD_NUMBER }}"
 
       - name: Build deb and rpm packages
         if: runner.os == 'Linux'
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-          VERSION_TAG="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION_TAG#v}"
-          FULL_VERSION="${VERSION}.${{ steps.buildnum.outputs.BUILD_NUMBER }}"
-          # Inject package version into metainfo so GNOME Software shows release details
+          FULL_VERSION="${{ steps.versioninfo.outputs.VERSION }}.${{ steps.versioninfo.outputs.BUILD_NUMBER }}"
           sed -i "0,/<release version=\"[^\"]*\"/{s/<release version=\"[^\"]*\"/<release version=\"${FULL_VERSION}\"/}" build/linux/io.github.bisand.ctail.metainfo.xml
           export VERSION="${FULL_VERSION}"
           nfpm package --packager deb --target build/

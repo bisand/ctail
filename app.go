@@ -5,11 +5,14 @@ import (
 	"ctail/internal/config"
 	"ctail/internal/rules"
 	"ctail/internal/tailer"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +38,7 @@ type App struct {
 	tabs            map[string]*TabInfo
 	nextID          int
 	recentMenu      *menu.Menu
+	version         string
 	buildNumber     string
 	cachedWinState  config.WindowState
 	winStateMu      sync.Mutex
@@ -42,9 +46,10 @@ type App struct {
 }
 
 // NewApp creates a new App
-func NewApp(buildNum string) *App {
+func NewApp(ver string, buildNum string) *App {
 	return &App{
 		tabs:        make(map[string]*TabInfo),
+		version:     ver,
 		buildNumber: buildNum,
 	}
 }
@@ -72,6 +77,11 @@ func (a *App) startup(ctx context.Context) {
 
 	// Start background goroutine to track window state
 	go a.trackWindowState()
+
+	// Check for updates in background (once per startup)
+	if a.config.GetSettings().CheckForUpdates {
+		go a.checkForUpdates()
+	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -153,6 +163,59 @@ func (a *App) trackWindowState() {
 			return
 		}
 	}
+}
+
+// checkForUpdates queries the GitHub releases API and emits an event if a newer version exists.
+func (a *App) checkForUpdates() {
+	// Small delay to let the UI fully load
+	time.Sleep(3 * time.Second)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get("https://api.github.com/repos/bisand/ctail/releases/latest")
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		HTMLURL string `json:"html_url"`
+		Body    string `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return
+	}
+
+	latest := strings.TrimPrefix(release.TagName, "v")
+	if latest != "" && compareVersions(latest, a.version) > 0 {
+		wailsRuntime.EventsEmit(a.ctx, "app:update-available", map[string]string{
+			"version": latest,
+			"url":     release.HTMLURL,
+		})
+	}
+}
+
+// compareVersions compares two semver strings (e.g. "0.5.3" vs "0.5.2").
+// Returns positive if a > b, negative if a < b, 0 if equal.
+func compareVersions(a, b string) int {
+	partsA := strings.Split(a, ".")
+	partsB := strings.Split(b, ".")
+	for i := 0; i < len(partsA) || i < len(partsB); i++ {
+		var va, vb int
+		if i < len(partsA) {
+			fmt.Sscanf(partsA[i], "%d", &va)
+		}
+		if i < len(partsB) {
+			fmt.Sscanf(partsB[i], "%d", &vb)
+		}
+		if va != vb {
+			return va - vb
+		}
+	}
+	return 0
 }
 
 // restoreWindowState applies saved window geometry after the DOM is ready
@@ -516,14 +579,12 @@ func (a *App) ClearRecentFiles() {
 	a.RefreshRecentMenu()
 }
 
-const appVersion = "0.5.2"
-
 // GetAppVersion returns the application version string
 func (a *App) GetAppVersion() string {
 	if a.buildNumber != "" && a.buildNumber != "dev" {
-		return appVersion + "+" + a.buildNumber
+		return a.version + "+" + a.buildNumber
 	}
-	return appVersion
+	return a.version
 }
 
 // ListThemes returns all available themes (built-in + custom)
