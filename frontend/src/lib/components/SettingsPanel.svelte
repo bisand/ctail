@@ -3,8 +3,8 @@
   import { profiles, profileNames } from '../stores/rules.js';
   import { SaveSettings, SaveProfile, DeleteProfile, GetProfile, ListThemes, StartCopilotAuth, CompleteCopilotAuth, GetSettings } from '../../../wailsjs/go/main/App.js';
   import { loadAndApplyTheme } from '../utils/themes.js';
-  import { onMount, onDestroy } from 'svelte';
-  import { BrowserOpenURL, EventsOn, EventsOff } from '../../../wailsjs/runtime/runtime.js';
+  import { onMount } from 'svelte';
+  import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime.js';
 
   let activeSection = 'settings';
   let editingRule = null;
@@ -26,29 +26,21 @@
       const result = await StartCopilotAuth();
       copilotUserCode = result.userCode;
       BrowserOpenURL(result.verificationUri);
-      // Start background polling — results come via events
-      CompleteCopilotAuth();
+      // Poll for completion — blocks until user authorizes or timeout
+      const success = await CompleteCopilotAuth();
+      if (success) {
+        const s = await GetSettings();
+        if (s) settings.set(s);
+        copilotUserCode = '';
+      }
     } catch (e) {
       copilotError = String(e);
+    } finally {
       copilotSigningIn = false;
     }
   }
 
-  let cleanupAuthSuccess;
-  let cleanupAuthError;
-
   onMount(async () => {
-    // Listen for Copilot auth events
-    cleanupAuthSuccess = EventsOn('copilot:auth-success', async () => {
-      const s = await GetSettings();
-      if (s) settings.set(s);
-      copilotUserCode = '';
-      copilotSigningIn = false;
-    });
-    cleanupAuthError = EventsOn('copilot:auth-error', (errMsg) => {
-      copilotError = errMsg;
-      copilotSigningIn = false;
-    });
     try {
       availableThemes = await ListThemes();
       // Sort: built-in first, then alphabetical
@@ -69,11 +61,6 @@
   let ruleBackground = '';
   let ruleBold = false;
   let ruleItalic = false;
-
-  onDestroy(() => {
-    if (cleanupAuthSuccess) cleanupAuthSuccess();
-    if (cleanupAuthError) cleanupAuthError();
-  });
 
   $: selectedProfile = $settings.activeProfile || 'Common Logs';
   $: currentProfile = $profiles[selectedProfile];
