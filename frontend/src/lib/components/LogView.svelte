@@ -237,7 +237,24 @@
   }
 
   function getSelectedText() {
-    return window.getSelection()?.toString() || '';
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return '';
+    // Extract text only from .line-content spans, skipping line numbers
+    const range = sel.getRangeAt(0);
+    const fragment = range.cloneContents();
+    const wrapper = document.createElement('div');
+    wrapper.appendChild(fragment);
+    const lineNumbers = wrapper.querySelectorAll('.line-number');
+    lineNumbers.forEach(el => el.remove());
+    return wrapper.textContent || '';
+  }
+
+  function handleCopy(e) {
+    const text = getSelectedText();
+    if (text) {
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', text);
+    }
   }
 
   function ctxCopy() {
@@ -307,7 +324,7 @@
   {/if}
 
   {#if currentTab}
-    <div class="log-container" bind:this={container} on:scroll={handleScroll} on:wheel={handleWheel} on:contextmenu={handleContextMenu}>
+    <div class="log-container" bind:this={container} on:scroll={handleScroll} on:wheel={handleWheel} on:contextmenu={handleContextMenu} on:copy={handleCopy}>
       {#each filteredLines as line (line.number)}
         <LogLine
           {line}
