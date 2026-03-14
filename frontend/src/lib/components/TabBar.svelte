@@ -127,7 +127,10 @@
         class:drop-before={dropIndex === i && dragIndex > i}
         class:drop-after={dropIndex === i && dragIndex < i}
         draggable="true"
+        role="tab"
+        tabindex="0"
         on:click={() => switchTab(tab.id)}
+        on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') switchTab(tab.id); }}
         on:dragstart={(e) => handleDragStart(e, i)}
         on:dragover={(e) => handleDragOver(e, i)}
         on:dragleave={handleDragLeave}
@@ -152,7 +155,7 @@
   <button class="add-tab-btn" on:click={onAddTab} title="Open file">+</button>
 
   {#if ctxMenu.visible}
-    <div class="tab-ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px" on:click|stopPropagation>
+    <div class="tab-ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px" role="menu" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
       <button class="ctx-item" on:click={ctxClose}>
         Close <span class="ctx-key">Ctrl+W</span>
       </button>
@@ -213,10 +216,6 @@
 
   .tab:hover {
     background: var(--bg-hover);
-  }
-
-  .tab.dragging {
-    opacity: 0.4;
   }
 
   .tab.drop-before {

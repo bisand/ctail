@@ -360,7 +360,7 @@
     </div>
 
     {#if contextMenu.visible}
-      <div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px" on:click|stopPropagation>
+      <div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="menu" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
         <button class="ctx-item" on:click={ctxCopy} disabled={!getSelectedText()}>
           Copy <span class="ctx-key">Ctrl+C</span>
         </button>

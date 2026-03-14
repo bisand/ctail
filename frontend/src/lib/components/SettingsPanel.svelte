@@ -496,7 +496,7 @@
             <button class="btn-copilot" on:click={startCopilotSignIn}>
               Sign in with GitHub
             </button>
-            <p class="ai-settings-hint-small">Requires an active <a href="#" on:click|preventDefault={() => BrowserOpenURL('https://github.com/features/copilot')}>Copilot subscription</a>.</p>
+            <p class="ai-settings-hint-small">Requires an active <a href="https://github.com/features/copilot" target="_blank" rel="noopener noreferrer">Copilot subscription</a>.</p>
           {/if}
           {#if copilotAuthState === 'error'}
             <p class="ai-error">{copilotError}</p>
@@ -509,7 +509,7 @@
               on:change={e => updateSetting('aiKey', e.target.value.trim())} />
           </label>
           <p class="ai-settings-hint-small">
-            Create a <a href="#" on:click|preventDefault={() => BrowserOpenURL('https://github.com/settings/tokens?type=beta')}>PAT</a> with <code>models:read</code> scope.
+            Create a <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer">PAT</a> with <code>models:read</code> scope.
           </p>
           <label>
             <span>Model <small>(leave empty for default)</small></span>
@@ -891,15 +891,6 @@
     padding: 1px 4px;
     border-radius: 3px;
     font-size: 10px;
-  }
-
-  .ai-settings-error {
-    padding: 6px 8px;
-    border-radius: 4px;
-    background: rgba(255, 100, 100, 0.1);
-    border: 1px solid rgba(255, 100, 100, 0.3);
-    color: var(--red, #f38ba8);
-    font-size: 11px;
   }
 
   .btn-copilot {
