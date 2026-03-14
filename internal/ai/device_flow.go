@@ -143,3 +143,44 @@ func checkDeviceAuth(deviceCode string) (string, bool, error) {
 		return "", false, fmt.Errorf("GitHub error: %s — %s", result.Error, result.ErrorDesc)
 	}
 }
+
+// CopilotToken holds a short-lived API token for Copilot.
+type CopilotToken struct {
+	Token     string `json:"token"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+// ExchangeCopilotToken exchanges a GitHub OAuth token for a short-lived Copilot API token.
+func ExchangeCopilotToken(oauthToken string) (*CopilotToken, error) {
+	req, err := http.NewRequest("GET", "https://api.github.com/copilot_internal/v2/token", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "token "+oauthToken)
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("token exchange failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("token exchange returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var ct CopilotToken
+	if err := json.Unmarshal(body, &ct); err != nil {
+		return nil, fmt.Errorf("parse token: %w", err)
+	}
+	if ct.Token == "" {
+		return nil, fmt.Errorf("empty token in exchange response")
+	}
+	return &ct, nil
+}

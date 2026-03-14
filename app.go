@@ -696,6 +696,18 @@ func (a *App) newAIClient() (*ai.Client, error) {
 		if model == "" {
 			model = "gpt-4o"
 		}
+		// Exchange the stored OAuth token for a short-lived Copilot API token
+		ct, err := ai.ExchangeCopilotToken(s.AIKey)
+		if err != nil {
+			return nil, fmt.Errorf("Copilot token exchange failed: %w", err)
+		}
+		return ai.NewClient(ai.Config{
+			Provider: ai.ProviderCopilot,
+			Endpoint: endpoint,
+			APIKey:   ct.Token,
+			Model:    model,
+			Timeout:  60 * time.Second,
+		}), nil
 	case ai.ProviderCustom:
 		if endpoint == "" {
 			return nil, fmt.Errorf("custom AI endpoint URL is required")
