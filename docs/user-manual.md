@@ -11,10 +11,13 @@
 - [Following & Scrolling](#following--scrolling)
 - [Highlighting Rules](#highlighting-rules)
 - [Rule Profiles](#rule-profiles)
+- [AI Assistant](#ai-assistant)
 - [Settings](#settings)
 - [Themes](#themes)
 - [Menu Bar](#menu-bar)
+- [Context Menus](#context-menus)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Check for Updates](#check-for-updates)
 - [Linux Installation](#linux-installation)
 - [Configuration Files](#configuration-files)
 - [Troubleshooting](#troubleshooting)
@@ -144,6 +147,36 @@ Ships with rules for common log patterns:
 | Debug | `\bDEBUG\b` | Match only | Gray |
 | Timestamp | `\d{4}-\d{2}-\d{2}T?\d{2}:\d{2}:\d{2}` | Match only | Green |
 
+## AI Assistant
+
+ctail includes an optional AI assistant that can analyze log content and generate highlighting rule profiles. No AI processing happens unless you explicitly ask.
+
+### Opening the AI Dialog
+
+- **Menu bar**: Tools → AI Assistant... (**Ctrl+Shift+A**)
+- **Context menu**: Right-click in the log view → "🤖 Ask AI about logs"
+
+### Supported Providers
+
+| Provider | Auth | Notes |
+|----------|------|-------|
+| **GitHub Copilot** | OAuth sign-in (browser) | Requires active Copilot subscription |
+| **GitHub Models** | Personal Access Token | Free tier available |
+| **OpenAI** | API key | Pay-per-use |
+| **Custom** | API key or none | Any OpenAI-compatible server (Ollama, LM Studio, etc.) |
+
+Configure your provider in **Settings → AI**.
+
+### Asking About Logs
+
+Select what log context to send (last N lines, selected text, or full file), type your question, and press **Ask**. The AI sees the raw log text and responds in the dialog.
+
+### AI-Generated Rule Profiles
+
+Click **🤖 AI Generate Rules** in the Rules tab to have the AI analyze your current log file and create a complete highlighting profile with patterns, colors, and priority ordering.
+
+📖 For detailed setup instructions, see the **[AI Assistant Guide](ai-assistant.md)**.
+
 ## Settings
 
 Open the Settings panel (gear icon or **View → Toggle Settings**) to configure:
@@ -202,9 +235,11 @@ ctail includes a native menu bar:
 | **Edit** | Copy | Ctrl+C | Copy selected text |
 | | Select All | Ctrl+A | Select all text in the log view |
 | | Find | Ctrl+F | Open the search bar |
-| **View** | Toggle Settings | | Show/hide the settings panel |
+| **View** | Settings | Ctrl+, | Show/hide the settings panel |
 | | Toggle Theme | | Switch between dark and light themes |
-| **Help** | About ctail | | Show version, license, and links |
+| **Tools** | AI Assistant... | Ctrl+Shift+A | Open the AI assistant dialog |
+| **Help** | Check for Updates | | Check GitHub for a newer release |
+| | About ctail | | Show version, license, and links |
 
 ## Keyboard Shortcuts
 
@@ -214,10 +249,40 @@ ctail includes a native menu bar:
 | **Ctrl+W** | Close current tab |
 | **Ctrl+Tab** | Next tab / toggle between last two tabs |
 | **Ctrl+Shift+Tab** | Previous tab |
+| **Ctrl+Shift+A** | AI Assistant |
+| **Ctrl+,** | Settings |
 | **Ctrl+C** | Copy |
 | **Ctrl+A** | Select all |
 | **Ctrl+F** | Search / filter |
 | **Escape** | Close search |
+
+## Context Menus
+
+### Tab Context Menu
+
+Right-click any tab for quick actions:
+
+| Item | Description |
+|------|-------------|
+| **Close** | Close the clicked tab (Ctrl+W) |
+| **Close Others** | Close all tabs except the clicked one |
+| **Close to the Right** | Close all tabs to the right of the clicked one |
+
+Destructive actions (Close Others, Close to the Right) ask for confirmation before proceeding.
+
+### Log View Context Menu
+
+Right-click in the log area for:
+
+| Item | Description |
+|------|-------------|
+| **Copy** | Copy selected text (Ctrl+C) |
+| **Select All** | Select all text (Ctrl+A) |
+| **🤖 Ask AI about logs** | Open the AI assistant with current tab context |
+
+## Check for Updates
+
+Use **Help → Check for Updates** to check GitHub for a newer release. If an update is available, a notification is shown with a link to the release page. ctail also checks for updates automatically on startup (with a brief delay to avoid slowing down launch).
 
 ## Linux Installation
 
@@ -329,3 +394,11 @@ This is an [upstream GTK/WebKit2GTK bug](https://github.com/wailsapp/wails/issue
 ```bash
 ctail --x11
 ```
+
+### AI assistant not working
+
+- Make sure a provider is configured in **Settings → AI**.
+- For GitHub Copilot, check that your subscription is active and you completed the browser sign-in.
+- For GitHub Models, verify your PAT hasn't expired and has the `models:read` permission.
+- For custom providers, ensure the server is running and the endpoint URL is correct.
+- See the [AI Assistant Guide](ai-assistant.md) for detailed troubleshooting.

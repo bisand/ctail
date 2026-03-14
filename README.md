@@ -23,11 +23,14 @@
 - **Regex-based highlighting** — Rules with foreground/background colors, bold/italic, line-level or match-level matching
 - **Sliding window buffer** — Memory-bounded scrolling through large files; only a configurable window of lines (default 500) is kept in memory
 - **Profile system** — Multiple highlighting profiles with visual rule preview and drag-and-drop reordering
-- **Non-blocking I/O** — Files on slow or unreachable network mounts won't freeze the UI; all file operations run in the background with timeouts
+- **AI assistant** — Ask AI about your logs or auto-generate highlighting rule profiles. Supports [GitHub Copilot, GitHub Models, OpenAI, and any OpenAI-compatible server](docs/ai-assistant.md) (Ollama, LM Studio, etc.)
+- **Non-blocking I/O** — Files on slow or unreachable network mounts (NFS, CIFS/SMB, SSHFS) won't freeze the UI; all file operations run in the background with timeouts
 - **Session persistence** — Window position/size, open tabs, active profile, and all settings survive restarts
 - **Recent files** — Quick access to recently opened files from the File menu
-- **Native menu bar** — File, Edit, View, and Help menus with standard keyboard accelerators
+- **Native menu bar** — File, Edit, View, Tools, and Help menus with standard keyboard accelerators
+- **Context menus** — Right-click tabs for close/close others, right-click logs for copy/select/AI assist
 - **Search** — Ctrl+F to filter lines within the buffer
+- **Check for updates** — Manual update check from the Help menu
 - **Themes** — 21 built-in color themes (Catppuccin, Nord, Tokyo Night, Gruvbox, Dracula, One Dark, Solarized, Everforest, Ayu, Kanagawa, Matrix, Rosé Pine, Monokai, and more), each with dark and light modes. Supports [custom themes](docs/custom-themes.md) via JSON files.
 - **Cross-platform** — Linux, Windows, and macOS
 
@@ -98,11 +101,15 @@ Go Backend                          Svelte Frontend
 ├──────────────┤                    ├──────────────────┤
 │ Rule Engine  │                    │ Highlight Utils  │
 │ (regex)      │                    │ (client-side)    │
+├──────────────┤                    ├──────────────────┤
+│ AI Client    │ ◀──Wails Bind──▶  │ AI Dialog        │
+│ (multi-      │                    │ (chat, rules gen)│
+│  provider)   │                    │                  │
 └──────────────┘                    └──────────────────┘
 ```
 
-- **Go backend** handles file I/O (polling + direct seek via byte offset index), configuration persistence, and the rules engine
-- **Svelte frontend** handles rendering, client-side highlighting (for instant rule feedback), and scroll buffer management
+- **Go backend** handles file I/O (polling + direct seek via byte offset index), configuration persistence, the rules engine, and AI provider communication
+- **Svelte frontend** handles rendering, client-side highlighting (for instant rule feedback), scroll buffer management, and the AI assistant dialog
 - **Communication** via Wails bindings (sync method calls) and events (async streaming)
 - **No external Go dependencies** beyond Wails itself
 
@@ -110,10 +117,11 @@ Go Backend                          Svelte Frontend
 
 | Menu | Items |
 |------|-------|
-| **File** | Open (Ctrl+O), Open Recent ▸, Close Tab (Ctrl+W), Quit |
+| **File** | Open (Ctrl+O), Open Recent ▸, Close Tab (Ctrl+W), Quit (Ctrl+Q) |
 | **Edit** | Copy (Ctrl+C), Select All (Ctrl+A), Find (Ctrl+F) |
-| **View** | Toggle Settings, Toggle Theme |
-| **Help** | About ctail |
+| **View** | Settings (Ctrl+,), Toggle Theme |
+| **Tools** | AI Assistant... (Ctrl+Shift+A) |
+| **Help** | Check for Updates, About ctail |
 
 ## Themes
 
@@ -177,9 +185,11 @@ See the [User Manual](docs/user-manual.md) for details on all settings and confi
 | Ctrl+W | Close tab |
 | Ctrl+Tab | Next tab / toggle between last two tabs |
 | Ctrl+Shift+Tab | Previous tab |
+| Ctrl+Shift+A | AI Assistant |
 | Ctrl+C | Copy |
 | Ctrl+A | Select all |
 | Ctrl+F | Search / filter |
+| Ctrl+, | Settings |
 | Escape | Close search |
 
 ## Known Issues

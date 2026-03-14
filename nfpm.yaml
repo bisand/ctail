@@ -5,7 +5,10 @@ version: ${VERSION}
 section: utils
 priority: optional
 maintainer: André Biseth <https://github.com/bisand>
-description: Log file viewer with real-time tailing and regex highlighting
+description: |
+  Cross-platform desktop log file viewer with real-time tailing, regex-based
+  color highlighting, multiple tabs, AI-assisted log analysis, and 21 built-in
+  themes. Supports network-mounted files (NFS, CIFS/SMB, SSHFS).
 vendor: bisand
 homepage: https://github.com/bisand/ctail
 license: MIT
