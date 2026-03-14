@@ -64,7 +64,8 @@ jobs:
         shell: bash
         run: |
           echo "BUILD_NUMBER=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
-          echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "VERSION=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Build
         shell: bash

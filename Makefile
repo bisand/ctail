@@ -1,8 +1,18 @@
 TAGS ?= webkit2_41
 PREFIX ?= /usr/local
 NFPM ?= $(shell go env GOPATH)/bin/nfpm
-VERSION := $(shell cat VERSION 2>/dev/null || echo 0.0.0)
 BUILD_NUMBER := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
+
+# Resolve version: gh release (GitHub truth) → git tag → VERSION file → fallback
+VERSION := $(shell \
+	gh release view --json tagName -q '.tagName' 2>/dev/null | sed 's/^v//' \
+	|| git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' \
+	|| cat VERSION 2>/dev/null \
+	|| echo 0.0.0-dev)
+
+# Cache resolved version locally for reference
+$(shell echo $(VERSION) > VERSION)
+
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
 
 .PHONY: dev build build-windows build-macos clean test install uninstall package-deb package-rpm
