@@ -6,6 +6,10 @@ export function AddRecentFile(arg1) {
   return window['go']['main']['App']['AddRecentFile'](arg1);
 }
 
+export function AskAI(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['AskAI'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function ClearRecentFiles() {
   return window['go']['main']['App']['ClearRecentFiles']();
 }
@@ -20,6 +24,10 @@ export function DeleteCustomTheme(arg1) {
 
 export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
+}
+
+export function GenerateRulesProfile(arg1, arg2) {
+  return window['go']['main']['App']['GenerateRulesProfile'](arg1, arg2);
 }
 
 export function GetAppVersion() {

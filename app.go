@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"ctail/internal/ai"
 	"ctail/internal/config"
 	"ctail/internal/rules"
 	"ctail/internal/tailer"
@@ -651,4 +652,168 @@ func (a *App) RefreshRecentMenu() {
 		wailsRuntime.MenuUpdateApplicationMenu(a.ctx)
 	}
 }
+
+// newAIClient builds an AI client from current settings.
+func (a *App) newAIClient() (*ai.Client, error) {
+	s := a.config.GetSettings()
+	if s.AIProvider == "" {
+		return nil, fmt.Errorf("AI provider not configured — set it in Settings")
+	}
+	if s.AIKey == "" {
+		return nil, fmt.Errorf("AI API key not set — add it in Settings")
+	}
+
+	provider := ai.Provider(s.AIProvider)
+	endpoint := s.AIEndpoint
+	model := s.AIModel
+
+	switch provider {
+	case ai.ProviderOpenAI:
+		if endpoint == "" {
+			endpoint = "https://api.openai.com"
+		}
+		if model == "" {
+			model = "gpt-4o-mini"
+		}
+	case ai.ProviderCopilot:
+		if endpoint == "" {
+			endpoint = "https://api.githubcopilot.com"
+		}
+		if model == "" {
+			model = "gpt-4o"
+		}
+	case ai.ProviderCustom:
+		if endpoint == "" {
+			return nil, fmt.Errorf("custom AI endpoint URL is required")
+		}
+	}
+
+	return ai.NewClient(ai.Config{
+		Provider: provider,
+		Endpoint: endpoint,
+		APIKey:   s.AIKey,
+		Model:    model,
+		Timeout:  30 * time.Second,
+	}), nil
+}
+
+// getTabLogContent extracts log text from a tab for AI context.
+// context: "buffer" (current buffer), "selection" (line range), "last" (last N lines).
+func (a *App) getTabLogContent(tabID, context string, startLine int64, lineCount int) (string, error) {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	a.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("tab not found: %s", tabID)
+	}
+
+	var lines []tailer.Line
+	switch context {
+	case "selection":
+		if lineCount <= 0 {
+			lineCount = 100
+		}
+		lines = tab.tailer.ReadRange(startLine, lineCount)
+	case "last":
+		if lineCount <= 0 {
+			lineCount = 200
+		}
+		total := tab.tailer.GetTotalLines()
+		start := total - int64(lineCount) + 1
+		if start < 1 {
+			start = 1
+		}
+		lines = tab.tailer.ReadRange(start, lineCount)
+	default: // "buffer"
+		lines = tab.tailer.GetLines()
+	}
+
+	if len(lines) == 0 {
+		return "", fmt.Errorf("no log content available")
+	}
+
+	// Cap at ~4000 lines to stay within token limits
+	if len(lines) > 4000 {
+		lines = lines[len(lines)-4000:]
+	}
+
+	var sb strings.Builder
+	for _, l := range lines {
+		sb.WriteString(l.Text)
+		sb.WriteByte('\n')
+	}
+	return sb.String(), nil
+}
+
+// AskAI sends a question about the log content to the configured AI provider.
+// context: "buffer", "selection", or "last". startLine and lineCount apply to "selection" and "last".
+func (a *App) AskAI(tabID, question, logContext string, startLine int64, lineCount int) (string, error) {
+	client, err := a.newAIClient()
+	if err != nil {
+		return "", err
+	}
+
+	content, err := a.getTabLogContent(tabID, logContext, startLine, lineCount)
+	if err != nil {
+		return "", err
+	}
+
+	messages := ai.BuildLogMessages(content, question)
+	return client.Chat(messages)
+}
+
+// GenerateRulesProfile asks AI to analyze logs and create a highlighting rules profile.
+func (a *App) GenerateRulesProfile(tabID, profileName string) (config.Profile, error) {
+	if profileName == "" {
+		return config.Profile{}, fmt.Errorf("profile name is required")
+	}
+
+	client, err := a.newAIClient()
+	if err != nil {
+		return config.Profile{}, err
+	}
+
+	content, err := a.getTabLogContent(tabID, "buffer", 0, 0)
+	if err != nil {
+		return config.Profile{}, err
+	}
+
+	messages := ai.BuildRuleGenMessages(content)
+	response, err := client.Chat(messages)
+	if err != nil {
+		return config.Profile{}, fmt.Errorf("AI request failed: %w", err)
+	}
+
+	// Strip any markdown fences the model might add despite instructions
+	response = strings.TrimSpace(response)
+	response = strings.TrimPrefix(response, "```json")
+	response = strings.TrimPrefix(response, "```")
+	response = strings.TrimSuffix(response, "```")
+	response = strings.TrimSpace(response)
+
+	var rules []config.Rule
+	if err := json.Unmarshal([]byte(response), &rules); err != nil {
+		return config.Profile{}, fmt.Errorf("failed to parse AI response as rules: %w\n\nRaw response:\n%s", err, truncateStr(response, 500))
+	}
+
+	profile := config.Profile{
+		Name:  profileName,
+		Rules: rules,
+	}
+
+	// Persist the new profile
+	if err := a.config.SaveProfile(profile); err != nil {
+		return config.Profile{}, fmt.Errorf("failed to save profile: %w", err)
+	}
+
+	return profile, nil
+}
+
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 

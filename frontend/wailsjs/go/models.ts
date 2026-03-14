@@ -52,6 +52,10 @@ export namespace config {
 	    window: WindowState;
 	    displayBackend: string;
 	    disableUpdateCheck: boolean;
+	    aiProvider: string;
+	    aiEndpoint: string;
+	    aiKey: string;
+	    aiModel: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -74,6 +78,10 @@ export namespace config {
 	        this.window = this.convertValues(source["window"], WindowState);
 	        this.displayBackend = source["displayBackend"];
 	        this.disableUpdateCheck = source["disableUpdateCheck"];
+	        this.aiProvider = source["aiProvider"];
+	        this.aiEndpoint = source["aiEndpoint"];
+	        this.aiKey = source["aiKey"];
+	        this.aiModel = source["aiModel"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

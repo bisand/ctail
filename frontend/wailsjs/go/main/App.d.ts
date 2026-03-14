@@ -6,6 +6,8 @@ import {main} from '../models';
 
 export function AddRecentFile(arg1:string):Promise<void>;
 
+export function AskAI(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<string>;
+
 export function ClearRecentFiles():Promise<void>;
 
 export function CloseTab(arg1:string):Promise<void>;
@@ -13,6 +15,8 @@ export function CloseTab(arg1:string):Promise<void>;
 export function DeleteCustomTheme(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
+
+export function GenerateRulesProfile(arg1:string,arg2:string):Promise<config.Profile>;
 
 export function GetAppVersion():Promise<string>;
 

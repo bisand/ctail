@@ -224,6 +224,7 @@
   <div class="panel-header">
     <button class:active={activeSection === 'settings'} on:click={() => selectSection('settings')}>Settings</button>
     <button class:active={activeSection === 'rules'} on:click={() => selectSection('rules')}>Rules</button>
+    <button class:active={activeSection === 'ai'} on:click={() => selectSection('ai')}>AI</button>
   </div>
 
   {#if activeSection === 'settings'}
@@ -405,6 +406,42 @@
             <button class="btn-cancel" on:click={cancelEdit}>Cancel</button>
           </div>
         </div>
+      {/if}
+    </div>
+
+  {:else if activeSection === 'ai'}
+    <div class="section">
+      <label>
+        <span>AI Provider</span>
+        <select value={$settings.aiProvider || ''}
+          on:change={e => updateSetting('aiProvider', e.target.value)}>
+          <option value="">Not configured</option>
+          <option value="openai">OpenAI</option>
+          <option value="copilot">GitHub Copilot</option>
+          <option value="custom">Custom (OpenAI-compatible)</option>
+        </select>
+      </label>
+
+      {#if $settings.aiProvider}
+        <label>
+          <span>API Endpoint {#if $settings.aiProvider === 'openai'}<small>(default: api.openai.com)</small>{/if}</span>
+          <input type="text" placeholder={$settings.aiProvider === 'copilot' ? 'api.githubcopilot.com' : $settings.aiProvider === 'openai' ? 'api.openai.com' : 'https://your-server.com'}
+            value={$settings.aiEndpoint || ''}
+            on:change={e => updateSetting('aiEndpoint', e.target.value.trim())} />
+        </label>
+        <label>
+          <span>API Key</span>
+          <input type="password" placeholder="sk-... or GitHub token"
+            value={$settings.aiKey || ''}
+            on:change={e => updateSetting('aiKey', e.target.value.trim())} />
+        </label>
+        <label>
+          <span>Model <small>(leave empty for default)</small></span>
+          <input type="text" placeholder={$settings.aiProvider === 'copilot' ? 'gpt-4o' : 'gpt-4o-mini'}
+            value={$settings.aiModel || ''}
+            on:change={e => updateSetting('aiModel', e.target.value.trim())} />
+        </label>
+        <p class="ai-settings-hint">Use <strong>Ctrl+Shift+A</strong> to open the AI assistant dialog.</p>
       {/if}
     </div>
   {/if}
@@ -724,5 +761,12 @@
     padding: 6px;
     background: var(--bg-hover);
     border-radius: 4px;
+  }
+
+  .ai-settings-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 4px 0 0;
+    line-height: 1.4;
   }
 </style>

@@ -5,6 +5,7 @@
   import LogView from './lib/components/LogView.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import AboutDialog from './lib/components/AboutDialog.svelte';
+  import AIDialog from './lib/components/AIDialog.svelte';
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
@@ -16,6 +17,9 @@
 
   // About dialog state
   let showAbout = false;
+
+  // AI dialog state
+  let showAI = false;
 
   // Update notification state
   let updateAvailable = null; // { version, url }
@@ -243,6 +247,10 @@
       e.preventDefault();
       handleTabCycle(e.shiftKey);
     }
+    if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+      e.preventDefault();
+      showAI = !showAI;
+    }
     // Ctrl+PageDown / Ctrl+PageUp as alternative tab cycling keys
     // (Ctrl+Shift+Tab is intercepted by WebKit on some platforms)
     if (e.ctrlKey && e.key === 'PageDown') {
@@ -338,6 +346,7 @@
 </div>
 
 <AboutDialog bind:show={showAbout} />
+<AIDialog bind:show={showAI} />
 
 <style>
   .app {

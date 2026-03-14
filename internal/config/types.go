@@ -56,6 +56,11 @@ type AppSettings struct {
 	Window        WindowState   `json:"window"`
 	DisplayBackend string       `json:"displayBackend"` // "auto", "x11", or "wayland"
 	DisableUpdateCheck bool     `json:"disableUpdateCheck"`
+	// AI assistant settings
+	AIProvider string `json:"aiProvider"` // "openai", "copilot", "custom", or ""
+	AIEndpoint string `json:"aiEndpoint"`
+	AIKey      string `json:"aiKey"`
+	AIModel    string `json:"aiModel"`
 }
 
 // DefaultSettings returns sensible defaults
