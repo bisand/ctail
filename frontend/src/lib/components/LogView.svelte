@@ -361,7 +361,7 @@
         {#if tabStatus === 'error'}
           <span class="status-text status-error">⚠ {tabError}</span>
         {:else}
-          <span class="status-text" title={currentTab.filePath}>{currentTab.fileName}</span>
+          <span class="status-text" title={currentTab.filePath}>{currentTab.filePath}</span>
         {/if}
       </div>
       <div class="status-right">
