@@ -338,7 +338,14 @@
   function handleWheel(e) {
     if (!container || !currentTab) return;
 
-    // Only override vertical scrolling; let horizontal scroll through naturally
+    // Shift+wheel → horizontal scroll
+    if (e.shiftKey && e.deltaY !== 0) {
+      e.preventDefault();
+      container.scrollLeft += e.deltaY * scrollSpeed;
+      return;
+    }
+
+    // Pure horizontal scroll — let browser handle it
     if (e.deltaX !== 0 && e.deltaY === 0) return;
 
     if (!smoothScroll) {
@@ -475,6 +482,14 @@
       case 'ArrowDown':
         scrollDelta = lineHeight;
         break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        container.scrollLeft -= 40 * scrollSpeed;
+        return;
+      case 'ArrowRight':
+        e.preventDefault();
+        container.scrollLeft += 40 * scrollSpeed;
+        return;
       case 'PageUp':
         scrollDelta = -pageSize;
         break;
@@ -728,7 +743,7 @@
     overflow-x: auto;
     overscroll-behavior: none;
     padding: 4px 0;
-    contain: strict;
+    contain: layout style paint;
   }
 
   .virtual-spacer {
