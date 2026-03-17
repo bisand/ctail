@@ -494,22 +494,25 @@ type MemoryStats struct {
 	NumGC      uint32 `json:"numGC"`      // number of GC cycles
 }
 
-// getProcessRSS reads the resident set size from /proc/self/statm (Linux).
+// getProcessRSS reads VmRSS from /proc/self/status (Linux).
+// This matches what system resource monitors report.
 // Returns 0 if unavailable.
 func getProcessRSS() uint64 {
-	data, err := os.ReadFile("/proc/self/statm")
+	data, err := os.ReadFile("/proc/self/status")
 	if err != nil {
 		return 0
 	}
-	// statm fields: size resident shared text lib data dt (all in pages)
-	fields := strings.Fields(string(data))
-	if len(fields) < 2 {
-		return 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				var kb uint64
+				fmt.Sscanf(fields[1], "%d", &kb)
+				return kb * 1024
+			}
+		}
 	}
-	var resident uint64
-	fmt.Sscanf(fields[1], "%d", &resident)
-	pageSize := uint64(os.Getpagesize())
-	return resident * pageSize
+	return 0
 }
 
 // GetMemoryUsage returns current memory usage stats.
