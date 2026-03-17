@@ -52,6 +52,37 @@
   $: tabStatus = currentTab ? currentTab.status : null;
   $: tabError = currentTab ? currentTab.errorMessage : '';
 
+  // --- Virtual scrolling ---
+  const OVERSCAN = 10;
+  let visibleStart = 0;
+  let visibleEnd = 0;
+
+  $: fontSize = $settings.fontSize || 14;
+  $: lineHeight = fontSize * 1.5;
+
+  // Compute which slice of filteredLines to render
+  function updateVisibleRange() {
+    if (!container || filteredLines.length === 0) {
+      visibleStart = 0;
+      visibleEnd = 0;
+      return;
+    }
+    const scrollTop = container.scrollTop;
+    const viewHeight = container.clientHeight;
+    const first = Math.floor(scrollTop / lineHeight);
+    const count = Math.ceil(viewHeight / lineHeight);
+    visibleStart = Math.max(0, first - OVERSCAN);
+    visibleEnd = Math.min(filteredLines.length, first + count + OVERSCAN);
+  }
+
+  $: visibleLines = filteredLines.slice(visibleStart, visibleEnd);
+  $: topPad = visibleStart * lineHeight;
+  $: bottomPad = Math.max(0, (filteredLines.length - visibleEnd) * lineHeight);
+  $: totalContentHeight = filteredLines.length * lineHeight;
+
+  // Recalculate visible range when lines change
+  $: if (filteredLines) updateVisibleRange();
+
   onMount(() => {
     function handleMenuFind() {
       searchVisible = true;
@@ -64,10 +95,11 @@
   let prevLineCount = 0;
   afterUpdate(() => {
     if (autoScroll && container) {
-      const curCount = lines.length;
+      const curCount = filteredLines.length;
       if (curCount !== prevLineCount) {
         prevLineCount = curCount;
-        container.scrollTop = container.scrollHeight;
+        container.scrollTop = totalContentHeight;
+        updateVisibleRange();
       }
     }
   });
@@ -93,8 +125,9 @@
           // Buffer stayed ~same size (prepend N, trim N from bottom).
           // Content shifted down by addedCount lines, so move scrollTop
           // down by that many lines to keep the visible content stable.
-          const lineHeight = container.scrollHeight / (lines.length || 1);
-          container.scrollTop = prevScrollTop + olderLines.length * lineHeight;
+          const lh = lineHeight;
+          container.scrollTop = prevScrollTop + olderLines.length * lh;
+          updateVisibleRange();
         }
       }
     } catch (e) {
@@ -124,9 +157,10 @@
           // up to keep the visible content stable.
           const trimmed = (prevBufferSize + newerLines.length) - lines.length;
           if (trimmed > 0) {
-            const lineHeight = container.scrollHeight / (lines.length || 1);
-            container.scrollTop = prevScrollTop - trimmed * lineHeight;
+            const lh = lineHeight;
+            container.scrollTop = prevScrollTop - trimmed * lh;
           }
+          updateVisibleRange();
         }
       }
     } catch (e) {
@@ -138,6 +172,8 @@
 
   function handleScroll() {
     if (!container || !currentTab) return;
+
+    updateVisibleRange();
 
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
 
@@ -164,9 +200,11 @@
     if (!smoothScroll) {
       e.preventDefault();
       container.scrollTop += e.deltaY * scrollSpeed;
+      updateVisibleRange();
     } else if (scrollSpeed > 1) {
       e.preventDefault();
       container.scrollTop += e.deltaY * scrollSpeed;
+      updateVisibleRange();
     }
 
     if (currentTab.loadingLines) return;
@@ -185,11 +223,11 @@
     const bufferSize = lines.length;
     if (bufferSize === 0) return;
 
-    // Estimate which buffer lines are visible
-    const lineHeight = container.scrollHeight / bufferSize;
-    if (lineHeight <= 0) return;
-    const firstVisibleIdx = Math.floor(container.scrollTop / lineHeight);
-    const visibleCount = Math.ceil(container.clientHeight / lineHeight);
+    // Use the known fixed line height for calculations
+    const lh = lineHeight;
+    if (lh <= 0) return;
+    const firstVisibleIdx = Math.floor(container.scrollTop / lh);
+    const visibleCount = Math.ceil(container.clientHeight / lh);
     const lastVisibleIdx = firstVisibleIdx + visibleCount;
 
     const triggerTop = Math.floor(bufferSize / 4);
@@ -233,7 +271,8 @@
       }
       await tick();
       if (container) {
-        container.scrollTop = container.scrollHeight;
+        container.scrollTop = totalContentHeight;
+        updateVisibleRange();
       }
     } catch (e) {
       console.error('Failed to jump to latest:', e);
@@ -357,14 +396,18 @@
 
   {#if currentTab}
     <div class="log-container" bind:this={container} on:scroll={handleScroll} on:wheel={handleWheel} on:contextmenu={handleContextMenu} on:copy={handleCopy}>
-      {#each filteredLines as line (line.number)}
-        <LogLine
-          {line}
-          rules={deferHighlight ? [] : rules}
-          showLineNumber={$settings.showLineNumbers}
-          fontSize={$settings.fontSize}
-        />
-      {/each}
+      {#if filteredLines.length > 0}
+        <div class="virtual-spacer" style="height: {topPad}px"></div>
+        {#each visibleLines as line (line.number)}
+          <LogLine
+            {line}
+            rules={deferHighlight ? [] : rules}
+            showLineNumber={$settings.showLineNumbers}
+            fontSize={$settings.fontSize}
+          />
+        {/each}
+        <div class="virtual-spacer" style="height: {bottomPad}px"></div>
+      {/if}
       {#if lines.length === 0}
         <div class="empty-state">
           {#if tabStatus === 'loading'}
@@ -469,7 +512,12 @@
     overflow-x: auto;
     overscroll-behavior: none;
     padding: 4px 0;
-    contain: content;
+    contain: strict;
+  }
+
+  .virtual-spacer {
+    width: 100%;
+    pointer-events: none;
   }
 
   .empty-state {
