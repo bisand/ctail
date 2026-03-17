@@ -494,25 +494,36 @@ type MemoryStats struct {
 	NumGC      uint32 `json:"numGC"`      // number of GC cycles
 }
 
-// getProcessRSS reads VmRSS from /proc/self/status (Linux).
-// This matches what system resource monitors report.
-// Returns 0 if unavailable.
-func getProcessRSS() uint64 {
+// getProcessMemory reads private memory (VmRSS - RsShmem - RssFile) from
+// /proc/self/status. This matches the "Memory" column in system monitors,
+// excluding shared libraries (like WebKit). Returns 0 if unavailable.
+func getProcessMemory() uint64 {
 	data, err := os.ReadFile("/proc/self/status")
 	if err != nil {
 		return 0
 	}
+	var rss, shared, file uint64
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "VmRSS:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				var kb uint64
-				fmt.Sscanf(fields[1], "%d", &kb)
-				return kb * 1024
-			}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		var val uint64
+		fmt.Sscanf(fields[1], "%d", &val)
+		switch fields[0] {
+		case "VmRSS:":
+			rss = val
+		case "RssShmem:":
+			shared = val
+		case "RssFile:":
+			file = val
 		}
 	}
-	return 0
+	if rss == 0 {
+		return 0
+	}
+	private := rss - shared - file
+	return private * 1024
 }
 
 // GetMemoryUsage returns current memory usage stats.
@@ -520,7 +531,7 @@ func getProcessRSS() uint64 {
 func (a *App) GetMemoryUsage() MemoryStats {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	alloc := getProcessRSS()
+	alloc := getProcessMemory()
 	if alloc == 0 {
 		alloc = m.Alloc
 	}
