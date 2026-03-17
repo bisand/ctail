@@ -4,7 +4,35 @@
   import { activeTab, tabStore } from '../stores/tabs.js';
   import { settings } from '../stores/settings.js';
   import { profiles } from '../stores/rules.js';
-  import { GetTabLineRange, GetTabTotalLines } from '../../../wailsjs/go/main/App.js';
+  import { GetTabLineRange, GetTabTotalLines, GetTabFileSize, GetMemoryUsage } from '../../../wailsjs/go/main/App.js';
+
+  // --- File size & memory stats (polled periodically) ---
+  let fileSize = 0;
+  let memoryMB = 0;
+  let statsTimer = null;
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+  }
+
+  async function refreshStats() {
+    try {
+      if (currentTab) {
+        fileSize = await GetTabFileSize(currentTab.id);
+      }
+      const mem = await GetMemoryUsage();
+      memoryMB = mem.alloc;
+    } catch (_) {}
+  }
+
+  onMount(() => {
+    refreshStats();
+    statsTimer = setInterval(refreshStats, 3000);
+    return () => { if (statsTimer) clearInterval(statsTimer); };
+  });
 
   let container;
   let isAtBottom = true;
@@ -52,7 +80,7 @@
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
       // Start prefetching for the new tab
-      if (newId) prefetchPages();
+      if (newId) { prefetchPages(); refreshStats(); }
     }
   }
   $: autoScroll = currentTab ? currentTab.autoScroll : true;
@@ -615,8 +643,13 @@
         {:else}
           <span class="status-text" title={currentTab.filePath}>{currentTab.filePath}</span>
         {/if}
+        {#if fileSize > 0}
+          <span class="status-dim">{formatSize(fileSize)}</span>
+        {/if}
       </div>
       <div class="status-right">
+        <span class="status-dim" title="Process memory">🗄 {formatSize(memoryMB)}</span>
+        <span class="status-sep">│</span>
         {#if tabStatus === 'loading'}
           <span class="status-text">Loading…</span>
         {:else if totalLines > 0}
@@ -791,6 +824,16 @@
 
   .status-text {
     white-space: nowrap;
+  }
+
+  .status-dim {
+    white-space: nowrap;
+    opacity: 0.6;
+    font-size: 0.85em;
+  }
+
+  .status-sep {
+    opacity: 0.3;
   }
 
   .status-error {

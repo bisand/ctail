@@ -475,6 +475,37 @@ func (a *App) GetTabTotalLines(tabID string) int64 {
 	return tab.tailer.GetTotalLines()
 }
 
+// GetTabFileSize returns the current file size in bytes for a tab
+func (a *App) GetTabFileSize(tabID string) int64 {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	a.mu.RUnlock()
+	if !ok {
+		return 0
+	}
+	return tab.tailer.GetFileSize()
+}
+
+// MemoryStats holds memory usage information
+type MemoryStats struct {
+	Alloc      uint64 `json:"alloc"`      // bytes currently allocated on heap
+	TotalAlloc uint64 `json:"totalAlloc"` // cumulative bytes allocated
+	Sys        uint64 `json:"sys"`        // bytes obtained from OS
+	NumGC      uint32 `json:"numGC"`      // number of GC cycles
+}
+
+// GetMemoryUsage returns current memory usage stats
+func (a *App) GetMemoryUsage() MemoryStats {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return MemoryStats{
+		Alloc:      m.Alloc,
+		TotalAlloc: m.TotalAlloc,
+		Sys:        m.Sys,
+		NumGC:      m.NumGC,
+	}
+}
+
 // GetTabs returns info about all open tabs
 func (a *App) GetTabs() []TabInfo {
 	a.mu.RLock()

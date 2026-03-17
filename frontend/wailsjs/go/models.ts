@@ -287,6 +287,24 @@ export namespace config {
 
 export namespace main {
 	
+	export class MemoryStats {
+	    alloc: number;
+	    totalAlloc: number;
+	    sys: number;
+	    numGC: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.alloc = source["alloc"];
+	        this.totalAlloc = source["totalAlloc"];
+	        this.sys = source["sys"];
+	        this.numGC = source["numGC"];
+	    }
+	}
 	export class TabInfo {
 	    id: string;
 	    filePath: string;

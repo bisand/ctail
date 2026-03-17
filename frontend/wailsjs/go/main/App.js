@@ -38,6 +38,10 @@ export function GetAppVersion() {
   return window['go']['main']['App']['GetAppVersion']();
 }
 
+export function GetMemoryUsage() {
+  return window['go']['main']['App']['GetMemoryUsage']();
+}
+
 export function GetProfile(arg1) {
   return window['go']['main']['App']['GetProfile'](arg1);
 }
@@ -52,6 +56,10 @@ export function GetSavedTabs() {
 
 export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
+}
+
+export function GetTabFileSize(arg1) {
+  return window['go']['main']['App']['GetTabFileSize'](arg1);
 }
 
 export function GetTabLineRange(arg1, arg2, arg3) {

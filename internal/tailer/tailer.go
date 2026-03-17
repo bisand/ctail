@@ -143,6 +143,13 @@ func (t *Tailer) GetTotalLines() int64 {
 	return t.lineNum
 }
 
+// GetFileSize returns the current known file size in bytes
+func (t *Tailer) GetFileSize() int64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.fileSize
+}
+
 // ReadRange reads lines from the file starting at startLine (1-based), returning up to count lines.
 // Uses a timeout to avoid blocking on unreachable mounts.
 func (t *Tailer) ReadRange(startLine int64, count int) []Line {
