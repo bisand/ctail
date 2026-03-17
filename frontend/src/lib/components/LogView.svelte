@@ -12,7 +12,24 @@
   let searchVisible = false;
 
   const FETCH_BATCH = 200;
-  let fetching = false;
+  const MAX_CACHED_PAGES = 2;
+  let swapping = false;
+  let prefetching = false;
+
+  // --- Prefetch cache: per-tab pages stored ahead/behind scroll buffer ---
+  // Map<tabId, { before: Array<lines[]>, after: Array<lines[]> }>
+  const pageCache = new Map();
+
+  function getCache(tabId) {
+    if (!pageCache.has(tabId)) {
+      pageCache.set(tabId, { before: [], after: [] });
+    }
+    return pageCache.get(tabId);
+  }
+
+  function clearCache(tabId) {
+    pageCache.delete(tabId);
+  }
 
   $: MAX_WINDOW = ($settings.scrollBuffer || 500);
 
@@ -32,6 +49,8 @@
       prevTabId = newId;
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
+      // Start prefetching for the new tab
+      if (newId) prefetchPages();
     }
   }
   $: autoScroll = currentTab ? currentTab.autoScroll : true;
@@ -71,9 +90,8 @@
   $: bottomPad = Math.max(0, (filteredLines.length - visibleEnd) * lineHeight);
   $: totalContentHeight = filteredLines.length * lineHeight;
 
-  // Recalculate visible range when lines change, but not during a fetch
-  // (fetches adjust scrollTop manually and call updateVisibleRange explicitly)
-  $: if (filteredLines && !fetching) updateVisibleRange();
+  // Recalculate visible range when lines change, but not during a swap
+  $: if (filteredLines && !swapping) updateVisibleRange();
 
   onMount(() => {
     function handleMenuFind() {
@@ -96,13 +114,111 @@
     }
   });
 
-  async function loadEarlierLines() {
-    if (!currentTab || fetching || !canScrollBack) return;
-
-    fetching = true;
-    tabStore.setLoadingLines(currentTab.id, true);
+  // --- Tier 3: Background prefetch (decoupled from scroll buffer) ---
+  async function prefetchPages() {
+    if (!currentTab || prefetching) return;
+    prefetching = true;
     const tabId = currentTab.id;
 
+    try {
+      const cache = getCache(tabId);
+
+      // Prefetch pages BEFORE the current scroll buffer
+      while (cache.before.length < MAX_CACHED_PAGES) {
+        const ws = lines.length > 0 ? lines[0].number : 0;
+        // Account for already-cached pages
+        const cachedBefore = cache.before.reduce((sum, p) => sum + p.length, 0);
+        const targetStart = ws - cachedBefore;
+        if (targetStart <= 1) break;
+
+        const fetchStart = Math.max(1, targetStart - FETCH_BATCH);
+        const fetchCount = targetStart - fetchStart;
+        if (fetchCount <= 0) break;
+
+        const page = await GetTabLineRange(tabId, fetchStart, fetchCount);
+        if (!page || page.length === 0) break;
+        if (!currentTab || currentTab.id !== tabId) return;
+
+        cache.before.push(page);
+      }
+
+      // Prefetch pages AFTER the current scroll buffer
+      while (cache.after.length < MAX_CACHED_PAGES) {
+        const we = lines.length > 0 ? lines[lines.length - 1].number : 0;
+        const cachedAfter = cache.after.reduce((sum, p) => sum + p.length, 0);
+        const targetStart = we + cachedAfter + 1;
+
+        const page = await GetTabLineRange(tabId, targetStart, FETCH_BATCH);
+        if (!page || page.length === 0) break;
+        if (!currentTab || currentTab.id !== tabId) return;
+
+        cache.after.push(page);
+      }
+    } catch (e) {
+      console.error('Prefetch error:', e);
+    } finally {
+      prefetching = false;
+    }
+  }
+
+  // --- Swap cached pages into scroll buffer (synchronous — no async wait) ---
+  async function swapEarlierPage() {
+    if (!currentTab || swapping) return false;
+    const tabId = currentTab.id;
+    const cache = getCache(tabId);
+    if (cache.before.length === 0) return false;
+
+    swapping = true;
+    const page = cache.before.shift();
+    const prevScrollTop = container ? container.scrollTop : 0;
+
+    tabStore.prependLines(tabId, page, MAX_WINDOW);
+    // Invalidate "after" cache since buffer shifted
+    cache.after = [];
+    await tick();
+
+    if (container) {
+      container.scrollTop = prevScrollTop + page.length * lineHeight;
+      updateVisibleRange();
+    }
+    swapping = false;
+    return true;
+  }
+
+  async function swapLaterPage() {
+    if (!currentTab || swapping) return false;
+    const tabId = currentTab.id;
+    const cache = getCache(tabId);
+    if (cache.after.length === 0) return false;
+
+    swapping = true;
+    const page = cache.after.shift();
+    const prevBufferSize = lines.length;
+    const prevScrollTop = container ? container.scrollTop : 0;
+
+    tabStore.appendRangeLines(tabId, page, MAX_WINDOW);
+    // Invalidate "before" cache since buffer shifted
+    cache.before = [];
+    await tick();
+
+    if (container) {
+      const trimmed = (prevBufferSize + page.length) - lines.length;
+      if (trimmed > 0) {
+        container.scrollTop = prevScrollTop - trimmed * lineHeight;
+      }
+      updateVisibleRange();
+    }
+    swapping = false;
+    return true;
+  }
+
+  // --- Fetch fallback (when cache is empty) ---
+  async function fetchEarlierLines() {
+    if (!currentTab || swapping) return;
+    const tabId = currentTab.id;
+
+    swapping = true;
+    tabStore.setLoadingLines(tabId, true);
     try {
       const ws = lines.length > 0 ? lines[0].number : 0;
       const fetchStart = Math.max(1, ws - FETCH_BATCH);
@@ -115,6 +231,7 @@
 
       const prevScrollTop = container ? container.scrollTop : 0;
       tabStore.prependLines(tabId, olderLines, MAX_WINDOW);
+      clearCache(tabId);
       await tick();
 
       if (container) {
@@ -124,22 +241,19 @@
     } catch (e) {
       console.error('Failed to load earlier lines:', e);
     } finally {
-      fetching = false;
+      swapping = false;
       if (currentTab && currentTab.id === tabId) {
         tabStore.setLoadingLines(tabId, false);
       }
-      // Chain: if still near the edge, start next batch immediately
-      checkAndFetch();
     }
   }
 
-  async function loadLaterLines() {
-    if (!currentTab || fetching || !canScrollForward) return;
-
-    fetching = true;
-    tabStore.setLoadingLines(currentTab.id, true);
+  async function fetchLaterLines() {
+    if (!currentTab || swapping) return;
     const tabId = currentTab.id;
 
+    swapping = true;
+    tabStore.setLoadingLines(tabId, true);
     try {
       const we = lines.length > 0 ? lines[lines.length - 1].number : 0;
       const fetchStart = we + 1;
@@ -151,6 +265,7 @@
       if (!currentTab || currentTab.id !== tabId) return;
 
       tabStore.appendRangeLines(tabId, newerLines, MAX_WINDOW);
+      clearCache(tabId);
       await tick();
 
       if (container) {
@@ -163,12 +278,10 @@
     } catch (e) {
       console.error('Failed to load later lines:', e);
     } finally {
-      fetching = false;
+      swapping = false;
       if (currentTab && currentTab.id === tabId) {
         tabStore.setLoadingLines(tabId, false);
       }
-      // Chain: if still near the edge, start next batch immediately
-      checkAndFetch();
     }
   }
 
@@ -218,12 +331,11 @@
   }
 
   function checkAndFetch() {
-    if (!container || !currentTab || fetching) return;
+    if (!container || !currentTab || swapping) return;
 
     const bufferSize = filteredLines.length;
     if (bufferSize === 0) return;
 
-    // Use the known fixed line height for calculations
     const lh = lineHeight;
     if (lh <= 0) return;
     const firstVisibleIdx = Math.floor(container.scrollTop / lh);
@@ -233,13 +345,20 @@
     const triggerTop = Math.floor(bufferSize / 4);
     const triggerBottom = Math.floor(bufferSize * 3 / 4);
 
-    // Viewport is in the top 1/3 of the buffer → load earlier lines
     if (firstVisibleIdx < triggerTop && canScrollBack) {
-      loadEarlierLines();
-    }
-    // Viewport is in the bottom 1/3 of the buffer → load later lines
-    else if (lastVisibleIdx > triggerBottom && canScrollForward) {
-      loadLaterLines();
+      // Try instant swap from cache first, fall back to async fetch
+      swapEarlierPage().then(swapped => {
+        if (!swapped) fetchEarlierLines();
+        prefetchPages();
+      });
+    } else if (lastVisibleIdx > triggerBottom && canScrollForward) {
+      swapLaterPage().then(swapped => {
+        if (!swapped) fetchLaterLines();
+        prefetchPages();
+      });
+    } else {
+      // In the middle — good time to top up the cache
+      prefetchPages();
     }
   }
 
@@ -268,6 +387,7 @@
       const latestLines = await GetTabLineRange(currentTab.id, fetchStart, MAX_WINDOW);
       if (latestLines && latestLines.length > 0) {
         tabStore.setLines(currentTab.id, latestLines, total);
+        clearCache(currentTab.id);
       }
       await tick();
       if (container) {
