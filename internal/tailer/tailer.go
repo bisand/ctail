@@ -28,7 +28,8 @@ type Tailer struct {
 	fileSize    int64
 	lineOffsets []int64 // byte offset of each line start (0-indexed: lineOffsets[0] = line 1)
 	running     bool
-	inError     bool // true when the last poll attempt failed
+	inError     bool      // true when the last poll attempt failed
+	lastReady   time.Time // last time onReady was fired (prevents flicker cycling)
 	stopCh      chan struct{}
 
 	onLines     func([]Line)
@@ -289,6 +290,11 @@ func (t *Tailer) pollLoop() {
 	// (e.g. stale network mount), avoiding unbounded goroutine leaks.
 	pollActive := make(chan struct{}, 1)
 
+	// Backoff state: when the tailer is in error, progressively slow down
+	// polling to reduce wasted I/O and event noise on unreachable mounts.
+	const maxBackoff = 10 * time.Second
+	var consecutiveErrors int
+
 	for {
 		select {
 		case <-t.stopCh:
@@ -296,8 +302,21 @@ func (t *Tailer) pollLoop() {
 		case <-ticker.C:
 			t.mu.RLock()
 			interval := t.pollInterval
+			inError := t.inError
 			t.mu.RUnlock()
-			ticker.Reset(interval)
+
+			// Apply exponential backoff when in error state
+			if inError {
+				consecutiveErrors++
+				backoff := interval * time.Duration(1<<min(consecutiveErrors, 5))
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				ticker.Reset(backoff)
+			} else {
+				consecutiveErrors = 0
+				ticker.Reset(interval)
+			}
 
 			// Skip this tick if a previous poll is still running
 			select {
@@ -337,13 +356,20 @@ func (t *Tailer) pollLoop() {
 	}
 }
 
+// readyCooldown is the minimum interval between onReady callbacks to prevent
+// rapid ready→error→ready cycling on flaky network connections.
+const readyCooldown = 5 * time.Second
+
 func (t *Tailer) poll() {
 	info, err := os.Stat(t.filePath)
 	if err != nil {
 		t.mu.Lock()
+		wasInError := t.inError
 		t.inError = true
 		t.mu.Unlock()
-		if t.onError != nil {
+		// Only fire the error callback on the transition from OK → error
+		// to avoid flooding the frontend with repeated identical errors.
+		if !wasInError && t.onError != nil {
 			t.onError(err)
 		}
 		return
@@ -358,9 +384,18 @@ func (t *Tailer) poll() {
 	prevOffset := t.offset
 	t.mu.Unlock()
 
-	// File is accessible again after an error — notify frontend
+	// File is accessible again after an error — notify frontend.
+	// Apply a cooldown to prevent rapid ready→error→ready cycling on flaky connections.
 	if wasInError && t.onReady != nil {
-		t.onReady()
+		t.mu.RLock()
+		lastReady := t.lastReady
+		t.mu.RUnlock()
+		if time.Since(lastReady) >= readyCooldown {
+			t.mu.Lock()
+			t.lastReady = time.Now()
+			t.mu.Unlock()
+			t.onReady()
+		}
 	}
 
 	// No new data
@@ -372,9 +407,10 @@ func (t *Tailer) poll() {
 	f, err := os.Open(t.filePath)
 	if err != nil {
 		t.mu.Lock()
+		wasInError2 := t.inError
 		t.inError = true
 		t.mu.Unlock()
-		if t.onError != nil {
+		if !wasInError2 && t.onError != nil {
 			t.onError(err)
 		}
 		return

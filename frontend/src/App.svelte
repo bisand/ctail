@@ -58,8 +58,12 @@
     }
   }
 
-  // Load initial lines for a tab after it becomes ready
+  // Load initial lines for a tab after it becomes ready.
+  // Guards against concurrent calls for the same tab (e.g. rapid ready→error→ready cycling).
+  const pendingInitLoads = new Set();
   async function loadInitialLines(tabId) {
+    if (pendingInitLoads.has(tabId)) return;
+    pendingInitLoads.add(tabId);
     try {
       const total = await GetTabTotalLines(tabId);
       const fetchStart = Math.max(1, total - scrollBuffer + 1);
@@ -71,6 +75,8 @@
     } catch (e) {
       console.error('Failed to load initial lines for', tabId, e);
       tabStore.setStatus(tabId, 'error', String(e));
+    } finally {
+      pendingInitLoads.delete(tabId);
     }
   }
 
@@ -117,10 +123,14 @@
       }
     });
 
+    // Debounce error events per tab — at most one UI update per second per tab
+    const errorTimers = new Map();
     EventsOn('tailer:error', (data) => {
-      console.error(`Tailer error for ${data.tabId}: ${data.message}`);
       if (data.tabId) {
+        if (errorTimers.has(data.tabId)) return;
+        console.error(`Tailer error for ${data.tabId}: ${data.message}`);
         tabStore.setStatus(data.tabId, 'error', data.message || 'Unknown error');
+        errorTimers.set(data.tabId, setTimeout(() => errorTimers.delete(data.tabId), 1000));
       }
     });
 
