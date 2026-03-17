@@ -444,7 +444,7 @@
     }
   }
 
-  function handleKeydown(e) {
+  async function handleKeydown(e) {
     if (e.ctrlKey && e.key === 'f') {
       e.preventDefault();
       searchVisible = !searchVisible;
@@ -493,6 +493,9 @@
     e.preventDefault();
     container.scrollTop += scrollDelta * scrollSpeed;
     updateVisibleRange();
+    // Force Svelte to flush DOM updates (spacers) before the browser paints,
+    // preventing blank gaps after large jumps like PgUp/PgDn.
+    await tick();
     checkAndFetch();
   }
 
