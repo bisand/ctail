@@ -338,6 +338,9 @@
   function handleWheel(e) {
     if (!container || !currentTab) return;
 
+    // Only override vertical scrolling; let horizontal scroll through naturally
+    if (e.deltaX !== 0 && e.deltaY === 0) return;
+
     if (!smoothScroll) {
       e.preventDefault();
       container.scrollTop += e.deltaY * scrollSpeed;

@@ -263,9 +263,17 @@
     const remaining = $profileNames.find(n => n !== selectedProfile) || $profileNames[0];
     updateSetting('activeProfile', remaining);
   }
+
+  function handlePanelWheel(e) {
+    if ($settings.smoothScroll) return;
+    if (e.deltaX !== 0 && e.deltaY === 0) return;
+    e.preventDefault();
+    const panel = e.currentTarget;
+    panel.scrollTop += e.deltaY * ($settings.scrollSpeed || 1);
+  }
 </script>
 
-<div class="settings-panel">
+<div class="settings-panel" on:wheel={handlePanelWheel}>
   <div class="panel-header">
     <button class:active={activeSection === 'settings'} on:click={() => selectSection('settings')}>Settings</button>
     <button class:active={activeSection === 'rules'} on:click={() => selectSection('rules')}>Rules</button>
@@ -578,6 +586,7 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    overscroll-behavior: none;
   }
 
   .panel-header {
