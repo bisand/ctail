@@ -65,6 +65,7 @@ export namespace config {
 	    pollIntervalMs: number;
 	    bufferSize: number;
 	    scrollBuffer: number;
+	    scrollSpeed: number;
 	    theme: string;
 	    themeMode: string;
 	    fontSize: number;
@@ -92,6 +93,7 @@ export namespace config {
 	        this.pollIntervalMs = source["pollIntervalMs"];
 	        this.bufferSize = source["bufferSize"];
 	        this.scrollBuffer = source["scrollBuffer"];
+	        this.scrollSpeed = source["scrollSpeed"];
 	        this.theme = source["theme"];
 	        this.themeMode = source["themeMode"];
 	        this.fontSize = source["fontSize"];

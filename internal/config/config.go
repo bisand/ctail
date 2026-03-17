@@ -179,7 +179,7 @@ func (m *Manager) loadSettings() {
 			s.Theme = "catppuccin"
 		}
 		if s.ScrollSpeed == 0 {
-			s.ScrollSpeed = 10
+			s.ScrollSpeed = 1
 		}
 		m.settings = s
 	}

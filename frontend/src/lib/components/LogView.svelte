@@ -142,16 +142,14 @@
 
   $: scrollSpeed = $settings.scrollSpeed || 10;
 
-  // Wheel events fire even when scrollTop is at 0 or max,
-  // so we can detect the user wanting to scroll beyond the rendered content.
+  // Always take over wheel scrolling to eliminate browser-imposed
+  // deceleration near scroll edges.
   function handleWheel(e) {
     if (!container || !currentTab) return;
 
-    // Apply scroll speed multiplier (1–10, where 10 is fastest)
-    if (scrollSpeed > 1) {
-      e.preventDefault();
-      container.scrollTop += e.deltaY * scrollSpeed;
-    }
+    e.preventDefault();
+    const multiplier = scrollSpeed > 1 ? scrollSpeed : 1;
+    container.scrollTop += e.deltaY * multiplier;
 
     if (currentTab.loadingLines) return;
 

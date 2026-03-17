@@ -289,9 +289,9 @@
       <label>
         <span>Scroll Speed</span>
         <input type="range" min="1" max="10" step="1"
-          value={$settings.scrollSpeed || 10}
+          value={$settings.scrollSpeed || 1}
           on:input={e => updateSetting('scrollSpeed', parseInt(e.target.value))} />
-        <span class="range-value">{$settings.scrollSpeed || 10}</span>
+        <span class="range-value">{$settings.scrollSpeed || 1}</span>
       </label>
       <label>
         <span>Font Size</span>
