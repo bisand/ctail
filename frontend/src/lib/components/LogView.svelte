@@ -30,6 +30,19 @@
   $: profileName = $settings.activeProfile || 'Common Logs';
   $: profile = $profiles[profileName];
   $: rules = profile ? profile.rules : [];
+
+  // Two-phase render: skip highlighting on tab switch for instant feel,
+  // then apply it one frame later.
+  let deferHighlight = false;
+  let prevTabId = null;
+  $: {
+    const newId = currentTab ? currentTab.id : null;
+    if (newId !== prevTabId) {
+      prevTabId = newId;
+      deferHighlight = true;
+      requestAnimationFrame(() => { deferHighlight = false; });
+    }
+  }
   $: autoScroll = currentTab ? currentTab.autoScroll : true;
   $: totalLines = currentTab ? currentTab.totalLines : 0;
   $: windowStart = lines.length > 0 ? lines[0].number : 0;
@@ -347,7 +360,7 @@
       {#each filteredLines as line (line.number)}
         <LogLine
           {line}
-          {rules}
+          rules={deferHighlight ? [] : rules}
           showLineNumber={$settings.showLineNumbers}
           fontSize={$settings.fontSize}
         />

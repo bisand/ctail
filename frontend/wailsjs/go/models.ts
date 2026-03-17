@@ -66,6 +66,7 @@ export namespace config {
 	    bufferSize: number;
 	    scrollBuffer: number;
 	    scrollSpeed: number;
+	    smoothScroll: boolean;
 	    theme: string;
 	    themeMode: string;
 	    fontSize: number;
@@ -94,6 +95,7 @@ export namespace config {
 	        this.bufferSize = source["bufferSize"];
 	        this.scrollBuffer = source["scrollBuffer"];
 	        this.scrollSpeed = source["scrollSpeed"];
+	        this.smoothScroll = source["smoothScroll"];
 	        this.theme = source["theme"];
 	        this.themeMode = source["themeMode"];
 	        this.fontSize = source["fontSize"];
