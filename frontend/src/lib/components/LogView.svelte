@@ -163,7 +163,7 @@
     }
   }
 
-  // --- Swap cached pages into scroll buffer (synchronous — no async wait) ---
+  // --- Swap cached pages into scroll buffer ---
   async function swapEarlierPage() {
     if (!currentTab || swapping) return false;
     const tabId = currentTab.id;
@@ -173,16 +173,14 @@
     swapping = true;
     const page = cache.before.shift();
     const prevScrollTop = container ? container.scrollTop : 0;
+    const adjustment = page.length * lineHeight;
 
     tabStore.prependLines(tabId, page, MAX_WINDOW);
-    // Invalidate "after" cache since buffer shifted
     cache.after = [];
+    // Set scrollTop before tick to avoid a frame with wrong position
+    if (container) container.scrollTop = prevScrollTop + adjustment;
     await tick();
-
-    if (container) {
-      container.scrollTop = prevScrollTop + page.length * lineHeight;
-      updateVisibleRange();
-    }
+    if (container) updateVisibleRange();
     swapping = false;
     return true;
   }
@@ -199,17 +197,17 @@
     const prevScrollTop = container ? container.scrollTop : 0;
 
     tabStore.appendRangeLines(tabId, page, MAX_WINDOW);
-    // Invalidate "before" cache since buffer shifted
     cache.before = [];
-    await tick();
-
+    // Pre-calculate trim and adjust scrollTop before tick
     if (container) {
-      const trimmed = (prevBufferSize + page.length) - lines.length;
+      const newSize = Math.min(prevBufferSize + page.length, MAX_WINDOW);
+      const trimmed = (prevBufferSize + page.length) - newSize;
       if (trimmed > 0) {
         container.scrollTop = prevScrollTop - trimmed * lineHeight;
       }
-      updateVisibleRange();
     }
+    await tick();
+    if (container) updateVisibleRange();
     swapping = false;
     return true;
   }
@@ -232,14 +230,12 @@
       if (!currentTab || currentTab.id !== tabId) return;
 
       const prevScrollTop = container ? container.scrollTop : 0;
+      const adjustment = olderLines.length * lineHeight;
       tabStore.prependLines(tabId, olderLines, MAX_WINDOW);
       clearCache(tabId);
+      if (container) container.scrollTop = prevScrollTop + adjustment;
       await tick();
-
-      if (container) {
-        container.scrollTop = prevScrollTop + olderLines.length * lineHeight;
-        updateVisibleRange();
-      }
+      if (container) updateVisibleRange();
     } catch (e) {
       console.error('Failed to load earlier lines:', e);
     } finally {
@@ -268,15 +264,15 @@
 
       tabStore.appendRangeLines(tabId, newerLines, MAX_WINDOW);
       clearCache(tabId);
-      await tick();
-
       if (container) {
-        const trimmed = (prevBufferSize + newerLines.length) - lines.length;
+        const newSize = Math.min(prevBufferSize + newerLines.length, MAX_WINDOW);
+        const trimmed = (prevBufferSize + newerLines.length) - newSize;
         if (trimmed > 0) {
           container.scrollTop = prevScrollTop - trimmed * lineHeight;
         }
-        updateVisibleRange();
       }
+      await tick();
+      if (container) updateVisibleRange();
     } catch (e) {
       console.error('Failed to load later lines:', e);
     } finally {
@@ -380,6 +376,25 @@
     }
   }
 
+  async function jumpToStart() {
+    if (!currentTab) return;
+    try {
+      tabStore.setAutoScroll(currentTab.id, false);
+      const startLines = await GetTabLineRange(currentTab.id, 1, MAX_WINDOW);
+      if (startLines && startLines.length > 0) {
+        tabStore.setLines(currentTab.id, startLines);
+        clearCache(currentTab.id);
+      }
+      await tick();
+      if (container) {
+        container.scrollTop = 0;
+        updateVisibleRange();
+      }
+    } catch (e) {
+      console.error('Failed to jump to start:', e);
+    }
+  }
+
   async function jumpToLatest() {
     if (!currentTab) return;
     try {
@@ -437,9 +452,7 @@
         break;
       case 'Home':
         e.preventDefault();
-        container.scrollTop = 0;
-        updateVisibleRange();
-        checkAndFetch();
+        jumpToStart();
         return;
       case 'End':
         e.preventDefault();
