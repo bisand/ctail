@@ -44,6 +44,7 @@ type AppSettings struct {
 	PollIntervalMs int          `json:"pollIntervalMs"`
 	BufferSize    int           `json:"bufferSize"`
 	ScrollBuffer  int           `json:"scrollBuffer"`
+	ScrollSpeed   int           `json:"scrollSpeed"` // wheel scroll multiplier: 1 (slowest) to 10 (fastest), default 10
 	Theme         string        `json:"theme"`     // theme name, e.g. "catppuccin"
 	ThemeMode     string        `json:"themeMode"` // "dark" or "light"
 	FontSize      int           `json:"fontSize"`
@@ -71,6 +72,7 @@ func DefaultSettings() AppSettings {
 		PollIntervalMs:  500,
 		BufferSize:      10000,
 		ScrollBuffer:    500,
+		ScrollSpeed:     10,
 		Theme:           "catppuccin",
 		ThemeMode:       "dark",
 		FontSize:        14,

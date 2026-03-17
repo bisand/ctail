@@ -47,9 +47,15 @@
     return () => window.removeEventListener('ctail:find', handleMenuFind);
   });
 
+  // Track previous line count to only auto-scroll when lines change
+  let prevLineCount = 0;
   afterUpdate(() => {
     if (autoScroll && container) {
-      container.scrollTop = container.scrollHeight;
+      const curCount = lines.length;
+      if (curCount !== prevLineCount) {
+        prevLineCount = curCount;
+        container.scrollTop = container.scrollHeight;
+      }
     }
   });
 
@@ -134,10 +140,20 @@
     scheduleFetchCheck();
   }
 
+  $: scrollSpeed = $settings.scrollSpeed || 10;
+
   // Wheel events fire even when scrollTop is at 0 or max,
   // so we can detect the user wanting to scroll beyond the rendered content.
   function handleWheel(e) {
-    if (!container || !currentTab || currentTab.loadingLines) return;
+    if (!container || !currentTab) return;
+
+    // Apply scroll speed multiplier (1–10, where 10 is fastest)
+    if (scrollSpeed > 1) {
+      e.preventDefault();
+      container.scrollTop += e.deltaY * scrollSpeed;
+    }
+
+    if (currentTab.loadingLines) return;
 
     if (e.deltaY < 0 && container.scrollTop <= 0 && canScrollBack) {
       scheduleFetchCheck();
@@ -435,7 +451,9 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: auto;
+    overscroll-behavior: none;
     padding: 4px 0;
+    contain: content;
   }
 
   .empty-state {

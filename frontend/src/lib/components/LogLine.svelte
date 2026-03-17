@@ -40,6 +40,7 @@
     min-height: 1.5em;
     width: fit-content;
     min-width: 100%;
+    contain: inline-size layout style;
   }
 
   .log-line:hover {

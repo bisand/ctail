@@ -287,6 +287,13 @@
           on:change={e => updateSetting('scrollBuffer', parseInt(e.target.value))} />
       </label>
       <label>
+        <span>Scroll Speed</span>
+        <input type="range" min="1" max="10" step="1"
+          value={$settings.scrollSpeed || 10}
+          on:input={e => updateSetting('scrollSpeed', parseInt(e.target.value))} />
+        <span class="range-value">{$settings.scrollSpeed || 10}</span>
+      </label>
+      <label>
         <span>Font Size</span>
         <input type="number" min="10" max="24"
           value={$settings.fontSize}
@@ -606,6 +613,17 @@
   label span {
     font-size: 12px;
     color: var(--text-secondary);
+  }
+
+  label input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+
+  .range-value {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
   }
 
   .toggle-label {

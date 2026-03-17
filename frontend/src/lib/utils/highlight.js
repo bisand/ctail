@@ -7,6 +7,28 @@ function stripInlineFlags(pattern) {
   return pattern.replace(/\(\?[ismUu]+\)/g, '');
 }
 
+// Cache compiled RegExp objects to avoid recompilation on every line.
+// Key: "pattern|flags" → RegExp
+const regexCache = new Map();
+const REGEX_CACHE_MAX = 200;
+
+function getCachedRegex(pattern, flags) {
+  const key = pattern + '|' + flags;
+  let re = regexCache.get(key);
+  if (re) {
+    re.lastIndex = 0;
+    return re;
+  }
+  re = new RegExp(stripInlineFlags(pattern), flags);
+  if (regexCache.size >= REGEX_CACHE_MAX) {
+    // Evict oldest entry
+    const first = regexCache.keys().next().value;
+    regexCache.delete(first);
+  }
+  regexCache.set(key, re);
+  return re;
+}
+
 /**
  * Apply highlighting rules to a text line.
  * Returns an array of segments: { text, style }
@@ -24,7 +46,7 @@ export function highlightLine(text, rules) {
   for (const rule of sortedRules) {
     if (rule.matchType === 'line') {
       try {
-        const re = new RegExp(stripInlineFlags(rule.pattern), 'i');
+        const re = getCachedRegex(rule.pattern, 'i');
         if (re.test(text)) {
           lineStyle = {
             color: rule.foreground || undefined,
@@ -54,7 +76,8 @@ export function highlightLine(text, rules) {
   for (const rule of matchRules) {
     if (lineStyle && rule.priority < linePriority) continue;
     try {
-      const re = new RegExp(stripInlineFlags(rule.pattern), 'gi');
+      const re = getCachedRegex(rule.pattern, 'gi');
+      re.lastIndex = 0;
       let m;
       while ((m = re.exec(text)) !== null) {
         if (m[0].length === 0) break; // prevent infinite loop on zero-width matches
