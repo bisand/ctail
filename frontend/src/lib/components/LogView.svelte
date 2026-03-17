@@ -46,6 +46,8 @@
   $: {
     const newId = currentTab ? currentTab.id : null;
     if (newId !== prevTabId) {
+      // Clear prefetch cache for the tab we're leaving
+      if (prevTabId) clearCache(prevTabId);
       prevTabId = newId;
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
