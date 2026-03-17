@@ -406,11 +406,53 @@
       e.preventDefault();
       searchVisible = !searchVisible;
       if (!searchVisible) searchQuery = '';
+      return;
     }
     if (e.key === 'Escape' && searchVisible) {
       searchVisible = false;
       searchQuery = '';
+      return;
     }
+
+    // Keyboard scrolling (only when log container is available and focused area)
+    if (!container || !currentTab) return;
+    // Skip if user is typing in an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    const pageSize = container.clientHeight;
+    let scrollDelta = 0;
+
+    switch (e.key) {
+      case 'ArrowUp':
+        scrollDelta = -lineHeight;
+        break;
+      case 'ArrowDown':
+        scrollDelta = lineHeight;
+        break;
+      case 'PageUp':
+        scrollDelta = -pageSize;
+        break;
+      case 'PageDown':
+        scrollDelta = pageSize;
+        break;
+      case 'Home':
+        e.preventDefault();
+        container.scrollTop = 0;
+        updateVisibleRange();
+        checkAndFetch();
+        return;
+      case 'End':
+        e.preventDefault();
+        scrollToBottom();
+        return;
+      default:
+        return;
+    }
+
+    e.preventDefault();
+    container.scrollTop += scrollDelta * scrollSpeed;
+    updateVisibleRange();
+    checkAndFetch();
   }
 
   $: filteredLines = searchQuery
