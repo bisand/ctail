@@ -45,6 +45,7 @@ type AppSettings struct {
 	BufferSize    int           `json:"bufferSize"`
 	ScrollBuffer  int           `json:"scrollBuffer"`
 	ScrollSpeed   int           `json:"scrollSpeed"` // wheel scroll multiplier: 1 (normal) to 10 (fastest), default 1
+	SmoothScroll  bool          `json:"smoothScroll"` // enable browser scroll deceleration at edges
 	Theme         string        `json:"theme"`     // theme name, e.g. "catppuccin"
 	ThemeMode     string        `json:"themeMode"` // "dark" or "light"
 	FontSize      int           `json:"fontSize"`

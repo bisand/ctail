@@ -140,16 +140,21 @@
     scheduleFetchCheck();
   }
 
-  $: scrollSpeed = $settings.scrollSpeed || 10;
+  $: scrollSpeed = $settings.scrollSpeed || 1;
+  $: smoothScroll = $settings.smoothScroll || false;
 
   // Always take over wheel scrolling to eliminate browser-imposed
-  // deceleration near scroll edges.
+  // deceleration near scroll edges (unless smooth scroll is enabled).
   function handleWheel(e) {
     if (!container || !currentTab) return;
 
-    e.preventDefault();
-    const multiplier = scrollSpeed > 1 ? scrollSpeed : 1;
-    container.scrollTop += e.deltaY * multiplier;
+    if (!smoothScroll) {
+      e.preventDefault();
+      container.scrollTop += e.deltaY * scrollSpeed;
+    } else if (scrollSpeed > 1) {
+      e.preventDefault();
+      container.scrollTop += e.deltaY * scrollSpeed;
+    }
 
     if (currentTab.loadingLines) return;
 

@@ -4,6 +4,7 @@ export const settings = writable({
   pollIntervalMs: 500,
   bufferSize: 10000,
   scrollSpeed: 1,
+  smoothScroll: false,
   theme: 'catppuccin',
   themeMode: 'dark',
   fontSize: 14,

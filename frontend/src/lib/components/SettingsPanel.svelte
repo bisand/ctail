@@ -293,6 +293,11 @@
           on:input={e => updateSetting('scrollSpeed', parseInt(e.target.value))} />
         <span class="range-value">{$settings.scrollSpeed || 1}</span>
       </label>
+      <label class="toggle-label">
+        <input type="checkbox" checked={$settings.smoothScroll}
+          on:change={e => updateSetting('smoothScroll', e.target.checked)} />
+        <span>Smooth Scroll (deceleration at edges)</span>
+      </label>
       <label>
         <span>Font Size</span>
         <input type="number" min="10" max="24"
