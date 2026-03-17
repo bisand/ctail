@@ -488,18 +488,41 @@ func (a *App) GetTabFileSize(tabID string) int64 {
 
 // MemoryStats holds memory usage information
 type MemoryStats struct {
-	Alloc      uint64 `json:"alloc"`      // bytes currently allocated on heap
+	Alloc      uint64 `json:"alloc"`      // resident set size (or Go heap fallback)
 	TotalAlloc uint64 `json:"totalAlloc"` // cumulative bytes allocated
 	Sys        uint64 `json:"sys"`        // bytes obtained from OS
 	NumGC      uint32 `json:"numGC"`      // number of GC cycles
 }
 
-// GetMemoryUsage returns current memory usage stats
+// getProcessRSS reads the resident set size from /proc/self/statm (Linux).
+// Returns 0 if unavailable.
+func getProcessRSS() uint64 {
+	data, err := os.ReadFile("/proc/self/statm")
+	if err != nil {
+		return 0
+	}
+	// statm fields: size resident shared text lib data dt (all in pages)
+	fields := strings.Fields(string(data))
+	if len(fields) < 2 {
+		return 0
+	}
+	var resident uint64
+	fmt.Sscanf(fields[1], "%d", &resident)
+	pageSize := uint64(os.Getpagesize())
+	return resident * pageSize
+}
+
+// GetMemoryUsage returns current memory usage stats.
+// Alloc reports process RSS on Linux, falling back to Go heap on other platforms.
 func (a *App) GetMemoryUsage() MemoryStats {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
+	alloc := getProcessRSS()
+	if alloc == 0 {
+		alloc = m.Alloc
+	}
 	return MemoryStats{
-		Alloc:      m.Alloc,
+		Alloc:      alloc,
 		TotalAlloc: m.TotalAlloc,
 		Sys:        m.Sys,
 		NumGC:      m.NumGC,
