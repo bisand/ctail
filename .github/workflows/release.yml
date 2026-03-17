@@ -89,26 +89,26 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cd build/bin
-          tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.output }}
+          tar czf ${{ matrix.asset_name }}-v${{ steps.versioninfo.outputs.VERSION }}.tar.gz ${{ matrix.output }}
 
       - name: Compress macOS binary
         if: runner.os == 'macOS'
         run: |
           cd build/bin
-          zip -r ${{ matrix.asset_name }}.zip ctail.app || tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.output }}
+          zip -r ${{ matrix.asset_name }}-v${{ steps.versioninfo.outputs.VERSION }}.zip ctail.app || tar czf ${{ matrix.asset_name }}-v${{ steps.versioninfo.outputs.VERSION }}.tar.gz ${{ matrix.output }}
 
       - name: Compress Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path build/bin/${{ matrix.output }} -DestinationPath build/bin/${{ matrix.asset_name }}.zip
+          Compress-Archive -Path build/bin/${{ matrix.output }} -DestinationPath build/bin/${{ matrix.asset_name }}-v${{ steps.versioninfo.outputs.VERSION }}.zip
 
       - name: Upload Linux artifact to release
         if: runner.os == 'Linux'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/bin/${{ matrix.asset_name }}.tar.gz
+            build/bin/${{ matrix.asset_name }}-v${{ steps.versioninfo.outputs.VERSION }}.tar.gz
             build/*.deb
             build/*.rpm
 
@@ -117,14 +117,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/bin/${{ matrix.asset_name }}.zip
-            build/bin/${{ matrix.asset_name }}.tar.gz
+            build/bin/${{ matrix.asset_name }}-v${{ steps.versioninfo.outputs.VERSION }}.zip
+            build/bin/${{ matrix.asset_name }}-v${{ steps.versioninfo.outputs.VERSION }}.tar.gz
 
       - name: Upload Windows artifact to release
         if: runner.os == 'Windows'
         uses: softprops/action-gh-release@v2
         with:
-          files: build/bin/${{ matrix.asset_name }}.zip
+          files: build/bin/${{ matrix.asset_name }}-v${{ steps.versioninfo.outputs.VERSION }}.zip
 
   update-version:
     needs: build
