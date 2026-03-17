@@ -358,17 +358,20 @@
         {#if currentTab.loadingLines}
           <span class="status-loading">⟳</span>
         {/if}
+        {#if tabStatus === 'error'}
+          <span class="status-text status-error">⚠ {tabError}</span>
+        {:else}
+          <span class="status-text" title={currentTab.filePath}>{currentTab.fileName}</span>
+        {/if}
+      </div>
+      <div class="status-right">
         {#if tabStatus === 'loading'}
           <span class="status-text">Loading…</span>
-        {:else if tabStatus === 'error'}
-          <span class="status-text status-error">⚠ {tabError}</span>
         {:else if totalLines > 0}
           <span class="status-text">Lines {windowStart}–{windowEnd} of {totalLines}</span>
         {:else}
           <span class="status-text">Empty</span>
         {/if}
-      </div>
-      <div class="status-right">
         <label class="follow-toggle" title="Auto-scroll to new lines (per tab)">
           <input type="checkbox" checked={autoScroll} on:change={toggleFollow} />
           Follow
@@ -511,12 +514,20 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  .status-left .status-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .status-right {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
   }
 
   .status-text {
