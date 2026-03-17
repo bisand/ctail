@@ -12,18 +12,10 @@
   let searchVisible = false;
 
   const FETCH_BATCH = 200;
-  let fetchTimer = null;
+  const PREFETCH_BATCHES = 2;
+  let fetching = false;
 
   $: MAX_WINDOW = ($settings.scrollBuffer || 500);
-
-  // Debounce: only one fetch check per pause in scrolling
-  function scheduleFetchCheck() {
-    if (fetchTimer) clearTimeout(fetchTimer);
-    fetchTimer = setTimeout(() => {
-      fetchTimer = null;
-      checkAndFetch();
-    }, 100);
-  }
 
   $: currentTab = $activeTab;
   $: lines = currentTab ? currentTab.lines : [];
@@ -105,56 +97,69 @@
   });
 
   async function loadEarlierLines() {
-    if (!currentTab || currentTab.loadingLines || !canScrollBack) return;
+    if (!currentTab || fetching || !canScrollBack) return;
 
+    fetching = true;
     tabStore.setLoadingLines(currentTab.id, true);
+    let batchesLoaded = 0;
+    const tabId = currentTab.id;
+
     try {
-      const fetchStart = Math.max(1, windowStart - FETCH_BATCH);
-      const fetchCount = windowStart - fetchStart;
-      if (fetchCount <= 0) return;
+      while (batchesLoaded < PREFETCH_BATCHES && canScrollBack) {
+        const ws = lines.length > 0 ? lines[0].number : 0;
+        const fetchStart = Math.max(1, ws - FETCH_BATCH);
+        const fetchCount = ws - fetchStart;
+        if (fetchCount <= 0) break;
 
-      const olderLines = await GetTabLineRange(currentTab.id, fetchStart, fetchCount);
-      if (olderLines && olderLines.length > 0) {
-        const prevScrollTop = container.scrollTop;
-        const prevBufferSize = lines.length;
+        const olderLines = await GetTabLineRange(tabId, fetchStart, fetchCount);
+        if (!olderLines || olderLines.length === 0) break;
+        // Tab changed while we were fetching — discard
+        if (!currentTab || currentTab.id !== tabId) break;
 
-        tabStore.prependLines(currentTab.id, olderLines, MAX_WINDOW);
-
+        const prevScrollTop = container ? container.scrollTop : 0;
+        tabStore.prependLines(tabId, olderLines, MAX_WINDOW);
         await tick();
+
         if (container) {
-          // Buffer stayed ~same size (prepend N, trim N from bottom).
-          // Content shifted down by addedCount lines, so move scrollTop
-          // down by that many lines to keep the visible content stable.
           const lh = lineHeight;
           container.scrollTop = prevScrollTop + olderLines.length * lh;
           updateVisibleRange();
         }
+        batchesLoaded++;
       }
     } catch (e) {
       console.error('Failed to load earlier lines:', e);
     } finally {
-      tabStore.setLoadingLines(currentTab.id, false);
+      fetching = false;
+      if (currentTab && currentTab.id === tabId) {
+        tabStore.setLoadingLines(tabId, false);
+      }
     }
   }
 
   async function loadLaterLines() {
-    if (!currentTab || currentTab.loadingLines || !canScrollForward) return;
+    if (!currentTab || fetching || !canScrollForward) return;
 
+    fetching = true;
     tabStore.setLoadingLines(currentTab.id, true);
+    let batchesLoaded = 0;
+    const tabId = currentTab.id;
+
     try {
-      const fetchStart = windowEnd + 1;
-      const prevBufferSize = lines.length;
-      const prevScrollTop = container.scrollTop;
+      while (batchesLoaded < PREFETCH_BATCHES && canScrollForward) {
+        const we = lines.length > 0 ? lines[lines.length - 1].number : 0;
+        const fetchStart = we + 1;
+        const prevBufferSize = lines.length;
+        const prevScrollTop = container ? container.scrollTop : 0;
 
-      const newerLines = await GetTabLineRange(currentTab.id, fetchStart, FETCH_BATCH);
-      if (newerLines && newerLines.length > 0) {
-        tabStore.appendRangeLines(currentTab.id, newerLines, MAX_WINDOW);
+        const newerLines = await GetTabLineRange(tabId, fetchStart, FETCH_BATCH);
+        if (!newerLines || newerLines.length === 0) break;
+        if (!currentTab || currentTab.id !== tabId) break;
 
+        tabStore.appendRangeLines(tabId, newerLines, MAX_WINDOW);
         await tick();
+
         if (container) {
-          // Buffer stayed ~same size (append N, trim N from top).
-          // Content shifted up by trimmedCount lines, so move scrollTop
-          // up to keep the visible content stable.
           const trimmed = (prevBufferSize + newerLines.length) - lines.length;
           if (trimmed > 0) {
             const lh = lineHeight;
@@ -162,11 +167,15 @@
           }
           updateVisibleRange();
         }
+        batchesLoaded++;
       }
     } catch (e) {
       console.error('Failed to load later lines:', e);
     } finally {
-      tabStore.setLoadingLines(currentTab.id, false);
+      fetching = false;
+      if (currentTab && currentTab.id === tabId) {
+        tabStore.setLoadingLines(tabId, false);
+      }
     }
   }
 
@@ -186,7 +195,7 @@
     }
     isAtBottom = atBottom;
 
-    scheduleFetchCheck();
+    checkAndFetch();
   }
 
   $: scrollSpeed = $settings.scrollSpeed || 1;
@@ -207,20 +216,18 @@
       updateVisibleRange();
     }
 
-    if (currentTab.loadingLines) return;
-
     if (e.deltaY < 0 && container.scrollTop <= 0 && canScrollBack) {
-      scheduleFetchCheck();
+      checkAndFetch();
     }
     if (e.deltaY > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 5 && canScrollForward) {
-      scheduleFetchCheck();
+      checkAndFetch();
     }
   }
 
   function checkAndFetch() {
-    if (!container || !currentTab || currentTab.loadingLines) return;
+    if (!container || !currentTab || fetching) return;
 
-    const bufferSize = lines.length;
+    const bufferSize = filteredLines.length;
     if (bufferSize === 0) return;
 
     // Use the known fixed line height for calculations
