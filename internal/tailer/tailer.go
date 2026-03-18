@@ -260,26 +260,22 @@ func (t *Tailer) initialRead() error {
 		return err
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	fileSize := info.Size()
 
-	t.fileSize = info.Size()
-
-	// Build line offset index and read all lines (keep last N in buffer)
+	// Build line offset index and read all lines (keep last N in buffer).
+	// All I/O happens outside the lock to avoid blocking concurrent readers.
 	reader := bufio.NewReader(f)
 	var allLines []Line
+	var offsets []int64
 	var num int64
 	var bytePos int64
 
-	t.lineOffsets = t.lineOffsets[:0]
-
 	for {
-		t.lineOffsets = append(t.lineOffsets, bytePos)
+		offsets = append(offsets, bytePos)
 		lineBytes, err := reader.ReadBytes('\n')
 		if len(lineBytes) > 0 {
 			num++
 			text := string(lineBytes)
-			// Strip trailing newline/carriage return
 			if len(text) > 0 && text[len(text)-1] == '\n' {
 				text = text[:len(text)-1]
 			}
@@ -288,33 +284,33 @@ func (t *Tailer) initialRead() error {
 			}
 			allLines = append(allLines, Line{Number: num, Text: text})
 			bytePos += int64(len(lineBytes))
-			// Keep ring buffer bounded during scanning
 			if len(allLines) > t.bufferSize*2 {
 				allLines = allLines[len(allLines)-t.bufferSize:]
 			}
 		}
 		if err != nil {
 			if err == io.EOF {
-				// If last chunk had no newline, we already processed it above
 				break
 			}
 			return err
 		}
 	}
 
-	// Keep last bufferSize lines
 	if len(allLines) > t.bufferSize {
 		allLines = allLines[len(allLines)-t.bufferSize:]
 	}
+
+	// Commit state under lock — short critical section, no I/O or callbacks.
+	t.mu.Lock()
+	t.fileSize = fileSize
+	t.lineOffsets = offsets
 	t.lines = allLines
 	t.lineNum = num
-	t.offset = t.fileSize
+	t.offset = fileSize
+	t.mu.Unlock()
 
-	// Notify with initial lines
-	if t.onLines != nil && len(allLines) > 0 {
-		t.onLines(allLines)
-	}
-
+	// No onLines callback — onReady (fired by startLoop) tells the frontend
+	// to fetch the windowed view via loadInitialLines / ReadRange RPCs.
 	return nil
 }
 

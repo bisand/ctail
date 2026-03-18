@@ -65,10 +65,6 @@
     if (pendingInitLoads.has(tabId)) return;
     pendingInitLoads.add(tabId);
     try {
-      // Clear stale lines immediately so the UI doesn't show outdated content
-      // (e.g. after VPN reconnection where old lines lingered on screen).
-      tabStore.clearLines(tabId);
-
       const total = await GetTabTotalLines(tabId);
       const fetchStart = Math.max(1, total - scrollBuffer + 1);
       const lines = await GetTabLineRange(tabId, fetchStart, scrollBuffer);

@@ -18,15 +18,7 @@ func TestTailerBasicRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var mu sync.Mutex
-	var received []Line
-
 	tail := New(path, 100*time.Millisecond, 1000)
-	tail.OnLines(func(lines []Line) {
-		mu.Lock()
-		received = append(received, lines...)
-		mu.Unlock()
-	})
 
 	if err := tail.Start(); err != nil {
 		t.Fatal(err)
@@ -36,18 +28,15 @@ func TestTailerBasicRead(t *testing.T) {
 	// Wait for initial read
 	time.Sleep(200 * time.Millisecond)
 
-	mu.Lock()
-	if len(received) < 3 {
-		t.Errorf("expected at least 3 lines, got %d", len(received))
-	}
-	mu.Unlock()
-
 	lines := tail.GetLines()
 	if len(lines) != 3 {
 		t.Errorf("expected 3 buffered lines, got %d", len(lines))
 	}
-	if lines[0].Text != "line 1" {
+	if len(lines) > 0 && lines[0].Text != "line 1" {
 		t.Errorf("expected 'line 1', got %q", lines[0].Text)
+	}
+	if tail.GetTotalLines() != 3 {
+		t.Errorf("expected 3 total lines, got %d", tail.GetTotalLines())
 	}
 }
 
@@ -358,15 +347,7 @@ func TestTailerRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var mu sync.Mutex
-	var received []Line
-
 	tail := New(path, 50*time.Millisecond, 1000)
-	tail.OnLines(func(lines []Line) {
-		mu.Lock()
-		received = append(received, lines...)
-		mu.Unlock()
-	})
 
 	if err := tail.Start(); err != nil {
 		t.Fatal(err)
@@ -375,15 +356,7 @@ func TestTailerRestart(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	// Should have initial 3 lines
-	mu.Lock()
-	initialCount := len(received)
-	mu.Unlock()
-	if initialCount != 3 {
-		t.Fatalf("expected 3 initial lines, got %d", initialCount)
-	}
-
-	// Existing lines should be preserved
+	// Should have initial 3 lines in buffer
 	existingLines := tail.GetLines()
 	if len(existingLines) != 3 {
 		t.Fatalf("expected 3 buffered lines before restart, got %d", len(existingLines))
@@ -412,12 +385,9 @@ func TestTailerRestart(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	mu.Lock()
-	totalReceived := len(received)
-	mu.Unlock()
-
-	if totalReceived < 4 {
-		t.Errorf("expected at least 4 lines after restart+append, got %d", totalReceived)
+	finalLines := tail.GetLines()
+	if len(finalLines) < 4 {
+		t.Errorf("expected at least 4 lines after restart+append, got %d", len(finalLines))
 	}
 }
 

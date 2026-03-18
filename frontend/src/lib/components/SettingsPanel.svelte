@@ -107,6 +107,10 @@
   }
 
   function startEditRule(rule) {
+    if (editingRule === rule.id) {
+      editingRule = null;
+      return;
+    }
     editingRule = rule.id;
     ruleName = rule.name;
     rulePattern = rule.pattern;
@@ -130,6 +134,12 @@
 
   function cancelEdit() {
     editingRule = null;
+  }
+
+  function scrollIntoViewAction(node) {
+    requestAnimationFrame(() => {
+      node.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
   }
 
   // Reassign priorities based on array position and persist
@@ -425,11 +435,59 @@
               <input type="checkbox" checked={rule.enabled} on:change={() => toggleRule(rule.id)} />
               <span class="rule-name">{rule.name}</span>
               <span class="rule-type" style="color: var(--text-muted); background: {rule.background ? 'rgba(0,0,0,0.25)' : 'var(--bg-primary)'}">{rule.matchType}</span>
-              <button class="icon-btn-small" on:click={() => startEditRule(rule)}>✏</button>
+              <button class="edit-btn" on:click={() => startEditRule(rule)} title="Edit rule">✏ Edit</button>
               <button class="icon-btn-small danger" on:click={() => deleteRule(rule.id)}>×</button>
             </div>
             <div class="rule-pattern">{rule.pattern}</div>
           </div>
+          {#if editingRule === rule.id}
+            <div class="rule-editor" use:scrollIntoViewAction>
+              <h4>Edit Rule</h4>
+              <label>
+                <span>Name</span>
+                <input type="text" bind:value={ruleName} placeholder="Rule name" />
+              </label>
+              <label>
+                <span>Pattern (regex)</span>
+                <input type="text" bind:value={rulePattern} placeholder="e.g. \\bERROR\\b" />
+              </label>
+              <label>
+                <span>Match Type</span>
+                <select bind:value={ruleMatchType}>
+                  <option value="match">Match only</option>
+                  <option value="line">Entire line</option>
+                </select>
+              </label>
+              <label>
+                <span>Foreground</span>
+                <div class="color-input">
+                  <input type="color" value={ruleForeground || '#ffffff'} on:input={e => ruleForeground = e.target.value} />
+                  <input type="text" bind:value={ruleForeground} placeholder="transparent" />
+                  <button class="color-clear" on:click={() => ruleForeground = ''} title="Clear (transparent)">✕</button>
+                </div>
+              </label>
+              <label>
+                <span>Background</span>
+                <div class="color-input">
+                  <input type="color" value={ruleBackground || '#000000'} on:input={e => ruleBackground = e.target.value} />
+                  <input type="text" bind:value={ruleBackground} placeholder="transparent" />
+                  <button class="color-clear" on:click={() => ruleBackground = ''} title="Clear (transparent)">✕</button>
+                </div>
+              </label>
+              <label class="toggle-label">
+                <input type="checkbox" bind:checked={ruleBold} />
+                <span>Bold</span>
+              </label>
+              <label class="toggle-label">
+                <input type="checkbox" bind:checked={ruleItalic} />
+                <span>Italic</span>
+              </label>
+              <div class="editor-actions">
+                <button class="btn-save" on:click={saveRule}>Save</button>
+                <button class="btn-cancel" on:click={cancelEdit}>Cancel</button>
+              </div>
+            </div>
+          {/if}
         {/each}
         {#if isDragging && dragOverIndex >= currentRules.length}
           <div class="drop-indicator"></div>
@@ -439,9 +497,9 @@
       <button class="btn-add-rule" on:click={startNewRule}>+ Add Rule</button>
       <button class="btn-add-rule ai-generate" on:click={() => window.dispatchEvent(new CustomEvent('ctail:open-ai'))} title="Use AI to generate rules from your logs">🤖 AI Generate Rules</button>
 
-      {#if editingRule}
-        <div class="rule-editor">
-          <h4>{editingRule === '__new__' ? 'New Rule' : 'Edit Rule'}</h4>
+      {#if editingRule === '__new__'}
+        <div class="rule-editor" use:scrollIntoViewAction>
+          <h4>New Rule</h4>
           <label>
             <span>Name</span>
             <input type="text" bind:value={ruleName} placeholder="Rule name" />
@@ -794,6 +852,26 @@
     font-family: monospace;
     margin-top: 4px;
     padding-left: 24px;
+  }
+
+  .edit-btn {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    background: transparent;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .edit-btn:hover {
+    background: var(--accent);
+    color: var(--bg-primary);
   }
 
   .icon-btn-small {
