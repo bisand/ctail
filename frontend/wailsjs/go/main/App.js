@@ -10,6 +10,10 @@ export function AskAI(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['AskAI'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function AskAIRules(arg1) {
+  return window['go']['main']['App']['AskAIRules'](arg1);
+}
+
 export function ClearRecentFiles() {
   return window['go']['main']['App']['ClearRecentFiles']();
 }

@@ -412,6 +412,12 @@ func (a *App) OpenTab(filePath string) (string, error) {
 		})
 	})
 
+	t.OnReconnecting(func() {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
+			"tabId": id,
+		})
+	})
+
 	// Register tab immediately so it appears in the UI
 	a.mu.Lock()
 	a.tabs[id] = tab
@@ -989,6 +995,98 @@ func (a *App) GenerateRulesProfile(tabID, profileName string) (config.Profile, e
 	}
 
 	// Persist the new profile
+	if err := a.config.SaveProfile(profile); err != nil {
+		return config.Profile{}, fmt.Errorf("failed to save profile: %w", err)
+	}
+
+	return profile, nil
+}
+
+// AskAIRules sends a natural-language request about highlight rules to the AI.
+// It includes the current active profile rules and log content from all open tabs as context.
+// The AI returns an updated profile which is saved and returned.
+func (a *App) AskAIRules(question string) (config.Profile, error) {
+	if question == "" {
+		return config.Profile{}, fmt.Errorf("question is required")
+	}
+
+	client, err := a.newAIClient()
+	if err != nil {
+		return config.Profile{}, err
+	}
+
+	// Get the current active profile as context
+	s := a.config.GetSettings()
+	activeProfileName := s.ActiveProfile
+	currentProfile, ok := a.config.GetProfile(activeProfileName)
+	if !ok {
+		// Use an empty profile if none is active
+		currentProfile = config.Profile{Name: activeProfileName, Rules: []config.Rule{}}
+	}
+
+	profileJSON, err := json.MarshalIndent(currentProfile, "", "  ")
+	if err != nil {
+		return config.Profile{}, fmt.Errorf("failed to serialize current profile: %w", err)
+	}
+
+	// Gather log content from all open tabs for context
+	var logContent string
+	a.mu.RLock()
+	tabsCopy := make([]*TabInfo, 0, len(a.tabs))
+	for _, t := range a.tabs {
+		tabsCopy = append(tabsCopy, t)
+	}
+	a.mu.RUnlock()
+
+	if len(tabsCopy) > 0 {
+		var sb strings.Builder
+		for _, tab := range tabsCopy {
+			lines := tab.tailer.GetLines()
+			if len(lines) == 0 {
+				continue
+			}
+			// Cap per-tab to keep within token limits
+			if len(lines) > 1000 {
+				lines = lines[len(lines)-1000:]
+			}
+			sb.WriteString(fmt.Sprintf("=== File: %s ===\n", tab.FilePath))
+			for _, l := range lines {
+				sb.WriteString(l.Text)
+				sb.WriteByte('\n')
+			}
+			sb.WriteByte('\n')
+		}
+		logContent = sb.String()
+		// Overall cap
+		if len(logContent) > 200000 {
+			logContent = logContent[len(logContent)-200000:]
+		}
+	}
+
+	messages := ai.BuildRulesAssistantMessages(string(profileJSON), logContent, question)
+	response, err := client.Chat(messages)
+	if err != nil {
+		return config.Profile{}, fmt.Errorf("AI request failed: %w", err)
+	}
+
+	// Strip any markdown fences the model might add
+	response = strings.TrimSpace(response)
+	response = strings.TrimPrefix(response, "```json")
+	response = strings.TrimPrefix(response, "```")
+	response = strings.TrimSuffix(response, "```")
+	response = strings.TrimSpace(response)
+
+	var profile config.Profile
+	if err := json.Unmarshal([]byte(response), &profile); err != nil {
+		return config.Profile{}, fmt.Errorf("failed to parse AI response as profile: %w\n\nRaw response:\n%s", err, truncateStr(response, 500))
+	}
+
+	// If the AI didn't return a name, keep the current active profile name
+	if profile.Name == "" {
+		profile.Name = activeProfileName
+	}
+
+	// Persist the profile
 	if err := a.config.SaveProfile(profile); err != nil {
 		return config.Profile{}, fmt.Errorf("failed to save profile: %w", err)
 	}

@@ -32,10 +32,11 @@ type Tailer struct {
 	lastReady   time.Time // last time onReady was fired (prevents flicker cycling)
 	stopCh      chan struct{}
 
-	onLines     func([]Line)
-	onTruncated func()
-	onError     func(error)
-	onReady     func() // called once after successful initial read
+	onLines        func([]Line)
+	onTruncated    func()
+	onError        func(error)
+	onReady        func() // called once after successful initial read
+	onReconnecting func() // called when auto-restart is triggered
 }
 
 // New creates a new Tailer
@@ -68,6 +69,9 @@ func (t *Tailer) OnError(fn func(error)) { t.onError = fn }
 // OnReady sets the callback for when the initial read completes successfully
 func (t *Tailer) OnReady(fn func()) { t.onReady = fn }
 
+// OnReconnecting sets the callback for when the tailer auto-restarts after timeouts
+func (t *Tailer) OnReconnecting(fn func()) { t.onReconnecting = fn }
+
 // Start begins tailing the file (non-blocking — initial read happens in background)
 func (t *Tailer) Start() error {
 	t.mu.Lock()
@@ -85,6 +89,11 @@ func (t *Tailer) Start() error {
 // startLoop performs the initial read then enters the poll loop.
 // Runs entirely in a goroutine so the caller of Start() never blocks on I/O.
 func (t *Tailer) startLoop() {
+	// Capture stopCh under lock so Restart() can safely replace it.
+	t.mu.RLock()
+	stopCh := t.stopCh
+	t.mu.RUnlock()
+
 	// Initial read with a timeout so stale mounts don't block forever
 	initDone := make(chan error, 1)
 	go func() {
@@ -104,7 +113,7 @@ func (t *Tailer) startLoop() {
 		} else if t.onReady != nil {
 			t.onReady()
 		}
-	case <-t.stopCh:
+	case <-stopCh:
 		return
 	case <-time.After(10 * time.Second):
 		if t.onError != nil {
@@ -125,6 +134,27 @@ func (t *Tailer) Stop() {
 	}
 	t.running = false
 	close(t.stopCh)
+}
+
+// Restart stops the current polling loop and starts a fresh one.
+// Existing buffered lines are preserved so the frontend sees no disruption.
+// This breaks free of goroutines stuck on stale network mounts.
+func (t *Tailer) Restart() {
+	t.mu.Lock()
+	if !t.running {
+		t.mu.Unlock()
+		return
+	}
+	// Signal the old loop to stop
+	close(t.stopCh)
+	// Create a fresh stop channel for the new loop.
+	// Keep inError=true so the first successful poll fires onReady,
+	// which tells the frontend to re-fetch lines.
+	t.stopCh = make(chan struct{})
+	t.mu.Unlock()
+
+	// Start the new loop — skips initialRead since we already have buffered data
+	go t.pollLoop()
 }
 
 // GetLines returns the current buffer of lines
@@ -289,6 +319,11 @@ func (t *Tailer) initialRead() error {
 }
 
 func (t *Tailer) pollLoop() {
+	// Capture stopCh under lock so Restart() can safely replace it.
+	t.mu.RLock()
+	stopCh := t.stopCh
+	t.mu.RUnlock()
+
 	ticker := time.NewTicker(t.pollInterval)
 	defer ticker.Stop()
 
@@ -302,9 +337,14 @@ func (t *Tailer) pollLoop() {
 	const maxBackoff = 10 * time.Second
 	var consecutiveErrors int
 
+	// After this many consecutive poll timeouts, auto-restart to break free
+	// of goroutines stuck on stale GVFS/SMB mounts.
+	const maxConsecutiveTimeouts = 3
+	var consecutiveTimeouts int
+
 	for {
 		select {
-		case <-t.stopCh:
+		case <-stopCh:
 			return
 		case <-ticker.C:
 			t.mu.RLock()
@@ -322,6 +362,7 @@ func (t *Tailer) pollLoop() {
 				ticker.Reset(backoff)
 			} else {
 				consecutiveErrors = 0
+				consecutiveTimeouts = 0
 				ticker.Reset(interval)
 			}
 
@@ -345,7 +386,7 @@ func (t *Tailer) pollLoop() {
 
 				select {
 				case <-pollDone:
-				case <-t.stopCh:
+				case <-stopCh:
 					return
 				case <-time.After(15 * time.Second):
 					// Poll timed out (likely stale mount) — report error and move on.
@@ -356,6 +397,16 @@ func (t *Tailer) pollLoop() {
 					t.mu.Unlock()
 					if !wasInError && t.onError != nil {
 						t.onError(fmt.Errorf("timeout polling %s (file may be on an unreachable mount)", t.filePath))
+					}
+
+					consecutiveTimeouts++
+					if consecutiveTimeouts >= maxConsecutiveTimeouts {
+						if t.onReconnecting != nil {
+							t.onReconnecting()
+						}
+						// Restart creates a fresh pollLoop, abandoning stuck goroutines.
+						// This pollLoop will exit when it sees stopCh closed by Restart().
+						go t.Restart()
 					}
 				}
 			}()

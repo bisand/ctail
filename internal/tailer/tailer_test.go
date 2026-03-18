@@ -337,16 +337,473 @@ func TestTailerErrorRecovery(t *testing.T) {
 	mu.Unlock()
 
 	// Recreate the file — should trigger recovery (onReady again)
+	// Wait long enough for the readyCooldown (5s) to pass since initial onReady
 	if err := os.WriteFile(path, []byte("line 2\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(5500 * time.Millisecond)
 
 	mu.Lock()
 	if readyCount < 2 {
 		t.Errorf("expected onReady to fire again after recovery, got readyCount=%d", readyCount)
 	}
 	mu.Unlock()
+}
+
+func TestTailerRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\nline 2\nline 3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var received []Line
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.OnLines(func(lines []Line) {
+		mu.Lock()
+		received = append(received, lines...)
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Should have initial 3 lines
+	mu.Lock()
+	initialCount := len(received)
+	mu.Unlock()
+	if initialCount != 3 {
+		t.Fatalf("expected 3 initial lines, got %d", initialCount)
+	}
+
+	// Existing lines should be preserved
+	existingLines := tail.GetLines()
+	if len(existingLines) != 3 {
+		t.Fatalf("expected 3 buffered lines before restart, got %d", len(existingLines))
+	}
+
+	// Restart the tailer
+	tail.Restart()
+	time.Sleep(200 * time.Millisecond)
+
+	// Lines buffer should still be preserved after restart
+	afterLines := tail.GetLines()
+	if len(afterLines) != 3 {
+		t.Fatalf("expected 3 buffered lines after restart, got %d", len(afterLines))
+	}
+	if afterLines[0].Text != "line 1" {
+		t.Errorf("expected 'line 1' after restart, got %q", afterLines[0].Text)
+	}
+
+	// Append new data — should be picked up by the new poll loop
+	af, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	af.WriteString("line 4\n")
+	af.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	totalReceived := len(received)
+	mu.Unlock()
+
+	if totalReceived < 4 {
+		t.Errorf("expected at least 4 lines after restart+append, got %d", totalReceived)
+	}
+}
+
+func TestTailerRestartClearsErrorState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var errors []string
+	readyCount := 0
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.OnError(func(err error) {
+		mu.Lock()
+		errors = append(errors, err.Error())
+		mu.Unlock()
+	})
+	tail.OnReady(func() {
+		mu.Lock()
+		readyCount++
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Remove file to trigger error state
+	os.Remove(path)
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	if len(errors) == 0 {
+		t.Fatal("expected at least one error after file removal")
+	}
+	mu.Unlock()
+
+	// Recreate the file, then restart — inError stays true so the first
+	// successful poll fires onReady (the error→ready transition).
+	if err := os.WriteFile(path, []byte("line 2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail.Restart()
+	time.Sleep(300 * time.Millisecond)
+
+	// After restart + successful poll, onReady should have fired
+	mu.Lock()
+	if readyCount < 2 {
+		t.Errorf("expected onReady to fire after restart recovery, got readyCount=%d", readyCount)
+	}
+	mu.Unlock()
+}
+
+func TestTailerRestartOnReconnectingCallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	reconnectingCount := 0
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.OnReconnecting(func() {
+		mu.Lock()
+		reconnectingCount++
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Manual restart should NOT fire onReconnecting (it's for auto-restarts only)
+	tail.Restart()
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	count := reconnectingCount
+	mu.Unlock()
+
+	if count != 0 {
+		t.Errorf("expected onReconnecting not to fire on manual restart, got count=%d", count)
+	}
+}
+
+func TestTailerRestartStoppedIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Stop, then restart — should be a no-op, not panic
+	tail.Stop()
+	tail.Restart() // must not panic or start new goroutines
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify it's still stopped — no new lines picked up
+	tail.mu.RLock()
+	running := tail.running
+	tail.mu.RUnlock()
+
+	if running {
+		t.Error("expected tailer to remain stopped after Restart() on stopped tailer")
+	}
+}
+
+func TestTailerMultipleRestarts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var received []Line
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.OnLines(func(lines []Line) {
+		mu.Lock()
+		received = append(received, lines...)
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Restart multiple times in succession
+	for i := 0; i < 5; i++ {
+		tail.Restart()
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Buffer should still be intact
+	lines := tail.GetLines()
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 buffered line after multiple restarts, got %d", len(lines))
+	}
+	if lines[0].Text != "line 1" {
+		t.Errorf("expected 'line 1', got %q", lines[0].Text)
+	}
+
+	// New data should still be picked up after repeated restarts
+	af, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	af.WriteString("line 2\n")
+	af.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	lines = tail.GetLines()
+	if len(lines) != 2 {
+		t.Errorf("expected 2 lines after append following multiple restarts, got %d", len(lines))
+	}
+}
+
+func TestTailerRestartPreservesLineNumbers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\nline 2\nline 3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	if total := tail.GetTotalLines(); total != 3 {
+		t.Fatalf("expected 3 total lines, got %d", total)
+	}
+
+	tail.Restart()
+	time.Sleep(200 * time.Millisecond)
+
+	// Total line count should be preserved
+	if total := tail.GetTotalLines(); total != 3 {
+		t.Errorf("expected 3 total lines after restart, got %d", total)
+	}
+
+	// Append new lines — numbering should continue from 3
+	af, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	af.WriteString("line 4\nline 5\n")
+	af.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	if total := tail.GetTotalLines(); total != 5 {
+		t.Errorf("expected 5 total lines after append, got %d", total)
+	}
+
+	lines := tail.GetLines()
+	last := lines[len(lines)-1]
+	if last.Number != 5 {
+		t.Errorf("expected last line number 5, got %d", last.Number)
+	}
+	if last.Text != "line 5" {
+		t.Errorf("expected 'line 5', got %q", last.Text)
+	}
+}
+
+func TestTailerRestartAfterFileRecreation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("original\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var errors []string
+	readyCount := 0
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.OnError(func(err error) {
+		mu.Lock()
+		errors = append(errors, err.Error())
+		mu.Unlock()
+	})
+	tail.OnReady(func() {
+		mu.Lock()
+		readyCount++
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Delete the file
+	os.Remove(path)
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	if len(errors) == 0 {
+		t.Fatal("expected error after file removal")
+	}
+	mu.Unlock()
+
+	// Recreate with new content
+	if err := os.WriteFile(path, []byte("new content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restart to simulate recovery from stale mount
+	tail.Restart()
+	time.Sleep(300 * time.Millisecond)
+
+	// Poll should now detect the file. Since the file was recreated with different
+	// content, the tailer should pick up new data if the size differs from the
+	// stored offset.
+	mu.Lock()
+	ready := readyCount
+	mu.Unlock()
+
+	// readyCount >= 1 from initial read, we mainly confirm no panic/hang
+	if ready < 1 {
+		t.Errorf("expected at least 1 ready callback, got %d", ready)
+	}
+}
+
+func TestTailerStopAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	tail.Restart()
+	time.Sleep(100 * time.Millisecond)
+
+	// Stop must not panic after Restart (new stopCh was created)
+	tail.Stop()
+
+	// Wait for the poll loop to fully exit
+	time.Sleep(200 * time.Millisecond)
+
+	// Append data — should NOT be picked up since we stopped
+	linesBefore := tail.GetLines()
+
+	af, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	af.WriteString("line 2\n")
+	af.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	linesAfter := tail.GetLines()
+	if len(linesAfter) != len(linesBefore) {
+		t.Errorf("expected no new lines after Stop(), had %d now %d", len(linesBefore), len(linesAfter))
+	}
+}
+
+func TestTailerRestartConcurrentSafety(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Hammer Restart from multiple goroutines — must not panic or deadlock
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tail.Restart()
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent Restart() calls deadlocked")
+	}
+
+	// Tailer should still be functional
+	time.Sleep(200 * time.Millisecond)
+	lines := tail.GetLines()
+	if len(lines) != 1 {
+		t.Errorf("expected 1 line after concurrent restarts, got %d", len(lines))
+	}
 }
 
 // Simple int to string for test use

@@ -140,6 +140,12 @@
       }
     });
 
+    EventsOn('tailer:reconnecting', (data) => {
+      if (data.tabId) {
+        tabStore.setStatus(data.tabId, 'loading');
+      }
+    });
+
     EventsOn('tab:focus', (tabId) => {
       if (tabId) {
         activeTab.set(tabId);

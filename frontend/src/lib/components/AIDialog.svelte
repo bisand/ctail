@@ -1,6 +1,6 @@
 <script>
   import { activeTab } from '../stores/tabs.js';
-  import { AskAI, GenerateRulesProfile } from '../../../wailsjs/go/main/App.js';
+  import { AskAI, GenerateRulesProfile, AskAIRules } from '../../../wailsjs/go/main/App.js';
   import { profiles, profileNames } from '../stores/rules.js';
   import { settings } from '../stores/settings.js';
 
@@ -19,6 +19,12 @@
   let generateError = '';
   let generateSuccess = '';
 
+  // Rules assistant
+  let rulesQuestion = '';
+  let rulesLoading = false;
+  let rulesError = '';
+  let rulesSuccess = '';
+
   function close() {
     show = false;
   }
@@ -28,6 +34,14 @@
     if (e.key === 'Enter' && !e.shiftKey && question.trim()) {
       e.preventDefault();
       askQuestion();
+    }
+  }
+
+  function handleRulesKeydown(e) {
+    if (e.key === 'Escape') close();
+    if (e.key === 'Enter' && !e.shiftKey && rulesQuestion.trim()) {
+      e.preventDefault();
+      askRulesQuestion();
     }
   }
 
@@ -82,6 +96,27 @@
       generatingRules = false;
     }
   }
+
+  async function askRulesQuestion() {
+    if (!rulesQuestion.trim()) return;
+
+    rulesLoading = true;
+    rulesError = '';
+    rulesSuccess = '';
+
+    try {
+      const profile = await AskAIRules(rulesQuestion.trim());
+      const name = profile.name || $settings.activeProfile;
+      profiles.update(p => ({ ...p, [name]: profile }));
+      settings.update(s => ({ ...s, activeProfile: name }));
+      rulesSuccess = `Updated profile "${name}" — ${profile.rules?.length || 0} rules.`;
+      rulesQuestion = '';
+    } catch (e) {
+      rulesError = String(e);
+    } finally {
+      rulesLoading = false;
+    }
+  }
 </script>
 
 {#if show}
@@ -97,6 +132,7 @@
           <p>AI is not configured. Set your AI provider and API key in <strong>Settings</strong>.</p>
         </div>
       {:else}
+        <div class="ai-body">
         <div class="ai-section">
           <h4>Ask about logs</h4>
           <div class="context-selector">
@@ -129,6 +165,29 @@
         <div class="ai-divider"></div>
 
         <div class="ai-section">
+          <h4>Rules Assistant</h4>
+          <p class="ai-hint">Ask AI to add, modify, or delete highlight rules in the active profile. All open files are included as context.</p>
+          <div class="ask-row">
+            <input type="text" class="question-input" placeholder="e.g. Add red foreground to all ERROR events..."
+              bind:value={rulesQuestion} on:keydown={handleRulesKeydown} disabled={rulesLoading} />
+            <button class="btn-ask" on:click={askRulesQuestion}
+              disabled={rulesLoading || !rulesQuestion.trim()}>
+              {rulesLoading ? '⏳' : 'Apply'}
+            </button>
+          </div>
+
+          {#if rulesError}
+            <div class="ai-error">{rulesError}</div>
+          {/if}
+
+          {#if rulesSuccess}
+            <div class="ai-success">{rulesSuccess}</div>
+          {/if}
+        </div>
+
+        <div class="ai-divider"></div>
+
+        <div class="ai-section">
           <h4>Generate Rules Profile</h4>
           <p class="ai-hint">AI will analyze the current log buffer and create highlighting rules.</p>
           <div class="ask-row">
@@ -147,6 +206,7 @@
           {#if generateSuccess}
             <div class="ai-success">{generateSuccess}</div>
           {/if}
+        </div>
         </div>
       {/if}
     </div>
@@ -209,6 +269,11 @@
     text-align: center;
     color: var(--text-muted);
     font-size: 13px;
+  }
+
+  .ai-body {
+    overflow-y: auto;
+    flex: 1;
   }
 
   .ai-section {
