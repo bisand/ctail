@@ -442,18 +442,38 @@ func (t *Tailer) poll() {
 	prevOffset := t.offset
 	t.mu.Unlock()
 
-	// File is accessible again after an error — notify frontend.
-	// Apply a cooldown to prevent rapid ready→error→ready cycling on flaky connections.
-	if wasInError && t.onReady != nil {
-		t.mu.RLock()
-		lastReady := t.lastReady
-		t.mu.RUnlock()
-		if time.Since(lastReady) >= readyCooldown {
+	// File is accessible again after an error — do a full re-read since our
+	// offset/lineNum state may be completely stale after a network drop.
+	// The file could have been rotated, truncated, or had new content written
+	// while the mount was unreachable.
+	if wasInError {
+		rf, err := os.Open(t.filePath)
+		if err != nil {
 			t.mu.Lock()
-			t.lastReady = time.Now()
+			t.inError = true
 			t.mu.Unlock()
-			t.onReady()
+			if t.onError != nil {
+				t.onError(err)
+			}
+			return
 		}
+		t.handleFullReread(rf, currentSize)
+		rf.Close()
+
+		// Notify frontend that the tab is ready again.
+		// Apply a cooldown to prevent rapid ready→error→ready cycling on flaky connections.
+		if t.onReady != nil {
+			t.mu.RLock()
+			lastReady := t.lastReady
+			t.mu.RUnlock()
+			if time.Since(lastReady) >= readyCooldown {
+				t.mu.Lock()
+				t.lastReady = time.Now()
+				t.mu.Unlock()
+				t.onReady()
+			}
+		}
+		return
 	}
 
 	// No new data
@@ -513,6 +533,38 @@ func (t *Tailer) handleTruncation(f *os.File, currentSize int64) {
 	}
 
 	// Re-read from beginning
+	newLines := t.readNewLines(f, 0, currentSize)
+	if len(newLines) > 0 {
+		t.mu.Lock()
+		t.lines = newLines
+		if len(t.lines) > t.bufferSize {
+			t.lines = t.lines[len(t.lines)-t.bufferSize:]
+		}
+		t.offset = currentSize
+		t.mu.Unlock()
+
+		if t.onLines != nil {
+			t.onLines(newLines)
+		}
+	}
+}
+
+// handleFullReread resets internal state and re-reads the file from scratch.
+// Used on recovery from errors (e.g. VPN reconnection) where the offset/lineNum
+// state may be stale because the file changed while the mount was unreachable.
+func (t *Tailer) handleFullReread(f *os.File, currentSize int64) {
+	t.mu.Lock()
+	t.lines = t.lines[:0]
+	t.lineNum = 0
+	t.offset = 0
+	t.fileSize = currentSize
+	t.lineOffsets = t.lineOffsets[:0]
+	t.mu.Unlock()
+
+	if t.onTruncated != nil {
+		t.onTruncated()
+	}
+
 	newLines := t.readNewLines(f, 0, currentSize)
 	if len(newLines) > 0 {
 		t.mu.Lock()
