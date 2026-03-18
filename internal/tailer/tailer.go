@@ -552,6 +552,8 @@ func (t *Tailer) handleTruncation(f *os.File, currentSize int64) {
 // handleFullReread resets internal state and re-reads the file from scratch.
 // Used on recovery from errors (e.g. VPN reconnection) where the offset/lineNum
 // state may be stale because the file changed while the mount was unreachable.
+// Does NOT fire onLines — the caller fires onReady which triggers the frontend
+// to fetch lines via loadInitialLines with proper windowed pagination.
 func (t *Tailer) handleFullReread(f *os.File, currentSize int64) {
 	t.mu.Lock()
 	t.lines = t.lines[:0]
@@ -574,10 +576,7 @@ func (t *Tailer) handleFullReread(f *os.File, currentSize int64) {
 		}
 		t.offset = currentSize
 		t.mu.Unlock()
-
-		if t.onLines != nil {
-			t.onLines(newLines)
-		}
+		// No onLines callback — onReady will tell the frontend to re-fetch.
 	}
 }
 
@@ -588,6 +587,7 @@ func (t *Tailer) readNewLines(f *os.File, offset, size int64) []Line {
 
 	reader := bufio.NewReader(f)
 	var newLines []Line
+	var newOffsets []int64
 
 	t.mu.RLock()
 	num := t.lineNum
@@ -595,9 +595,7 @@ func (t *Tailer) readNewLines(f *os.File, offset, size int64) []Line {
 
 	bytePos := offset
 	for {
-		t.mu.Lock()
-		t.lineOffsets = append(t.lineOffsets, bytePos)
-		t.mu.Unlock()
+		newOffsets = append(newOffsets, bytePos)
 
 		lineBytes, err := reader.ReadBytes('\n')
 		if len(lineBytes) > 0 {
@@ -618,6 +616,7 @@ func (t *Tailer) readNewLines(f *os.File, offset, size int64) []Line {
 	}
 
 	t.mu.Lock()
+	t.lineOffsets = append(t.lineOffsets, newOffsets...)
 	t.lineNum = num
 	t.mu.Unlock()
 
