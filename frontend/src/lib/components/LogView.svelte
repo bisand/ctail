@@ -44,6 +44,9 @@
   let swapping = false;
   let prefetching = false;
 
+  // Per-tab scroll position tracking
+  const scrollPositions = new Map();
+
   // --- Prefetch cache: per-tab pages stored ahead/behind scroll buffer ---
   // Map<tabId, { before: Array<lines[]>, after: Array<lines[]> }>
   const pageCache = new Map();
@@ -74,13 +77,32 @@
   $: {
     const newId = currentTab ? currentTab.id : null;
     if (newId !== prevTabId) {
+      // Save scroll position for the tab we're leaving
+      if (prevTabId && container) {
+        scrollPositions.set(prevTabId, container.scrollTop);
+      }
       // Clear prefetch cache for the tab we're leaving (deferred to avoid lag)
       if (prevTabId) { const oldId = prevTabId; setTimeout(() => clearCache(oldId), 0); }
       prevTabId = newId;
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
-      // Start prefetching for the new tab
-      if (newId) { prefetchPages(); refreshStats(); }
+      // Restore scroll position for the new tab and force repaint
+      if (newId) {
+        tick().then(() => {
+          if (container) {
+            const savedScroll = scrollPositions.get(newId);
+            if (currentTab && currentTab.autoScroll) {
+              container.scrollTop = container.scrollHeight;
+            } else if (savedScroll !== undefined) {
+              container.scrollTop = savedScroll;
+            } else {
+              container.scrollTop = container.scrollHeight;
+            }
+            updateVisibleRange();
+          }
+        });
+        prefetchPages(); refreshStats();
+      }
     }
   }
   $: autoScroll = currentTab ? currentTab.autoScroll : true;
@@ -624,14 +646,16 @@
     <div class="log-container" bind:this={container} on:scroll={handleScroll} on:wheel={handleWheel} on:contextmenu={handleContextMenu} on:copy={handleCopy}>
       {#if filteredLines.length > 0}
         <div class="virtual-spacer" style="height: {topPad}px"></div>
-        {#each visibleLines as line (line.number)}
-          <LogLine
-            {line}
-            rules={deferHighlight ? [] : rules}
-            showLineNumber={$settings.showLineNumbers}
-            fontSize={$settings.fontSize}
-          />
-        {/each}
+        {#key currentTab?.id}
+          {#each visibleLines as line (line.number)}
+            <LogLine
+              {line}
+              rules={deferHighlight ? [] : rules}
+              showLineNumber={$settings.showLineNumbers}
+              fontSize={$settings.fontSize}
+            />
+          {/each}
+        {/key}
         <div class="virtual-spacer" style="height: {bottomPad}px"></div>
       {/if}
       {#if lines.length === 0}
@@ -743,7 +767,7 @@
     overflow-x: auto;
     overscroll-behavior: none;
     padding: 4px 0;
-    contain: layout style paint;
+    contain: size;
   }
 
   .virtual-spacer {
