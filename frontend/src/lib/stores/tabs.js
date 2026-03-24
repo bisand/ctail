@@ -1,6 +1,15 @@
 import { writable, derived, get } from 'svelte/store';
 import { settings } from './settings.js';
 
+// Immutable helper: replace a tab by id, producing new state/array/object refs
+// so Svelte 5 $derived() detects the change via Object.is().
+function replaceTab(state, tabId, changes) {
+  return {
+    ...state,
+    tabs: state.tabs.map(t => t.id === tabId ? { ...t, ...changes } : t)
+  };
+}
+
 function createTabStore() {
   const { subscribe, set, update } = writable({
     tabs: [],
@@ -10,8 +19,10 @@ function createTabStore() {
   return {
     subscribe,
     addTab(id, filePath, fileName) {
-      update(state => {
-        state.tabs.push({
+      update(state => ({
+        ...state,
+        activeTabId: id,
+        tabs: [...state.tabs, {
           id,
           filePath,
           fileName,
@@ -22,159 +33,122 @@ function createTabStore() {
           autoScroll: true,
           paused: false,
           loadingLines: false,
-          status: 'loading', // 'loading' | 'ready' | 'error'
+          status: 'loading',
           errorMessage: ''
-        });
-        state.activeTabId = id;
-        return state;
-      });
+        }]
+      }));
     },
     removeTab(id) {
       update(state => {
         const idx = state.tabs.findIndex(t => t.id === id);
-        state.tabs = state.tabs.filter(t => t.id !== id);
+        const newTabs = state.tabs.filter(t => t.id !== id);
+        let newActiveId = state.activeTabId;
         if (state.activeTabId === id) {
-          if (state.tabs.length > 0) {
-            const newIdx = Math.min(idx, state.tabs.length - 1);
-            state.activeTabId = state.tabs[newIdx].id;
+          if (newTabs.length > 0) {
+            const newIdx = Math.min(idx, newTabs.length - 1);
+            newActiveId = newTabs[newIdx].id;
           } else {
-            state.activeTabId = null;
+            newActiveId = null;
           }
         }
-        return state;
+        return { ...state, tabs: newTabs, activeTabId: newActiveId };
       });
     },
     setActive(id) {
       update(state => {
-        state.activeTabId = id;
-        const tab = state.tabs.find(t => t.id === id);
-        if (tab) tab.hasUpdate = false;
-        return state;
+        const newState = { ...state, activeTabId: id };
+        newState.tabs = state.tabs.map(t =>
+          t.id === id ? { ...t, hasUpdate: false } : t
+        );
+        return newState;
       });
     },
     setLines(tabId, lines, totalLines) {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) {
-          tab.lines = lines;
-          if (totalLines !== undefined) tab.totalLines = totalLines;
-          if (state.activeTabId !== tabId) {
-            tab.hasUpdate = true;
-          }
-        }
-        return state;
+        if (!tab) return state;
+        const changes = { lines };
+        if (totalLines !== undefined) changes.totalLines = totalLines;
+        if (state.activeTabId !== tabId) changes.hasUpdate = true;
+        return replaceTab(state, tabId, changes);
       });
     },
     appendLines(tabId, newLines) {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) {
-          tab.totalLines += newLines.length;
+        if (!tab) return state;
+        const changes = { totalLines: tab.totalLines + newLines.length };
 
-          if (tab.autoScroll) {
-            // Following: append lines and trim the top to keep window bounded
-            tab.lines = [...tab.lines, ...newLines];
-            const maxWindow = get(settings).scrollBuffer || 500;
-            if (tab.lines.length > maxWindow) {
-              tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
-            }
+        if (tab.autoScroll) {
+          let merged = [...tab.lines, ...newLines];
+          const maxWindow = get(settings).scrollBuffer || 500;
+          if (merged.length > maxWindow) {
+            merged = merged.slice(merged.length - maxWindow);
           }
-          // Not following: only totalLines is updated (status bar shows new count)
-
-          if (state.activeTabId !== tabId) {
-            tab.hasUpdate = true;
-          }
+          changes.lines = merged;
         }
-        return state;
+
+        if (state.activeTabId !== tabId) changes.hasUpdate = true;
+        return replaceTab(state, tabId, changes);
       });
     },
     clearLines(tabId) {
-      update(state => {
-        const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) {
-          tab.lines = [];
-        }
-        return state;
-      });
+      update(state => replaceTab(state, tabId, { lines: [] }));
     },
     setProfile(tabId, profileName) {
-      update(state => {
-        const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) tab.profile = profileName;
-        return state;
-      });
+      update(state => replaceTab(state, tabId, { profile: profileName }));
     },
     setLoadingLines(tabId, value) {
-      update(state => {
-        const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) tab.loadingLines = value;
-        return state;
-      });
+      update(state => replaceTab(state, tabId, { loadingLines: value }));
     },
     setTotalLines(tabId, total) {
-      update(state => {
-        const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) tab.totalLines = total;
-        return state;
-      });
+      update(state => replaceTab(state, tabId, { totalLines: total }));
     },
     setStatus(tabId, status, errorMessage) {
-      update(state => {
-        const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) {
-          tab.status = status;
-          if (errorMessage !== undefined) tab.errorMessage = errorMessage;
-        }
-        return state;
-      });
+      const changes = { status };
+      if (errorMessage !== undefined) changes.errorMessage = errorMessage;
+      update(state => replaceTab(state, tabId, changes));
     },
     prependLines(tabId, olderLines, maxWindow) {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
-        if (tab && olderLines.length > 0) {
-          tab.lines = [...olderLines, ...tab.lines];
-          // Trim from end if exceeding window
-          if (tab.lines.length > maxWindow) {
-            tab.lines = tab.lines.slice(0, maxWindow);
-          }
+        if (!tab || olderLines.length === 0) return state;
+        let merged = [...olderLines, ...tab.lines];
+        if (merged.length > maxWindow) {
+          merged = merged.slice(0, maxWindow);
         }
-        return state;
+        return replaceTab(state, tabId, { lines: merged });
       });
     },
     appendRangeLines(tabId, newerLines, maxWindow) {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
-        if (tab && newerLines.length > 0) {
-          tab.lines = [...tab.lines, ...newerLines];
-          // Trim from start if exceeding window
-          if (tab.lines.length > maxWindow) {
-            tab.lines = tab.lines.slice(tab.lines.length - maxWindow);
-          }
+        if (!tab || newerLines.length === 0) return state;
+        let merged = [...tab.lines, ...newerLines];
+        if (merged.length > maxWindow) {
+          merged = merged.slice(merged.length - maxWindow);
         }
-        return state;
+        return replaceTab(state, tabId, { lines: merged });
       });
     },
     toggleAutoScroll(tabId) {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) tab.autoScroll = !tab.autoScroll;
-        return state;
+        if (!tab) return state;
+        return replaceTab(state, tabId, { autoScroll: !tab.autoScroll });
       });
     },
     setAutoScroll(tabId, value) {
-      update(state => {
-        const tab = state.tabs.find(t => t.id === tabId);
-        if (tab) tab.autoScroll = value;
-        return state;
-      });
+      update(state => replaceTab(state, tabId, { autoScroll: value }));
     },
     moveTab(fromIndex, toIndex) {
       update(state => {
         if (fromIndex < 0 || fromIndex >= state.tabs.length) return state;
         if (toIndex < 0 || toIndex >= state.tabs.length) return state;
-        const [tab] = state.tabs.splice(fromIndex, 1);
-        state.tabs.splice(toIndex, 0, tab);
-        return state;
+        const newTabs = [...state.tabs];
+        const [tab] = newTabs.splice(fromIndex, 1);
+        newTabs.splice(toIndex, 0, tab);
+        return { ...state, tabs: newTabs };
       });
     },
     reset() {
