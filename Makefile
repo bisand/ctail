@@ -8,7 +8,7 @@ VERSION := $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
 # Build number — read from file, targets that produce binaries bump it
 BUILD_NUMBER := $(shell cat BUILD_NUMBER 2>/dev/null || echo 0)
 
-.PHONY: dev build build-windows build-macos clean test install uninstall package-deb package-rpm
+.PHONY: dev build build-windows build-macos build-gio clean test install uninstall package-deb package-rpm
 
 dev:
 	wails dev -tags $(TAGS) -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
@@ -27,6 +27,13 @@ build-macos:
 	$(eval BUILD_NUMBER := $(shell echo $$(( $(BUILD_NUMBER) + 1 ))))
 	@echo $(BUILD_NUMBER) > BUILD_NUMBER
 	wails build -platform darwin/universal -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
+
+GIO_TAGS ?= novulkan,nox11
+build-gio:
+	go build -tags "$(GIO_TAGS)" -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)" -o build/bin/ctail-gio ./cmd/ctail-gio/
+
+run-gio: build-gio
+	./build/bin/ctail-gio
 
 clean:
 	rm -rf build/bin
