@@ -44,6 +44,7 @@
   let swapping = false;
   let prefetching = false;
   let programmaticScroll = false;
+  let lastScrollTop = 0;
 
   // Per-tab scroll position tracking
   const scrollPositions = new Map();
@@ -99,6 +100,7 @@
             } else {
               container.scrollTop = container.scrollHeight;
             }
+            lastScrollTop = container.scrollTop;
             updateVisibleRange();
           }
         });
@@ -237,6 +239,7 @@
     if (container) {
       programmaticScroll = true;
       container.scrollTop = prevScrollTop + adjustment;
+      lastScrollTop = container.scrollTop;
       programmaticScroll = false;
     }
     await tick();
@@ -267,6 +270,7 @@
         container.scrollTop = prevScrollTop - trimmed * lineHeight;
         programmaticScroll = false;
       }
+      lastScrollTop = container.scrollTop;
     }
     await tick();
     if (container) updateVisibleRange();
@@ -298,6 +302,7 @@
       if (container) {
         programmaticScroll = true;
         container.scrollTop = prevScrollTop + adjustment;
+        lastScrollTop = container.scrollTop;
         programmaticScroll = false;
       }
       await tick();
@@ -338,6 +343,7 @@
           container.scrollTop = prevScrollTop - trimmed * lineHeight;
           programmaticScroll = false;
         }
+        lastScrollTop = container.scrollTop;
       }
       await tick();
       if (container) updateVisibleRange();
@@ -356,6 +362,10 @@
 
     updateVisibleRange();
 
+    // Track scroll direction: negative = scrolling up, positive = scrolling down
+    const scrollDelta = container.scrollTop - lastScrollTop;
+    lastScrollTop = container.scrollTop;
+
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
 
     // Auto-scroll toggle is immediate
@@ -367,7 +377,7 @@
     }
     isAtBottom = atBottom;
 
-    checkAndFetch();
+    checkAndFetch(scrollDelta);
   }
 
   let scrollSpeed = $derived($settings.scrollSpeed || 1);
@@ -399,14 +409,15 @@
     }
 
     if (e.deltaY < 0 && container.scrollTop <= 0 && canScrollBack) {
-      checkAndFetch();
+      checkAndFetch(-1);
     }
     if (e.deltaY > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 5 && canScrollForward) {
-      checkAndFetch();
+      checkAndFetch(1);
     }
   }
 
-  function checkAndFetch() {
+  // scrollDirection: negative = user scrolling up, positive = scrolling down
+  function checkAndFetch(scrollDirection = 0) {
     if (!container || !currentTab || swapping) return;
 
     const bufferSize = filteredLines.length;
@@ -421,13 +432,16 @@
     const triggerTop = Math.floor(bufferSize / 4);
     const triggerBottom = Math.floor(bufferSize * 3 / 4);
 
-    if (firstVisibleIdx < triggerTop && canScrollBack) {
+    // Only trigger the fetch matching scroll direction to prevent
+    // oscillation: a backward swap shifts scrollTop up which could
+    // push lastVisibleIdx past triggerBottom, and vice versa.
+    if (scrollDirection <= 0 && firstVisibleIdx < triggerTop && canScrollBack) {
       // Try instant swap from cache first, fall back to async fetch
       swapEarlierPage().then(swapped => {
         if (!swapped) fetchEarlierLines();
         prefetchPages();
       });
-    } else if (lastVisibleIdx > triggerBottom && canScrollForward) {
+    } else if (scrollDirection >= 0 && lastVisibleIdx > triggerBottom && canScrollForward) {
       swapLaterPage().then(swapped => {
         if (!swapped) fetchLaterLines();
         prefetchPages();
@@ -466,6 +480,7 @@
       await tick();
       if (container) {
         container.scrollTop = 0;
+        lastScrollTop = 0;
         updateVisibleRange();
       }
     } catch (e) {
@@ -487,6 +502,7 @@
       await tick();
       if (container) {
         container.scrollTop = totalContentHeight;
+        lastScrollTop = container.scrollTop;
         updateVisibleRange();
       }
     } catch (e) {
@@ -554,7 +570,7 @@
     // Force Svelte to flush DOM updates (spacers) before the browser paints,
     // preventing blank gaps after large jumps like PgUp/PgDn.
     await tick();
-    checkAndFetch();
+    checkAndFetch(scrollDelta);
   }
 
   // Context menu state
