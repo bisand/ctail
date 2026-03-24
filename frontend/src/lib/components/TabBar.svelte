@@ -12,11 +12,11 @@
     tabStore.removeTab(id);
   }
 
-  export let onAddTab;
+  let { onAddTab } = $props();
 
   // Drag and drop reordering
-  let dragIndex = -1;
-  let dropIndex = -1;
+  let dragIndex = $state(-1);
+  let dropIndex = $state(-1);
 
   function handleDragStart(e, index) {
     dragIndex = index;
@@ -53,7 +53,7 @@
   }
 
   // Tab context menu
-  let ctxMenu = { visible: false, x: 0, y: 0, tabId: null, tabIndex: -1 };
+  let ctxMenu = $state({ visible: false, x: 0, y: 0, tabId: null, tabIndex: -1 });
 
   function handleTabContext(e, tab, index) {
     e.preventDefault();
@@ -65,7 +65,7 @@
     ctxMenu = { ...ctxMenu, visible: false };
   }
 
-  $: ctxTab = ctxMenu.tabId ? $tabs.find(t => t.id === ctxMenu.tabId) : null;
+  let ctxTab = $derived(ctxMenu.tabId ? $tabs.find(t => t.id === ctxMenu.tabId) : null);
 
   function ctxClose() {
     if (ctxMenu.tabId) {
@@ -114,7 +114,7 @@
   }
 </script>
 
-<svelte:window on:click={closeCtxMenu} />
+<svelte:window onclick={closeCtxMenu} />
 
 <div class="tab-bar">
   <div class="tabs-scroll">
@@ -129,14 +129,14 @@
         draggable="true"
         role="tab"
         tabindex="0"
-        on:click={() => switchTab(tab.id)}
-        on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') switchTab(tab.id); }}
-        on:dragstart={(e) => handleDragStart(e, i)}
-        on:dragover={(e) => handleDragOver(e, i)}
-        on:dragleave={handleDragLeave}
-        on:drop={(e) => handleDrop(e, i)}
-        on:dragend={handleDragEnd}
-        on:contextmenu={(e) => handleTabContext(e, tab, i)}
+        onclick={() => switchTab(tab.id)}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') switchTab(tab.id); }}
+        ondragstart={(e) => handleDragStart(e, i)}
+        ondragover={(e) => handleDragOver(e, i)}
+        ondragleave={handleDragLeave}
+        ondrop={(e) => handleDrop(e, i)}
+        ondragend={handleDragEnd}
+        oncontextmenu={(e) => handleTabContext(e, tab, i)}
         title={tab.status === 'error' ? `${tab.filePath}\n⚠ ${tab.errorMessage}` : tab.filePath}
       >
         {#if tab.status === 'loading'}
@@ -148,28 +148,28 @@
         {#if tab.hasUpdate}
           <span class="badge"></span>
         {/if}
-        <button class="close-btn" on:click={(e) => closeTab(e, tab.id)} title="Close tab">×</button>
+        <button class="close-btn" onclick={(e) => closeTab(e, tab.id)} title="Close tab">×</button>
       </div>
     {/each}
   </div>
-  <button class="add-tab-btn" on:click={onAddTab} title="Open file">+</button>
+  <button class="add-tab-btn" onclick={onAddTab} title="Open file">+</button>
 
   {#if ctxMenu.visible}
-    <div class="tab-ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px" role="menu" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
-      <button class="ctx-item" on:click={ctxClose}>
+    <div class="tab-ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <button class="ctx-item" onclick={ctxClose}>
         Close <span class="ctx-key">Ctrl+W</span>
       </button>
-      <button class="ctx-item" on:click={ctxCloseOthers} disabled={$tabs.length < 2}>
+      <button class="ctx-item" onclick={ctxCloseOthers} disabled={$tabs.length < 2}>
         Close others
       </button>
-      <button class="ctx-item" on:click={ctxCloseToRight} disabled={ctxMenu.tabIndex >= $tabs.length - 1}>
+      <button class="ctx-item" onclick={ctxCloseToRight} disabled={ctxMenu.tabIndex >= $tabs.length - 1}>
         Close to the right
       </button>
       <div class="ctx-separator"></div>
-      <button class="ctx-item" on:click={ctxCopyPath}>
+      <button class="ctx-item" onclick={ctxCopyPath}>
         Copy file path
       </button>
-      <button class="ctx-item" on:click={ctxReveal}>
+      <button class="ctx-item" onclick={ctxReveal}>
         Reveal in file manager
       </button>
     </div>

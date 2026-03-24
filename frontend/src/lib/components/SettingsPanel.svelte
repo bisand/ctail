@@ -6,18 +6,18 @@
   import { onMount } from 'svelte';
   import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime.js';
 
-  let activeSection = 'settings';
-  let editingRule = null;
-  let editingProfileName = '';
-  let newProfileName = '';
-  let showNewProfile = false;
-  let availableThemes = [];
+  let activeSection = $state('settings');
+  let editingRule = $state(null);
+  let editingProfileName = $state('');
+  let newProfileName = $state('');
+  let showNewProfile = $state(false);
+  let availableThemes = $state([]);
 
   // Copilot OAuth device flow state
-  let copilotAuthState = 'idle'; // idle | authorizing | success | error
-  let copilotUserCode = '';
-  let copilotVerifyURL = '';
-  let copilotError = '';
+  let copilotAuthState = $state('idle');
+  let copilotUserCode = $state('');
+  let copilotVerifyURL = $state('');
+  let copilotError = $state('');
 
   async function startCopilotSignIn() {
     copilotAuthState = 'authorizing';
@@ -28,11 +28,9 @@
       copilotVerifyURL = dcr.verification_uri;
       BrowserOpenURL(dcr.verification_uri);
 
-      // Poll in background (blocking RPC — works fine per prior testing)
       const ok = await CompleteCopilotAuth(dcr.device_code, dcr.interval);
       if (ok) {
         copilotAuthState = 'success';
-        // Reload settings to reflect saved provider/key
         const { GetSettings } = await import('../../../wailsjs/go/main/App.js');
         const s = await GetSettings();
         settings.set(s);
@@ -57,7 +55,6 @@
   onMount(async () => {
     try {
       availableThemes = await ListThemes();
-      // Sort: built-in first, then alphabetical
       availableThemes.sort((a, b) => {
         if (a.builtIn !== b.builtIn) return b.builtIn ? 1 : -1;
         return (a.displayName || a.name).localeCompare(b.displayName || b.name);
@@ -68,26 +65,26 @@
   });
 
   // Rule editor state
-  let ruleName = '';
-  let rulePattern = '';
-  let ruleMatchType = 'match';
-  let ruleForeground = '#89b4fa';
-  let ruleBackground = '';
-  let ruleBold = false;
-  let ruleItalic = false;
+  let ruleName = $state('');
+  let rulePattern = $state('');
+  let ruleMatchType = $state('match');
+  let ruleForeground = $state('#89b4fa');
+  let ruleBackground = $state('');
+  let ruleBold = $state(false);
+  let ruleItalic = $state(false);
 
-  $: selectedProfile = $settings.activeProfile || 'Common Logs';
-  $: currentProfile = $profiles[selectedProfile];
-  $: currentRules = currentProfile
+  let selectedProfile = $derived($settings.activeProfile || 'Common Logs');
+  let currentProfile = $derived($profiles[selectedProfile]);
+  let currentRules = $derived(currentProfile
     ? [...currentProfile.rules].sort((a, b) => a.priority - b.priority)
-    : [];
+    : []);
 
   // Drag state (pointer-based for WebKit compatibility)
-  let dragIndex = null;
-  let dragOverIndex = null;
-  let isDragging = false;
-  let dragEl = null;
-  let dragStartY = 0;
+  let dragIndex = $state(null);
+  let dragOverIndex = $state(null);
+  let isDragging = $state(false);
+  let dragEl = $state(null);
+  let dragStartY = $state(0);
 
   function selectSection(section) {
     activeSection = section;
@@ -283,11 +280,11 @@
   }
 </script>
 
-<div class="settings-panel" on:wheel={handlePanelWheel}>
+<div class="settings-panel" onwheel={handlePanelWheel}>
   <div class="panel-header">
-    <button class:active={activeSection === 'settings'} on:click={() => selectSection('settings')}>Settings</button>
-    <button class:active={activeSection === 'rules'} on:click={() => selectSection('rules')}>Rules</button>
-    <button class:active={activeSection === 'ai'} on:click={() => selectSection('ai')}>AI</button>
+    <button class:active={activeSection === 'settings'} onclick={() => selectSection('settings')}>Settings</button>
+    <button class:active={activeSection === 'rules'} onclick={() => selectSection('rules')}>Rules</button>
+    <button class:active={activeSection === 'ai'} onclick={() => selectSection('ai')}>AI</button>
   </div>
 
   {#if activeSection === 'settings'}
@@ -296,51 +293,51 @@
         <span>Poll Interval (ms)</span>
         <input type="number" min="100" max="10000" step="100"
           value={$settings.pollIntervalMs}
-          on:change={e => updateSetting('pollIntervalMs', parseInt(e.target.value))} />
+          onchange={e => updateSetting('pollIntervalMs', parseInt(e.target.value))} />
       </label>
       <label>
         <span>Scroll Buffer (lines)</span>
         <input type="number" min="100" max="5000" step="100"
           value={$settings.scrollBuffer || 500}
-          on:change={e => updateSetting('scrollBuffer', parseInt(e.target.value))} />
+          onchange={e => updateSetting('scrollBuffer', parseInt(e.target.value))} />
       </label>
       <label>
         <span>Scroll Speed</span>
         <input type="range" min="1" max="10" step="1"
           value={$settings.scrollSpeed || 1}
-          on:input={e => updateSetting('scrollSpeed', parseInt(e.target.value))} />
+          oninput={e => updateSetting('scrollSpeed', parseInt(e.target.value))} />
         <span class="range-value">{$settings.scrollSpeed || 1}</span>
       </label>
       <label class="toggle-label">
         <input type="checkbox" checked={$settings.smoothScroll}
-          on:change={e => updateSetting('smoothScroll', e.target.checked)} />
+          onchange={e => updateSetting('smoothScroll', e.target.checked)} />
         <span>Smooth Scroll (deceleration at edges)</span>
       </label>
       <label>
         <span>Font Size</span>
         <input type="number" min="10" max="24"
           value={$settings.fontSize}
-          on:change={e => updateSetting('fontSize', parseInt(e.target.value))} />
+          onchange={e => updateSetting('fontSize', parseInt(e.target.value))} />
       </label>
       <label class="toggle-label">
         <input type="checkbox" checked={$settings.showLineNumbers}
-          on:change={e => updateSetting('showLineNumbers', e.target.checked)} />
+          onchange={e => updateSetting('showLineNumbers', e.target.checked)} />
         <span>Show Line Numbers</span>
       </label>
       <label class="toggle-label">
         <input type="checkbox" checked={$settings.wordWrap}
-          on:change={e => updateSetting('wordWrap', e.target.checked)} />
+          onchange={e => updateSetting('wordWrap', e.target.checked)} />
         <span>Word Wrap</span>
       </label>
       <label class="toggle-label">
         <input type="checkbox" checked={$settings.restoreTabs}
-          on:change={e => updateSetting('restoreTabs', e.target.checked)} />
+          onchange={e => updateSetting('restoreTabs', e.target.checked)} />
         <span>Restore Tabs on Startup</span>
       </label>
       <label>
         <span>Theme</span>
         <select value={$settings.theme || 'catppuccin'}
-          on:change={async (e) => {
+          onchange={async (e) => {
             const themeName = e.target.value;
             const mode = $settings.themeMode || 'dark';
             updateSetting('theme', themeName);
@@ -354,7 +351,7 @@
       <label>
         <span>Mode</span>
         <select value={$settings.themeMode || 'dark'}
-          on:change={async (e) => {
+          onchange={async (e) => {
             const mode = e.target.value;
             const themeName = $settings.theme || 'catppuccin';
             updateSetting('themeMode', mode);
@@ -367,7 +364,7 @@
       <label>
         <span>Display Backend <small>(Linux, requires restart)</small></span>
         <select value={$settings.displayBackend || 'auto'}
-          on:change={(e) => updateSetting('displayBackend', e.target.value)}>
+          onchange={(e) => updateSetting('displayBackend', e.target.value)}>
           <option value="auto">Auto (prefer X11)</option>
           <option value="x11">X11</option>
           <option value="wayland">Wayland</option>
@@ -375,14 +372,14 @@
       </label>
       <label class="toggle-label">
         <input type="checkbox" checked={!$settings.disableUpdateCheck}
-          on:change={(e) => updateSetting('disableUpdateCheck', !e.target.checked)} />
+          onchange={(e) => updateSetting('disableUpdateCheck', !e.target.checked)} />
         <span>Check for updates automatically</span>
       </label>
       {#if !$settings.disableUpdateCheck}
         <label>
           <span>Update check interval</span>
           <select value={$settings.updateCheckIntervalHours || 24}
-            on:change={(e) => updateSetting('updateCheckIntervalHours', parseInt(e.target.value))}>
+            onchange={(e) => updateSetting('updateCheckIntervalHours', parseInt(e.target.value))}>
             <option value={1}>Every hour</option>
             <option value={6}>Every 6 hours</option>
             <option value={12}>Every 12 hours</option>
@@ -397,21 +394,21 @@
   {:else if activeSection === 'rules'}
     <div class="section">
       <div class="profile-selector">
-        <select value={selectedProfile} on:change={e => updateSetting('activeProfile', e.target.value)}>
+        <select value={selectedProfile} onchange={e => updateSetting('activeProfile', e.target.value)}>
           {#each $profileNames as name}
             <option value={name}>{name}</option>
           {/each}
         </select>
-        <button class="icon-btn" on:click={() => showNewProfile = !showNewProfile} title="New profile">+</button>
+        <button class="icon-btn" onclick={() => showNewProfile = !showNewProfile} title="New profile">+</button>
         {#if $profileNames.length > 1}
-          <button class="icon-btn danger" on:click={deleteCurrentProfile} title="Delete profile">🗑</button>
+          <button class="icon-btn danger" onclick={deleteCurrentProfile} title="Delete profile">🗑</button>
         {/if}
       </div>
 
       {#if showNewProfile}
         <div class="new-profile-form">
           <input type="text" placeholder="Profile name" bind:value={newProfileName} />
-          <button class="btn-small" on:click={createProfile}>Create</button>
+          <button class="btn-small" onclick={createProfile}>Create</button>
         </div>
       {/if}
 
@@ -423,20 +420,20 @@
             <div class="drop-indicator"></div>
           {/if}
           <div class="rule-item" class:disabled={!rule.enabled} class:dragging={isDragging && dragIndex === index}
-            on:pointerdown={e => handlePointerDown(e, index)}
-            on:pointermove={handlePointerMove}
-            on:pointerup={handlePointerUp}
+            onpointerdown={e => handlePointerDown(e, index)}
+            onpointermove={handlePointerMove}
+            onpointerup={handlePointerUp}
             style="background: {rule.background || 'var(--bg-primary)'}; color: {rule.foreground || 'var(--text-primary)'}; {rule.bold ? 'font-weight:700;' : ''}{rule.italic ? 'font-style:italic;' : ''}">
             <div class="rule-header">
               <div class="rule-order-buttons">
-                <button class="order-btn" on:click={() => moveRule(index, -1)} disabled={index === 0} title="Move up">▲</button>
-                <button class="order-btn" on:click={() => moveRule(index, 1)} disabled={index === currentRules.length - 1} title="Move down">▼</button>
+                <button class="order-btn" onclick={() => moveRule(index, -1)} disabled={index === 0} title="Move up">▲</button>
+                <button class="order-btn" onclick={() => moveRule(index, 1)} disabled={index === currentRules.length - 1} title="Move down">▼</button>
               </div>
-              <input type="checkbox" checked={rule.enabled} on:change={() => toggleRule(rule.id)} />
+              <input type="checkbox" checked={rule.enabled} onchange={() => toggleRule(rule.id)} />
               <span class="rule-name">{rule.name}</span>
               <span class="rule-type" style="color: var(--text-muted); background: {rule.background ? 'rgba(0,0,0,0.25)' : 'var(--bg-primary)'}">{rule.matchType}</span>
-              <button class="edit-btn" on:click={() => startEditRule(rule)} title="Edit rule">✏ Edit</button>
-              <button class="icon-btn-small danger" on:click={() => deleteRule(rule.id)}>×</button>
+              <button class="edit-btn" onclick={() => startEditRule(rule)} title="Edit rule">✏ Edit</button>
+              <button class="icon-btn-small danger" onclick={() => deleteRule(rule.id)}>×</button>
             </div>
             <div class="rule-pattern">{rule.pattern}</div>
           </div>
@@ -461,17 +458,17 @@
               <label>
                 <span>Foreground</span>
                 <div class="color-input">
-                  <input type="color" value={ruleForeground || '#ffffff'} on:input={e => ruleForeground = e.target.value} />
+                  <input type="color" value={ruleForeground || '#ffffff'} oninput={e => ruleForeground = e.target.value} />
                   <input type="text" bind:value={ruleForeground} placeholder="transparent" />
-                  <button class="color-clear" on:click={() => ruleForeground = ''} title="Clear (transparent)">✕</button>
+                  <button class="color-clear" onclick={() => ruleForeground = ''} title="Clear (transparent)">✕</button>
                 </div>
               </label>
               <label>
                 <span>Background</span>
                 <div class="color-input">
-                  <input type="color" value={ruleBackground || '#000000'} on:input={e => ruleBackground = e.target.value} />
+                  <input type="color" value={ruleBackground || '#000000'} oninput={e => ruleBackground = e.target.value} />
                   <input type="text" bind:value={ruleBackground} placeholder="transparent" />
-                  <button class="color-clear" on:click={() => ruleBackground = ''} title="Clear (transparent)">✕</button>
+                  <button class="color-clear" onclick={() => ruleBackground = ''} title="Clear (transparent)">✕</button>
                 </div>
               </label>
               <label class="toggle-label">
@@ -483,8 +480,8 @@
                 <span>Italic</span>
               </label>
               <div class="editor-actions">
-                <button class="btn-save" on:click={saveRule}>Save</button>
-                <button class="btn-cancel" on:click={cancelEdit}>Cancel</button>
+                <button class="btn-save" onclick={saveRule}>Save</button>
+                <button class="btn-cancel" onclick={cancelEdit}>Cancel</button>
               </div>
             </div>
           {/if}
@@ -494,8 +491,8 @@
         {/if}
       </div>
 
-      <button class="btn-add-rule" on:click={startNewRule}>+ Add Rule</button>
-      <button class="btn-add-rule ai-generate" on:click={() => window.dispatchEvent(new CustomEvent('ctail:open-ai'))} title="Use AI to generate rules from your logs">🤖 AI Generate Rules</button>
+      <button class="btn-add-rule" onclick={startNewRule}>+ Add Rule</button>
+      <button class="btn-add-rule ai-generate" onclick={() => window.dispatchEvent(new CustomEvent('ctail:open-ai'))} title="Use AI to generate rules from your logs">🤖 AI Generate Rules</button>
 
       {#if editingRule === '__new__'}
         <div class="rule-editor" use:scrollIntoViewAction>
@@ -518,17 +515,17 @@
           <label>
             <span>Foreground</span>
             <div class="color-input">
-              <input type="color" value={ruleForeground || '#ffffff'} on:input={e => ruleForeground = e.target.value} />
+              <input type="color" value={ruleForeground || '#ffffff'} oninput={e => ruleForeground = e.target.value} />
               <input type="text" bind:value={ruleForeground} placeholder="transparent" />
-              <button class="color-clear" on:click={() => ruleForeground = ''} title="Clear (transparent)">✕</button>
+              <button class="color-clear" onclick={() => ruleForeground = ''} title="Clear (transparent)">✕</button>
             </div>
           </label>
           <label>
             <span>Background</span>
             <div class="color-input">
-              <input type="color" value={ruleBackground || '#000000'} on:input={e => ruleBackground = e.target.value} />
+              <input type="color" value={ruleBackground || '#000000'} oninput={e => ruleBackground = e.target.value} />
               <input type="text" bind:value={ruleBackground} placeholder="transparent" />
-              <button class="color-clear" on:click={() => ruleBackground = ''} title="Clear (transparent)">✕</button>
+              <button class="color-clear" onclick={() => ruleBackground = ''} title="Clear (transparent)">✕</button>
             </div>
           </label>
           <label class="toggle-label">
@@ -540,8 +537,8 @@
             <span>Italic</span>
           </label>
           <div class="editor-actions">
-            <button class="btn-save" on:click={saveRule}>Save</button>
-            <button class="btn-cancel" on:click={cancelEdit}>Cancel</button>
+            <button class="btn-save" onclick={saveRule}>Save</button>
+            <button class="btn-cancel" onclick={cancelEdit}>Cancel</button>
           </div>
         </div>
       {/if}
@@ -552,7 +549,7 @@
       <label>
         <span>AI Provider</span>
         <select value={$settings.aiProvider || ''}
-          on:change={e => updateSetting('aiProvider', e.target.value)}>
+          onchange={e => updateSetting('aiProvider', e.target.value)}>
           <option value="">Not configured</option>
           <option value="openai">OpenAI</option>
           <option value="copilot">GitHub Copilot</option>
@@ -567,25 +564,25 @@
           {#if $settings.aiKey && copilotAuthState !== 'authorizing'}
             <div class="copilot-status">
               <span class="copilot-connected">✓ Connected to Copilot</span>
-              <button class="btn-small btn-danger" on:click={disconnectCopilot}>Disconnect</button>
+              <button class="btn-small btn-danger" onclick={disconnectCopilot}>Disconnect</button>
             </div>
             <label>
               <span>Model <small>(leave empty for default: gpt-4o)</small></span>
               <input type="text" placeholder="gpt-4o"
                 value={$settings.aiModel || ''}
-                on:change={e => updateSetting('aiModel', e.target.value.trim())} />
+                onchange={e => updateSetting('aiModel', e.target.value.trim())} />
             </label>
           {:else if copilotAuthState === 'authorizing'}
             <div class="copilot-code">
               <p>Enter this code on GitHub:</p>
               <div class="code-row">
                 <span class="user-code">{copilotUserCode}</span>
-                <button class="btn-copy" title="Copy code" on:click={() => { navigator.clipboard.writeText(copilotUserCode); }}>📋</button>
+                <button class="btn-copy" title="Copy code" onclick={() => { navigator.clipboard.writeText(copilotUserCode); }}>📋</button>
               </div>
               <p class="copilot-hint">Waiting for authorization…</p>
             </div>
           {:else}
-            <button class="btn-copilot" on:click={startCopilotSignIn}>
+            <button class="btn-copilot" onclick={startCopilotSignIn}>
               Sign in with GitHub
             </button>
             <p class="ai-settings-hint-small">Requires an active <a href="https://github.com/features/copilot" target="_blank" rel="noopener noreferrer">Copilot subscription</a>.</p>
@@ -598,7 +595,7 @@
             <span>GitHub Personal Access Token</span>
             <input type="password" placeholder="ghp_..."
               value={$settings.aiKey || ''}
-              on:change={e => updateSetting('aiKey', e.target.value.trim())} />
+              onchange={e => updateSetting('aiKey', e.target.value.trim())} />
           </label>
           <p class="ai-settings-hint-small">
             Create a <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer">PAT</a> with <code>models:read</code> scope.
@@ -607,26 +604,26 @@
             <span>Model <small>(leave empty for default)</small></span>
             <input type="text" placeholder="gpt-4o-mini"
               value={$settings.aiModel || ''}
-              on:change={e => updateSetting('aiModel', e.target.value.trim())} />
+              onchange={e => updateSetting('aiModel', e.target.value.trim())} />
           </label>
         {:else}
           <label>
             <span>API Endpoint {#if $settings.aiProvider === 'openai'}<small>(default: api.openai.com)</small>{/if}</span>
             <input type="text" placeholder={$settings.aiProvider === 'openai' ? 'api.openai.com' : 'https://your-server.com'}
               value={$settings.aiEndpoint || ''}
-              on:change={e => updateSetting('aiEndpoint', e.target.value.trim())} />
+              onchange={e => updateSetting('aiEndpoint', e.target.value.trim())} />
           </label>
           <label>
             <span>API Key</span>
             <input type="password" placeholder="sk-..."
               value={$settings.aiKey || ''}
-              on:change={e => updateSetting('aiKey', e.target.value.trim())} />
+              onchange={e => updateSetting('aiKey', e.target.value.trim())} />
           </label>
           <label>
             <span>Model <small>(leave empty for default)</small></span>
             <input type="text" placeholder="gpt-4o-mini"
               value={$settings.aiModel || ''}
-              on:change={e => updateSetting('aiModel', e.target.value.trim())} />
+              onchange={e => updateSetting('aiModel', e.target.value.trim())} />
           </label>
         {/if}
         <p class="ai-settings-hint">Use <strong>Ctrl+Shift+A</strong> to open the AI assistant dialog.</p>

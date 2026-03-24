@@ -4,10 +4,10 @@
   import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime.js';
   import { settings } from '../stores/settings.js';
 
-  export let show = false;
+  let { show = $bindable(false) } = $props();
 
-  let version = '';
-  let themeName = '';
+  let version = $state('');
+  let themeName = $state('');
 
   onMount(async () => {
     try {
@@ -18,9 +18,11 @@
   });
 
   // Update display name when settings or dialog visibility changes
-  $: if (show) {
-    updateThemeName($settings.theme);
-  }
+  $effect(() => {
+    if (show) {
+      updateThemeName($settings.theme);
+    }
+  });
 
   async function updateThemeName(themeId) {
     try {
@@ -46,10 +48,10 @@
 </script>
 
 {#if show}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="overlay" on:click={close} on:keydown={handleKeydown}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="about-dialog" on:click|stopPropagation role="dialog" aria-modal="true" aria-label="About ctail">
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="overlay" onclick={close} onkeydown={handleKeydown}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="about-dialog" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="About ctail">
       <div class="about-icon">
         <div class="icon-graphic">
           <span class="icon-text">ct</span><span class="icon-cursor">|</span>
@@ -61,19 +63,19 @@
         Cross-platform log tail viewer with regex highlighting
       </p>
       <div class="about-links">
-        <button class="link-btn" on:click={() => openLink('https://github.com/bisand/ctail')}>
+        <button class="link-btn" onclick={() => openLink('https://github.com/bisand/ctail')}>
           GitHub Repository
         </button>
-        <button class="link-btn" on:click={() => openLink('https://github.com/bisand/ctail/issues')}>
+        <button class="link-btn" onclick={() => openLink('https://github.com/bisand/ctail/issues')}>
           Report Issue
         </button>
       </div>
       <div class="about-credits">
-        <p>Built with <button class="inline-link" on:click={() => openLink('https://wails.io')}>Wails</button> &amp; <button class="inline-link" on:click={() => openLink('https://svelte.dev')}>Svelte</button></p>
+        <p>Built with <button class="inline-link" onclick={() => openLink('https://wails.io')}>Wails</button> &amp; <button class="inline-link" onclick={() => openLink('https://svelte.dev')}>Svelte</button></p>
         <p>Theme: {themeName} ({$settings.themeMode})</p>
         <p class="about-license">MIT License</p>
       </div>
-      <button class="close-btn" on:click={close}>Close</button>
+      <button class="close-btn" onclick={close}>Close</button>
     </div>
   </div>
 {/if}

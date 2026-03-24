@@ -17,46 +17,48 @@
   let scrollBuffer = 500;
 
   // About dialog state
-  let showAbout = false;
+  let showAbout = $state(false);
 
   // AI dialog state
-  let showAI = false;
+  let showAI = $state(false);
 
   // Update dialog state
-  let showUpdateDialog = false;
-  let updateCheckResult = null;
+  let showUpdateDialog = $state(false);
+  let updateCheckResult = $state(null);
 
   // Update notification state
-  let updateAvailable = null; // { version, url }
+  let updateAvailable = $state(null);
 
   // Ctrl+Tab cycling state
   let isCycling = false;
   let cycleIndex = -1;
-  let tabIdBeforeCycle = null; // tab we were on when a cycle session started
-  let lastCycleEndTime = 0;   // timestamp when Ctrl was released after cycling
-  const TOGGLE_THRESHOLD_MS = 1000; // quick re-press window for toggle
+  let tabIdBeforeCycle = null;
+  let lastCycleEndTime = 0;
+  const TOGGLE_THRESHOLD_MS = 1000;
 
-  // Track the previous tab for toggle: set when a cycle session ends
+  // Track the previous tab for toggle
   let previousTabId = null;
 
   // Persist tab order to backend whenever tabs change
   let tabsInitialized = false;
-  $: if (tabsInitialized && $tabs) {
-    const tabStates = $tabs.map(t => ({
-      filePath: t.filePath,
-      profileId: t.profile || '',
-      autoScroll: t.autoScroll || true,
-    }));
-    SaveTabOrder(tabStates).catch(() => {});
-  }
+  $effect(() => {
+    if (tabsInitialized && $tabs) {
+      const tabStates = $tabs.map(t => ({
+        filePath: t.filePath,
+        profileId: t.profile || '',
+        autoScroll: t.autoScroll || true,
+      }));
+      SaveTabOrder(tabStates).catch(() => {});
+    }
+  });
 
   // If the previous tab gets closed, clear it
-  $: {
+  $effect(() => {
     const ids = new Set($tabs.map(t => t.id));
     if (previousTabId && !ids.has(previousTabId)) {
       previousTabId = null;
     }
-  }
+  });
 
   // Load initial lines for a tab after it becomes ready.
   // Guards against concurrent calls for the same tab (e.g. rapid ready→error→ready cycling).
@@ -408,8 +410,8 @@
   {#if updateAvailable}
     <div class="update-banner">
       <span>🎉 ctail v{updateAvailable.version} is available!</span>
-      <button class="update-link" on:click={() => BrowserOpenURL(updateAvailable.url)}>View release</button>
-      <button class="update-dismiss" on:click={() => updateAvailable = null}>✕</button>
+      <button class="update-link" onclick={() => BrowserOpenURL(updateAvailable.url)}>View release</button>
+      <button class="update-dismiss" onclick={() => updateAvailable = null}>✕</button>
     </div>
   {/if}
   <Toolbar onOpenFile={openFile} />

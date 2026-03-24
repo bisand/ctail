@@ -1,12 +1,20 @@
+<script module>
+  function styleString(style) {
+    let parts = [];
+    if (style.color) parts.push(`color:${style.color}`);
+    if (style.backgroundColor) parts.push(`background-color:${style.backgroundColor}`);
+    if (style.fontWeight) parts.push(`font-weight:${style.fontWeight}`);
+    if (style.fontStyle) parts.push(`font-style:${style.fontStyle}`);
+    return parts.join(';');
+  }
+</script>
+
 <script>
   import { highlightLine } from '../utils/highlight.js';
 
-  export let line;
-  export let rules = [];
-  export let showLineNumber = false;
-  export let fontSize = 14;
+  let { line, rules = [], showLineNumber = false, fontSize = 14 } = $props();
 
-  $: segments = highlightLine(line.text, rules);
+  let segments = $derived(highlightLine(line.text, rules));
 </script>
 
 <div class="log-line" style="font-size: {fontSize}px">
@@ -19,17 +27,6 @@
     {/each}
   </span>
 </div>
-
-<script context="module">
-  function styleString(style) {
-    let parts = [];
-    if (style.color) parts.push(`color:${style.color}`);
-    if (style.backgroundColor) parts.push(`background-color:${style.backgroundColor}`);
-    if (style.fontWeight) parts.push(`font-weight:${style.fontWeight}`);
-    if (style.fontStyle) parts.push(`font-style:${style.fontStyle}`);
-    return parts.join(';');
-  }
-</script>
 
 <style>
   .log-line {

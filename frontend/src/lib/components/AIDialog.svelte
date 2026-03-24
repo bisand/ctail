@@ -4,26 +4,26 @@
   import { profiles, profileNames } from '../stores/rules.js';
   import { settings } from '../stores/settings.js';
 
-  export let show = false;
+  let { show = $bindable(false) } = $props();
 
-  let question = '';
-  let response = '';
-  let loading = false;
-  let error = '';
-  let contextMode = 'buffer'; // "buffer", "selection", "last"
-  let lastLineCount = 200;
+  let question = $state('');
+  let response = $state('');
+  let loading = $state(false);
+  let error = $state('');
+  let contextMode = $state('buffer');
+  let lastLineCount = $state(200);
 
   // Rule generation
-  let generateProfileName = '';
-  let generatingRules = false;
-  let generateError = '';
-  let generateSuccess = '';
+  let generateProfileName = $state('');
+  let generatingRules = $state(false);
+  let generateError = $state('');
+  let generateSuccess = $state('');
 
   // Rules assistant
-  let rulesQuestion = '';
-  let rulesLoading = false;
-  let rulesError = '';
-  let rulesSuccess = '';
+  let rulesQuestion = $state('');
+  let rulesLoading = $state(false);
+  let rulesError = $state('');
+  let rulesSuccess = $state('');
 
   function close() {
     show = false;
@@ -120,11 +120,11 @@
 </script>
 
 {#if show}
-  <div class="ai-overlay" on:click|self={close} on:keydown={handleKeydown}>
+  <div class="ai-overlay" onclick={(e) => { if (e.target === e.currentTarget) close(); }} onkeydown={handleKeydown}>
     <div class="ai-dialog">
       <div class="ai-header">
         <h3>🤖 AI Assistant</h3>
-        <button class="close-btn" on:click={close}>✕</button>
+        <button class="close-btn" onclick={close}>✕</button>
       </div>
 
       {#if !$settings.aiProvider || !$settings.aiKey}
@@ -147,8 +147,8 @@
           </div>
           <div class="ask-row">
             <input type="text" class="question-input" placeholder="Ask a question about the logs..."
-              bind:value={question} on:keydown={handleKeydown} disabled={loading} />
-            <button class="btn-ask" on:click={askQuestion} disabled={loading || !question.trim()}>
+              bind:value={question} onkeydown={handleKeydown} disabled={loading} />
+            <button class="btn-ask" onclick={askQuestion} disabled={loading || !question.trim()}>
               {loading ? '⏳' : 'Ask'}
             </button>
           </div>
@@ -169,8 +169,8 @@
           <p class="ai-hint">Ask AI to add, modify, or delete highlight rules in the active profile. All open files are included as context.</p>
           <div class="ask-row">
             <input type="text" class="question-input" placeholder="e.g. Add red foreground to all ERROR events..."
-              bind:value={rulesQuestion} on:keydown={handleRulesKeydown} disabled={rulesLoading} />
-            <button class="btn-ask" on:click={askRulesQuestion}
+              bind:value={rulesQuestion} onkeydown={handleRulesKeydown} disabled={rulesLoading} />
+            <button class="btn-ask" onclick={askRulesQuestion}
               disabled={rulesLoading || !rulesQuestion.trim()}>
               {rulesLoading ? '⏳' : 'Apply'}
             </button>
@@ -193,7 +193,7 @@
           <div class="ask-row">
             <input type="text" placeholder="New profile name..."
               bind:value={generateProfileName} disabled={generatingRules} />
-            <button class="btn-ask" on:click={generateRules}
+            <button class="btn-ask" onclick={generateRules}
               disabled={generatingRules || !generateProfileName.trim()}>
               {generatingRules ? '⏳' : 'Generate'}
             </button>

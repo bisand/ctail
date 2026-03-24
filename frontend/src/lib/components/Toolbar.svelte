@@ -1,7 +1,7 @@
 <script>
   import { settingsPanelOpen } from '../stores/settings.js';
 
-  export let onOpenFile;
+  let { onOpenFile } = $props();
 </script>
 
 <div class="toolbar">
@@ -9,11 +9,11 @@
     <span class="app-title">ctail</span>
   </div>
   <div class="toolbar-right">
-    <button class="toolbar-btn" on:click={onOpenFile} title="Open file (Ctrl+O)">
+    <button class="toolbar-btn" onclick={onOpenFile} title="Open file (Ctrl+O)">
       📁 Open
     </button>
     <button class="toolbar-btn" class:active={$settingsPanelOpen}
-      on:click={() => settingsPanelOpen.update(v => !v)}
+      onclick={() => settingsPanelOpen.update(v => !v)}
       title="Settings & Rules">
       ⚙ Settings
     </button>

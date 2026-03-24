@@ -1,8 +1,7 @@
 <script>
   import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime.js';
 
-  export let show = false;
-  export let result = null; // { updateAvailable, latestVersion, currentVersion, url, error }
+  let { show = $bindable(false), result = null } = $props();
 
   function close() {
     show = false;
@@ -20,10 +19,10 @@
 </script>
 
 {#if show && result}
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div class="overlay" on:click={close} on:keydown={handleKeydown}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div class="update-dialog" on:click|stopPropagation role="dialog" aria-modal="true" aria-label="Update check">
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="overlay" onclick={close} onkeydown={handleKeydown}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="update-dialog" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Update check">
       {#if result.error}
         <div class="update-icon error">⚠️</div>
         <h3>Update Check Failed</h3>
@@ -43,8 +42,8 @@
           <span class="version-value highlight">v{result.latestVersion}</span>
         </div>
         <div class="button-row">
-          <button class="btn primary" on:click={openRelease}>View Release</button>
-          <button class="btn secondary" on:click={close}>Later</button>
+          <button class="btn primary" onclick={openRelease}>View Release</button>
+          <button class="btn secondary" onclick={close}>Later</button>
         </div>
       {:else}
         <div class="update-icon uptodate">✅</div>
@@ -52,7 +51,7 @@
         <p class="update-message">
           ctail v{result.currentVersion} is the latest version.
         </p>
-        <button class="btn primary" on:click={close}>OK</button>
+        <button class="btn primary" onclick={close}>OK</button>
       {/if}
     </div>
   </div>

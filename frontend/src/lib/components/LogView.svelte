@@ -1,5 +1,5 @@
 <script>
-  import { onMount, afterUpdate, tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import LogLine from './LogLine.svelte';
   import { activeTab, tabStore } from '../stores/tabs.js';
   import { settings } from '../stores/settings.js';
@@ -7,8 +7,8 @@
   import { GetTabLineRange, GetTabTotalLines, GetTabFileSize, GetMemoryUsage } from '../../../wailsjs/go/main/App.js';
 
   // --- File size & memory stats (polled periodically) ---
-  let fileSize = 0;
-  let memoryMB = 0;
+  let fileSize = $state(0);
+  let memoryMB = $state(0);
   let statsTimer = null;
 
   function formatSize(bytes) {
@@ -34,10 +34,10 @@
     return () => { if (statsTimer) clearInterval(statsTimer); };
   });
 
-  let container;
+  let container = $state(null);
   let isAtBottom = true;
-  let searchQuery = '';
-  let searchVisible = false;
+  let searchQuery = $state('');
+  let searchVisible = $state(false);
 
   const FETCH_BATCH = 200;
   const MAX_CACHED_PAGES = 2;
@@ -62,19 +62,19 @@
     pageCache.delete(tabId);
   }
 
-  $: MAX_WINDOW = ($settings.scrollBuffer || 500);
+  let MAX_WINDOW = $derived($settings.scrollBuffer || 500);
 
-  $: currentTab = $activeTab;
-  $: lines = currentTab ? currentTab.lines : [];
-  $: profileName = $settings.activeProfile || 'Common Logs';
-  $: profile = $profiles[profileName];
-  $: rules = profile ? profile.rules : [];
+  let currentTab = $derived($activeTab);
+  let lines = $derived(currentTab ? currentTab.lines : []);
+  let profileName = $derived($settings.activeProfile || 'Common Logs');
+  let profile = $derived($profiles[profileName]);
+  let rules = $derived(profile ? profile.rules : []);
 
   // Two-phase render: skip highlighting on tab switch for instant feel,
   // then apply it one frame later.
-  let deferHighlight = false;
+  let deferHighlight = $state(false);
   let prevTabId = null;
-  $: {
+  $effect(() => {
     const newId = currentTab ? currentTab.id : null;
     if (newId !== prevTabId) {
       // Save scroll position for the tab we're leaving
@@ -104,23 +104,27 @@
         prefetchPages(); refreshStats();
       }
     }
-  }
-  $: autoScroll = currentTab ? currentTab.autoScroll : true;
-  $: totalLines = currentTab ? currentTab.totalLines : 0;
-  $: windowStart = lines.length > 0 ? lines[0].number : 0;
-  $: windowEnd = lines.length > 0 ? lines[lines.length - 1].number : 0;
-  $: canScrollBack = windowStart > 1;
-  $: canScrollForward = !autoScroll && windowEnd < totalLines;
-  $: tabStatus = currentTab ? currentTab.status : null;
-  $: tabError = currentTab ? currentTab.errorMessage : '';
+  });
+  let autoScroll = $derived(currentTab ? currentTab.autoScroll : true);
+  let totalLines = $derived(currentTab ? currentTab.totalLines : 0);
+  let windowStart = $derived(lines.length > 0 ? lines[0].number : 0);
+  let windowEnd = $derived(lines.length > 0 ? lines[lines.length - 1].number : 0);
+  let canScrollBack = $derived(windowStart > 1);
+  let canScrollForward = $derived(!autoScroll && windowEnd < totalLines);
+  let tabStatus = $derived(currentTab ? currentTab.status : null);
+  let tabError = $derived(currentTab ? currentTab.errorMessage : '');
 
   // --- Virtual scrolling ---
   const OVERSCAN = 10;
-  let visibleStart = 0;
-  let visibleEnd = 0;
+  let visibleStart = $state(0);
+  let visibleEnd = $state(0);
 
-  $: fontSize = $settings.fontSize || 14;
-  $: lineHeight = fontSize * 1.5;
+  let fontSize = $derived($settings.fontSize || 14);
+  let lineHeight = $derived(fontSize * 1.5);
+
+  let filteredLines = $derived(searchQuery
+    ? lines.filter(l => l.text.toLowerCase().includes(searchQuery.toLowerCase()))
+    : lines);
 
   // Compute which slice of filteredLines to render
   function updateVisibleRange() {
@@ -137,13 +141,16 @@
     visibleEnd = Math.min(filteredLines.length, first + count + OVERSCAN);
   }
 
-  $: visibleLines = filteredLines.slice(visibleStart, visibleEnd);
-  $: topPad = visibleStart * lineHeight;
-  $: bottomPad = Math.max(0, (filteredLines.length - visibleEnd) * lineHeight);
-  $: totalContentHeight = filteredLines.length * lineHeight;
+  let visibleLines = $derived(filteredLines.slice(visibleStart, visibleEnd));
+  let topPad = $derived(visibleStart * lineHeight);
+  let bottomPad = $derived(Math.max(0, (filteredLines.length - visibleEnd) * lineHeight));
+  let totalContentHeight = $derived(filteredLines.length * lineHeight);
 
   // Recalculate visible range when lines change, but not during a swap
-  $: if (filteredLines && !swapping) updateVisibleRange();
+  $effect.pre(() => {
+    const _len = filteredLines.length;
+    if (!swapping) updateVisibleRange();
+  });
 
   onMount(() => {
     function handleMenuFind() {
@@ -155,14 +162,12 @@
 
   // Track previous line count to only auto-scroll when lines change
   let prevLineCount = 0;
-  afterUpdate(() => {
-    if (autoScroll && container) {
-      const curCount = filteredLines.length;
-      if (curCount !== prevLineCount) {
-        prevLineCount = curCount;
-        container.scrollTop = totalContentHeight;
-        updateVisibleRange();
-      }
+  $effect(() => {
+    const curCount = filteredLines.length;
+    if (autoScroll && container && curCount !== prevLineCount) {
+      prevLineCount = curCount;
+      container.scrollTop = totalContentHeight;
+      updateVisibleRange();
     }
   });
 
@@ -352,8 +357,8 @@
     checkAndFetch();
   }
 
-  $: scrollSpeed = $settings.scrollSpeed || 1;
-  $: smoothScroll = $settings.smoothScroll || false;
+  let scrollSpeed = $derived($settings.scrollSpeed || 1);
+  let smoothScroll = $derived($settings.smoothScroll || false);
 
   // Always take over wheel scrolling to eliminate browser-imposed
   // deceleration near scroll edges (unless smooth scroll is enabled).
@@ -539,12 +544,8 @@
     checkAndFetch();
   }
 
-  $: filteredLines = searchQuery
-    ? lines.filter(l => l.text.toLowerCase().includes(searchQuery.toLowerCase()))
-    : lines;
-
   // Context menu state
-  let contextMenu = { visible: false, x: 0, y: 0 };
+  let contextMenu = $state({ visible: false, x: 0, y: 0 });
 
   function handleContextMenu(e) {
     e.preventDefault();
@@ -622,7 +623,7 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} on:click={closeContextMenu} />
+<svelte:window onkeydown={handleKeydown} onclick={closeContextMenu} />
 
 <div class="log-view" data-wordwrap={$settings.wordWrap}>
   {#if searchVisible}
@@ -638,12 +639,12 @@
           {filteredLines.length} / {lines.length} lines
         {/if}
       </span>
-      <button class="search-close" on:click={() => { searchVisible = false; searchQuery = ''; }}>×</button>
+      <button class="search-close" onclick={() => { searchVisible = false; searchQuery = ''; }}>×</button>
     </div>
   {/if}
 
   {#if currentTab}
-    <div class="log-container" bind:this={container} on:scroll={handleScroll} on:wheel={handleWheel} on:contextmenu={handleContextMenu} on:copy={handleCopy}>
+    <div class="log-container" bind:this={container} onscroll={handleScroll} onwheel={handleWheel} oncontextmenu={handleContextMenu} oncopy={handleCopy}>
       {#if filteredLines.length > 0}
         <div class="virtual-spacer" style="height: {topPad}px"></div>
         {#key currentTab?.id}
@@ -703,42 +704,42 @@
           <span class="status-text">Empty</span>
         {/if}
         <label class="follow-toggle" title="Auto-scroll to new lines (per tab)">
-          <input type="checkbox" checked={autoScroll} on:change={toggleFollow} />
+          <input type="checkbox" checked={autoScroll} onchange={toggleFollow} />
           Follow
         </label>
       </div>
     </div>
 
     {#if contextMenu.visible}
-      <div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="menu" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
-        <button class="ctx-item" on:click={ctxCopy} disabled={!getSelectedText()}>
+      <div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+        <button class="ctx-item" onclick={ctxCopy} disabled={!getSelectedText()}>
           Copy <span class="ctx-key">Ctrl+C</span>
         </button>
-        <button class="ctx-item" on:click={ctxCopyAll}>
+        <button class="ctx-item" onclick={ctxCopyAll}>
           Copy all lines
         </button>
         <div class="ctx-separator"></div>
-        <button class="ctx-item" on:click={ctxSelectAll}>
+        <button class="ctx-item" onclick={ctxSelectAll}>
           Select all <span class="ctx-key">Ctrl+A</span>
         </button>
         <div class="ctx-separator"></div>
-        <button class="ctx-item" on:click={ctxSearch}>
+        <button class="ctx-item" onclick={ctxSearch}>
           {getSelectedText() ? 'Search selection' : 'Search'} <span class="ctx-key">Ctrl+F</span>
         </button>
         {#if searchVisible}
-          <button class="ctx-item" on:click={ctxClearSearch}>
+          <button class="ctx-item" onclick={ctxClearSearch}>
             Clear search
           </button>
         {/if}
         <div class="ctx-separator"></div>
-        <button class="ctx-item" on:click={ctxScrollToBottom} disabled={autoScroll}>
+        <button class="ctx-item" onclick={ctxScrollToBottom} disabled={autoScroll}>
           Scroll to bottom
         </button>
-        <button class="ctx-item" on:click={toggleFollow}>
+        <button class="ctx-item" onclick={toggleFollow}>
           {autoScroll ? 'Unfollow' : 'Follow'} tail
         </button>
         <div class="ctx-separator"></div>
-        <button class="ctx-item" on:click={ctxAskAI}>
+        <button class="ctx-item" onclick={ctxAskAI}>
           🤖 Ask AI about logs <span class="ctx-key">Ctrl+Shift+A</span>
         </button>
       </div>
