@@ -63,6 +63,7 @@ func run(w *app.Window, appState *ui.App) error {
 	tabBar := &ui.TabBar{}
 	toolbar := &ui.Toolbar{}
 	logView := ui.NewLogView()
+	settingsPanel := &ui.SettingsPanel{}
 
 	fileExplorer := explorer.NewExplorer(w)
 
@@ -85,9 +86,9 @@ func run(w *app.Window, appState *ui.App) error {
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 
-			handleKeys(gtx, w, appState, fileExplorer, logView)
+			handleKeys(gtx, w, appState, fileExplorer, logView, settingsPanel)
 
-			layoutAll(gtx, th, appState, tabBar, toolbar, logView, fileExplorer, w, maxWindow)
+			layoutAll(gtx, th, appState, tabBar, toolbar, logView, settingsPanel, fileExplorer, w, maxWindow)
 
 			// After layout, check scroll thresholds for preloading
 			checkScrollThresholds(appState, logView, maxWindow)
@@ -97,7 +98,7 @@ func run(w *app.Window, appState *ui.App) error {
 	}
 }
 
-func handleKeys(gtx layout.Context, w *app.Window, appState *ui.App, fileExplorer *explorer.Explorer, logView *ui.LogView) {
+func handleKeys(gtx layout.Context, w *app.Window, appState *ui.App, fileExplorer *explorer.Explorer, logView *ui.LogView, settingsPanel *ui.SettingsPanel) {
 	for {
 		ev, ok := gtx.Event(
 			key.Filter{Name: "O", Required: key.ModCtrl},
@@ -106,6 +107,8 @@ func handleKeys(gtx layout.Context, w *app.Window, appState *ui.App, fileExplore
 			key.Filter{Name: key.NameTab, Required: key.ModCtrl},
 			key.Filter{Name: key.NameEnd, Required: key.ModCtrl},
 			key.Filter{Name: key.NameHome, Required: key.ModCtrl},
+			key.Filter{Name: ",", Required: key.ModCtrl},
+			key.Filter{Name: key.NameEscape},
 		)
 		if !ok {
 			break
@@ -148,6 +151,17 @@ func handleKeys(gtx layout.Context, w *app.Window, appState *ui.App, fileExplore
 			appState.SetAutoScroll(false)
 			logView.SetAutoScroll(false)
 			logView.ScrollBy(-999999)
+
+		case ke.Name == "," && ke.Modifiers.Contain(key.ModCtrl):
+			settingsPanel.Visible = !settingsPanel.Visible
+			if settingsPanel.Visible {
+				settingsPanel.Init(appState.Config, appState.Settings)
+			}
+
+		case ke.Name == key.NameEscape:
+			if settingsPanel.Visible {
+				settingsPanel.Visible = false
+			}
 		}
 	}
 }
@@ -218,7 +232,8 @@ func checkScrollThresholds(appState *ui.App, logView *ui.LogView, maxWindow int)
 
 func layoutAll(gtx layout.Context, th *material.Theme, appState *ui.App,
 	tabBar *ui.TabBar, toolbar *ui.Toolbar, logView *ui.LogView,
-	fileExplorer *explorer.Explorer, w *app.Window, maxWindow int) layout.Dimensions {
+	settingsPanel *ui.SettingsPanel, fileExplorer *explorer.Explorer,
+	w *app.Window, maxWindow int) layout.Dimensions {
 
 	appState.Lock()
 	colors := appState.Colors
@@ -238,6 +253,7 @@ func layoutAll(gtx layout.Context, th *material.Theme, appState *ui.App,
 	showLineNumbers := appState.Settings.ShowLineNumbers
 	fontSize := appState.Settings.FontSize
 	engine := appState.Rules
+	settings := appState.Settings
 	appState.Unlock()
 
 	if fontSize < 8 {
@@ -247,70 +263,114 @@ func layoutAll(gtx layout.Context, th *material.Theme, appState *ui.App,
 	// Sync auto-scroll state to logview widget
 	logView.SetAutoScroll(autoScroll)
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Tab bar
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			clicked, closed, dims := tabBar.Layout(gtx, th, colors, tabs, active)
-			if clicked >= 0 {
-				appState.SetActive(clicked)
-			}
-			if closed >= 0 {
-				appState.CloseTab(closed)
-			}
-			return dims
-		}),
-		// Menu bar + toolbar
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			action, dims := toolbar.Layout(gtx, th, colors, autoScroll)
-			switch action {
-			case ui.ToolbarOpen:
-				go openFileDialog(appState, fileExplorer)
-			case ui.ToolbarCloseTab:
-				appState.Lock()
-				idx := appState.Active
-				appState.Unlock()
-				if idx >= 0 {
-					appState.CloseTab(idx)
-				}
-			case ui.ToolbarQuit:
-				w.Perform(system.ActionClose)
-			case ui.ToolbarSettings:
-				// TODO: open settings panel
-			case ui.ToolbarToggleTheme:
-				appState.ToggleTheme()
-			case ui.ToolbarAbout:
-				// TODO: show about dialog
-			case ui.ToolbarFollowChanged:
-				newVal := toolbar.FollowChk.Value
-				appState.SetAutoScroll(newVal)
-				logView.SetAutoScroll(newVal)
-				if newVal {
-					logView.ScrollToEnd()
-				}
-			}
-			return dims
-		}),
-		// Separator line
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(1)))
-			return ui.FillRect(gtx, colors.Border, size)
-		}),
-		// Log view
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return layout.Stack{}.Layout(gtx,
-				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-					return ui.FillRect(gtx, colors.BgPrimary, gtx.Constraints.Max)
+	// Main layout using Stack so dropdown overlay can paint on top
+	return layout.Stack{}.Layout(gtx,
+		// Base layer: all content
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				// Tab bar
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					clicked, closed, dims := tabBar.Layout(gtx, th, colors, tabs, active)
+					if clicked >= 0 {
+						appState.SetActive(clicked)
+					}
+					if closed >= 0 {
+						appState.CloseTab(closed)
+					}
+					return dims
 				}),
-				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-					return logView.LayoutFromCopy(gtx, th, colors, lines, engine, showLineNumbers, fontSize)
+				// Menu bar + toolbar row
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					action, dims := toolbar.Layout(gtx, th, colors, autoScroll)
+					handleToolbarAction(action, appState, toolbar, logView, settingsPanel, fileExplorer, w)
+					return dims
+				}),
+				// Separator line
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(1)))
+					return ui.FillRect(gtx, colors.Border, size)
+				}),
+				// Log view + optional settings panel side by side
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					if settingsPanel.Visible {
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+							// Log view takes remaining space
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return layout.Stack{}.Layout(gtx,
+									layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+										return ui.FillRect(gtx, colors.BgPrimary, gtx.Constraints.Max)
+									}),
+									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+										return logView.LayoutFromCopy(gtx, th, colors, lines, engine, showLineNumbers, fontSize)
+									}),
+								)
+							}),
+							// Settings panel on right
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								action, dims := settingsPanel.Layout(gtx, th, colors, &settings)
+								if action == ui.SettingsChanged {
+									appState.Lock()
+									appState.Settings = settings
+									appState.Unlock()
+									appState.ApplySettings()
+								}
+								return dims
+							}),
+						)
+					}
+					return layout.Stack{}.Layout(gtx,
+						layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+							return ui.FillRect(gtx, colors.BgPrimary, gtx.Constraints.Max)
+						}),
+						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+							return logView.LayoutFromCopy(gtx, th, colors, lines, engine, showLineNumbers, fontSize)
+						}),
+					)
+				}),
+				// Status bar
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layoutStatusBar(gtx, th, colors, activeTab, lines)
 				}),
 			)
 		}),
-		// Status bar
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutStatusBar(gtx, th, colors, activeTab, lines)
+		// Overlay layer: dropdown menu (paints on top of everything)
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return toolbar.LayoutDropdown(gtx, th, colors)
 		}),
 	)
+}
+
+func handleToolbarAction(action ui.ToolbarAction, appState *ui.App, toolbar *ui.Toolbar,
+	logView *ui.LogView, settingsPanel *ui.SettingsPanel,
+	fileExplorer *explorer.Explorer, w *app.Window) {
+
+	switch action {
+	case ui.ToolbarOpen:
+		go openFileDialog(appState, fileExplorer)
+	case ui.ToolbarCloseTab:
+		appState.Lock()
+		idx := appState.Active
+		appState.Unlock()
+		if idx >= 0 {
+			appState.CloseTab(idx)
+		}
+	case ui.ToolbarQuit:
+		w.Perform(system.ActionClose)
+	case ui.ToolbarSettings:
+		settingsPanel.Visible = !settingsPanel.Visible
+		if settingsPanel.Visible {
+			settingsPanel.Init(appState.Config, appState.Settings)
+		}
+	case ui.ToolbarToggleTheme:
+		appState.ToggleTheme()
+	case ui.ToolbarFollowChanged:
+		newVal := toolbar.FollowChk.Value
+		appState.SetAutoScroll(newVal)
+		logView.SetAutoScroll(newVal)
+		if newVal {
+			logView.ScrollToEnd()
+		}
+	}
 }
 
 func layoutStatusBar(gtx layout.Context, th *material.Theme, colors ui.Colors, tab *ui.Tab, lines []ui.LinesCopy) layout.Dimensions {

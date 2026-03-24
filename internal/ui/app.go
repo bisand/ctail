@@ -249,7 +249,15 @@ func (a *App) ToggleTheme() {
 		a.Settings.ThemeMode = "light"
 	}
 	a.Colors = loadColors(a.Config, a.Settings)
-	// Persist the setting
+	_ = a.Config.SaveSettings(a.Settings)
+}
+
+// ApplySettings reloads colors and rules from the current settings and persists them.
+func (a *App) ApplySettings() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.Colors = loadColors(a.Config, a.Settings)
+	a.Rules = loadRules(a.Config, a.Settings)
 	_ = a.Config.SaveSettings(a.Settings)
 }
 

@@ -5,6 +5,7 @@ import (
 	"image/color"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -23,6 +24,10 @@ type Toolbar struct {
 	// Dropdown state
 	OpenMenu    string // which menu is open: "file", "edit", "view", "help", ""
 	menuItems   map[string][]menuItem
+
+	// Measured heights for dropdown positioning
+	menuBarHeight    int
+	toolbarRowHeight int
 
 	// Menu item clickables (persistent across frames)
 	miOpen       widget.Clickable
@@ -86,7 +91,8 @@ func (tb *Toolbar) initMenuItems() {
 	}
 }
 
-// Layout draws the menu bar, toolbar, and optional dropdown, returns the triggered action.
+// Layout draws the menu bar and toolbar row, returns the triggered action.
+// Call LayoutDropdown separately as an overlay after the main layout.
 func (tb *Toolbar) Layout(gtx layout.Context, th *material.Theme, colors Colors, autoScroll bool) (ToolbarAction, layout.Dimensions) {
 	tb.initMenuItems()
 	action := ToolbarNone
@@ -126,22 +132,101 @@ func (tb *Toolbar) Layout(gtx layout.Context, th *material.Theme, colors Colors,
 	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Menu bar row
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return tb.layoutMenuBar(gtx, th, colors)
+			d := tb.layoutMenuBar(gtx, th, colors)
+			tb.menuBarHeight = d.Size.Y
+			return d
 		}),
 		// Toolbar row (follow checkbox etc.)
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return tb.layoutToolbarRow(gtx, th, colors, autoScroll)
-		}),
-		// Dropdown overlay (if open)
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if tb.OpenMenu == "" {
-				return layout.Dimensions{}
-			}
-			return tb.layoutDropdown(gtx, th, colors)
+			d := tb.layoutToolbarRow(gtx, th, colors, autoScroll)
+			tb.toolbarRowHeight = d.Size.Y
+			return d
 		}),
 	)
 
 	return action, dims
+}
+
+// LayoutDropdown renders the dropdown menu as an overlay. Must be called
+// after the main layout so it paints on top of other content.
+func (tb *Toolbar) LayoutDropdown(gtx layout.Context, th *material.Theme, colors Colors) layout.Dimensions {
+	if tb.OpenMenu == "" {
+		return layout.Dimensions{}
+	}
+
+	items, ok := tb.menuItems[tb.OpenMenu]
+	if !ok || len(items) == 0 {
+		return layout.Dimensions{}
+	}
+
+	// Calculate X offset based on which menu is open
+	xOff := tb.menuXOffset(tb.OpenMenu)
+	yOff := tb.menuBarHeight // position just below menu bar
+
+	defer op.Offset(image.Pt(xOff, yOff)).Push(gtx.Ops).Pop()
+
+	// Constrain dropdown width
+	ddGtx := gtx
+	ddGtx.Constraints.Min.X = gtx.Dp(unit.Dp(220))
+	ddGtx.Constraints.Max.X = gtx.Dp(unit.Dp(280))
+
+	// Background + border + items
+	return layout.Stack{}.Layout(ddGtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := image.Pt(gtx.Constraints.Min.X, gtx.Constraints.Min.Y)
+			// Shadow/border
+			borderRect := image.Rect(-1, -1, size.X+1, size.Y+1)
+			defer clip.Rect(borderRect).Push(gtx.Ops).Pop()
+			paint.ColorOp{Color: colors.Border}.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := image.Pt(gtx.Constraints.Min.X, gtx.Constraints.Min.Y)
+			defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+			paint.ColorOp{Color: colors.BgSurface}.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			children := make([]layout.FlexChild, 0, len(items))
+			for _, mi := range items {
+				mi := mi
+				if mi.separator {
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(1)))
+						return FillRect(gtx, colors.Border, size)
+					}))
+					continue
+				}
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return tb.layoutMenuItem(gtx, th, colors, mi)
+				}))
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+		}),
+	)
+}
+
+// CloseMenu closes any open dropdown (call on click outside).
+func (tb *Toolbar) CloseMenu() {
+	tb.OpenMenu = ""
+}
+
+func (tb *Toolbar) menuXOffset(name string) int {
+	// Approximate pixel offsets for each menu button.
+	// Each button is ~padding(8)+text+padding(8). Approximate widths:
+	switch name {
+	case "file":
+		return 4
+	case "edit":
+		return 50
+	case "view":
+		return 95
+	case "help":
+		return 145
+	}
+	return 0
 }
 
 func (tb *Toolbar) toggleMenu(name string) {
@@ -244,41 +329,6 @@ func (tb *Toolbar) layoutToolbarRow(gtx layout.Context, th *material.Theme, colo
 					}),
 				)
 			})
-		}),
-	)
-}
-
-func (tb *Toolbar) layoutDropdown(gtx layout.Context, th *material.Theme, colors Colors) layout.Dimensions {
-	items, ok := tb.menuItems[tb.OpenMenu]
-	if !ok || len(items) == 0 {
-		return layout.Dimensions{}
-	}
-
-	return layout.Stack{}.Layout(gtx,
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			size := image.Pt(gtx.Constraints.Min.X, gtx.Constraints.Min.Y)
-			defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
-			paint.ColorOp{Color: colors.BgSurface}.Add(gtx.Ops)
-			paint.PaintOp{}.Add(gtx.Ops)
-			return layout.Dimensions{Size: size}
-		}),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			// Draw border
-			children := make([]layout.FlexChild, 0, len(items))
-			for _, mi := range items {
-				mi := mi
-				if mi.separator {
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(1)))
-						return FillRect(gtx, colors.Border, size)
-					}))
-					continue
-				}
-				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return tb.layoutMenuItem(gtx, th, colors, mi)
-				}))
-			}
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 		}),
 	)
 }
