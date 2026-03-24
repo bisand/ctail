@@ -20,8 +20,11 @@ type Tab struct {
 	Lines    []tailer.Line
 	Tailer   *tailer.Tailer
 
-	AutoScroll bool
-	HasUpdate  bool
+	WindowStart int64 // first line number in current buffer window
+	TotalLines  int64 // total lines known in file
+	AutoScroll  bool
+	HasUpdate   bool
+	Loading     bool // true while a fetch is in progress
 }
 
 // App holds all application state for the Gio UI.
@@ -131,6 +134,10 @@ func (a *App) OpenFile(filePath string) {
 	t.OnLines(func(_ []tailer.Line) {
 		a.mu.Lock()
 		tab.Lines = t.GetLines()
+		tab.TotalLines = t.GetTotalLines()
+		if len(tab.Lines) > 0 {
+			tab.WindowStart = tab.Lines[0].Number
+		}
 		if a.Active >= 0 && a.Active < len(a.Tabs) && a.Tabs[a.Active] != tab {
 			tab.HasUpdate = true
 		}
@@ -140,12 +147,20 @@ func (a *App) OpenFile(filePath string) {
 	t.OnTruncated(func() {
 		a.mu.Lock()
 		tab.Lines = t.GetLines()
+		tab.TotalLines = t.GetTotalLines()
+		if len(tab.Lines) > 0 {
+			tab.WindowStart = tab.Lines[0].Number
+		}
 		a.mu.Unlock()
 		invalidate()
 	})
 	t.OnReady(func() {
 		a.mu.Lock()
 		tab.Lines = t.GetLines()
+		tab.TotalLines = t.GetTotalLines()
+		if len(tab.Lines) > 0 {
+			tab.WindowStart = tab.Lines[0].Number
+		}
 		a.mu.Unlock()
 		invalidate()
 	})
@@ -204,4 +219,170 @@ func (a *App) Shutdown() {
 	for _, tab := range a.Tabs {
 		tab.Tailer.Stop()
 	}
+}
+
+// ToggleAutoScroll toggles the auto-scroll state for the active tab.
+func (a *App) ToggleAutoScroll() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if tab := a.ActiveTab(); tab != nil {
+		tab.AutoScroll = !tab.AutoScroll
+	}
+}
+
+// SetAutoScroll sets the auto-scroll state for the active tab.
+func (a *App) SetAutoScroll(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if tab := a.ActiveTab(); tab != nil {
+		tab.AutoScroll = on
+	}
+}
+
+const (
+	FetchBatch    = 200
+	MaxCachedPages = 2
+)
+
+// FetchEarlierLines loads older lines into the buffer for the active tab.
+// Returns the number of lines prepended (for scroll adjustment).
+func (a *App) FetchEarlierLines(maxWindow int) int {
+	a.mu.Lock()
+	tab := a.ActiveTab()
+	if tab == nil || tab.Loading || len(tab.Lines) == 0 {
+		a.mu.Unlock()
+		return 0
+	}
+	ws := tab.Lines[0].Number
+	if ws <= 1 {
+		a.mu.Unlock()
+		return 0
+	}
+	tab.Loading = true
+	tabID := tab.ID
+	tailerRef := tab.Tailer
+	a.mu.Unlock()
+
+	fetchStart := ws - int64(FetchBatch)
+	if fetchStart < 1 {
+		fetchStart = 1
+	}
+	fetchCount := int(ws - fetchStart)
+	if fetchCount <= 0 {
+		a.mu.Lock()
+		tab.Loading = false
+		a.mu.Unlock()
+		return 0
+	}
+
+	olderLines := tailerRef.ReadRange(fetchStart, fetchCount)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Verify tab is still valid
+	tab = a.findTab(tabID)
+	if tab == nil {
+		return 0
+	}
+	tab.Loading = false
+
+	if len(olderLines) == 0 {
+		return 0
+	}
+
+	// Prepend and trim from end
+	merged := make([]tailer.Line, 0, len(olderLines)+len(tab.Lines))
+	merged = append(merged, olderLines...)
+	merged = append(merged, tab.Lines...)
+	if len(merged) > maxWindow {
+		merged = merged[:maxWindow]
+	}
+	tab.Lines = merged
+	if len(tab.Lines) > 0 {
+		tab.WindowStart = tab.Lines[0].Number
+	}
+
+	return len(olderLines)
+}
+
+// FetchLaterLines loads newer lines into the buffer for the active tab.
+// Returns the number of lines trimmed from front (for scroll adjustment).
+func (a *App) FetchLaterLines(maxWindow int) int {
+	a.mu.Lock()
+	tab := a.ActiveTab()
+	if tab == nil || tab.Loading || len(tab.Lines) == 0 {
+		a.mu.Unlock()
+		return 0
+	}
+	we := tab.Lines[len(tab.Lines)-1].Number
+	total := tab.TotalLines
+	if we >= total {
+		a.mu.Unlock()
+		return 0
+	}
+	tab.Loading = true
+	tabID := tab.ID
+	tailerRef := tab.Tailer
+	a.mu.Unlock()
+
+	fetchStart := we + 1
+	newerLines := tailerRef.ReadRange(fetchStart, FetchBatch)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	tab = a.findTab(tabID)
+	if tab == nil {
+		return 0
+	}
+	tab.Loading = false
+
+	if len(newerLines) == 0 {
+		return 0
+	}
+
+	// Append and trim from front
+	prevLen := len(tab.Lines)
+	merged := make([]tailer.Line, 0, prevLen+len(newerLines))
+	merged = append(merged, tab.Lines...)
+	merged = append(merged, newerLines...)
+	trimmed := 0
+	if len(merged) > maxWindow {
+		trimmed = len(merged) - maxWindow
+		merged = merged[trimmed:]
+	}
+	tab.Lines = merged
+	if len(tab.Lines) > 0 {
+		tab.WindowStart = tab.Lines[0].Number
+	}
+
+	return trimmed
+}
+
+// CanScrollBack returns true if there are earlier lines in the file.
+func (a *App) CanScrollBack() bool {
+	tab := a.ActiveTab()
+	if tab == nil || len(tab.Lines) == 0 {
+		return false
+	}
+	return tab.Lines[0].Number > 1
+}
+
+// CanScrollForward returns true if there are later lines in the file.
+func (a *App) CanScrollForward() bool {
+	tab := a.ActiveTab()
+	if tab == nil || len(tab.Lines) == 0 {
+		return false
+	}
+	return tab.Lines[len(tab.Lines)-1].Number < tab.TotalLines
+}
+
+func (a *App) findTab(id string) *Tab {
+	for _, t := range a.Tabs {
+		if t.ID == id {
+			return t
+		}
+	}
+	return nil
 }

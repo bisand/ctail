@@ -32,7 +32,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Open files passed as CLI arguments
 	initialFiles := flag.Args()
 
 	go func() {
@@ -45,7 +44,6 @@ func main() {
 
 		appState.Invalidate = w.Invalidate
 
-		// Open initial files
 		for _, f := range initialFiles {
 			appState.OpenFile(f)
 		}
@@ -63,16 +61,20 @@ func run(w *app.Window, appState *ui.App) error {
 	th := material.NewTheme()
 
 	tabBar := &ui.TabBar{}
+	toolbar := &ui.Toolbar{}
 	logView := ui.NewLogView()
 
 	fileExplorer := explorer.NewExplorer(w)
+
+	maxWindow := appState.Settings.ScrollBuffer
+	if maxWindow < 200 {
+		maxWindow = 500
+	}
 
 	var ops op.Ops
 
 	for {
 		e := w.Event()
-
-		// Forward all events to explorer (needed for X11 view events)
 		fileExplorer.ListenEvents(e)
 
 		switch e := e.(type) {
@@ -83,24 +85,27 @@ func run(w *app.Window, appState *ui.App) error {
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 
-			// Handle keyboard shortcuts
-			handleKeys(gtx, w, appState, fileExplorer)
+			handleKeys(gtx, w, appState, fileExplorer, logView)
 
-			// Layout the UI
-			layoutUI(gtx, th, appState, tabBar, logView)
+			layoutAll(gtx, th, appState, tabBar, toolbar, logView, fileExplorer, maxWindow)
+
+			// After layout, check scroll thresholds for preloading
+			checkScrollThresholds(appState, logView, maxWindow)
 
 			e.Frame(gtx.Ops)
 		}
 	}
 }
 
-func handleKeys(gtx layout.Context, w *app.Window, appState *ui.App, fileExplorer *explorer.Explorer) {
+func handleKeys(gtx layout.Context, w *app.Window, appState *ui.App, fileExplorer *explorer.Explorer, logView *ui.LogView) {
 	for {
 		ev, ok := gtx.Event(
 			key.Filter{Name: "O", Required: key.ModCtrl},
 			key.Filter{Name: "W", Required: key.ModCtrl},
 			key.Filter{Name: "Q", Required: key.ModCtrl},
 			key.Filter{Name: key.NameTab, Required: key.ModCtrl},
+			key.Filter{Name: key.NameEnd, Required: key.ModCtrl},
+			key.Filter{Name: key.NameHome, Required: key.ModCtrl},
 		)
 		if !ok {
 			break
@@ -133,6 +138,15 @@ func handleKeys(gtx layout.Context, w *app.Window, appState *ui.App, fileExplore
 			if n > 0 {
 				appState.SetActive((active + 1) % n)
 			}
+
+		case ke.Name == key.NameEnd && ke.Modifiers.Contain(key.ModCtrl):
+			appState.SetAutoScroll(true)
+			logView.SetAutoScroll(true)
+
+		case ke.Name == key.NameHome && ke.Modifiers.Contain(key.ModCtrl):
+			appState.SetAutoScroll(false)
+			logView.SetAutoScroll(false)
+			logView.ScrollBy(-999999)
 		}
 	}
 }
@@ -142,8 +156,6 @@ func openFileDialog(appState *ui.App, fileExplorer *explorer.Explorer) {
 	if err != nil {
 		return
 	}
-
-	// Get the file path from the *os.File
 	if f, ok := rc.(*os.File); ok {
 		path := f.Name()
 		rc.Close()
@@ -153,7 +165,60 @@ func openFileDialog(appState *ui.App, fileExplorer *explorer.Explorer) {
 	}
 }
 
-func layoutUI(gtx layout.Context, th *material.Theme, appState *ui.App, tabBar *ui.TabBar, logView *ui.LogView) layout.Dimensions {
+func checkScrollThresholds(appState *ui.App, logView *ui.LogView, maxWindow int) {
+	first, count, _ := logView.Position()
+	if count <= 0 {
+		return
+	}
+
+	appState.Lock()
+	tab := appState.ActiveTab()
+	if tab == nil || tab.Loading || len(tab.Lines) == 0 {
+		appState.Unlock()
+		return
+	}
+	bufSize := len(tab.Lines)
+	canBack := tab.Lines[0].Number > 1
+	canFwd := tab.Lines[len(tab.Lines)-1].Number < tab.TotalLines
+	appState.Unlock()
+
+	triggerTop := bufSize / 4
+	triggerBottom := bufSize * 3 / 4
+	lastVisible := first + count
+
+	// Scrolling near top — load earlier lines
+	if first < triggerTop && canBack {
+		go func() {
+			prepended := appState.FetchEarlierLines(maxWindow)
+			if prepended > 0 {
+				// Adjust scroll position to keep viewport stable
+				logView.ScrollBy(prepended)
+				if appState.Invalidate != nil {
+					appState.Invalidate()
+				}
+			}
+		}()
+	}
+
+	// Scrolling near bottom — load later lines
+	if lastVisible > triggerBottom && canFwd {
+		go func() {
+			trimmed := appState.FetchLaterLines(maxWindow)
+			if trimmed > 0 {
+				// Adjust scroll position for trimmed lines
+				logView.ScrollBy(-trimmed)
+				if appState.Invalidate != nil {
+					appState.Invalidate()
+				}
+			}
+		}()
+	}
+}
+
+func layoutAll(gtx layout.Context, th *material.Theme, appState *ui.App,
+	tabBar *ui.TabBar, toolbar *ui.Toolbar, logView *ui.LogView,
+	fileExplorer *explorer.Explorer, maxWindow int) layout.Dimensions {
+
 	appState.Lock()
 	colors := appState.Colors
 	tabs := appState.Tabs
@@ -161,11 +226,13 @@ func layoutUI(gtx layout.Context, th *material.Theme, appState *ui.App, tabBar *
 	activeTab := appState.ActiveTab()
 
 	var lines []ui.LinesCopy
+	autoScroll := false
 	if activeTab != nil {
 		lines = make([]ui.LinesCopy, len(activeTab.Lines))
 		for i, l := range activeTab.Lines {
 			lines[i] = ui.LinesCopy{Number: l.Number, Text: l.Text}
 		}
+		autoScroll = activeTab.AutoScroll
 	}
 	showLineNumbers := appState.Settings.ShowLineNumbers
 	fontSize := appState.Settings.FontSize
@@ -176,6 +243,9 @@ func layoutUI(gtx layout.Context, th *material.Theme, appState *ui.App, tabBar *
 		fontSize = 14
 	}
 
+	// Sync auto-scroll state to logview widget
+	logView.SetAutoScroll(autoScroll)
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Tab bar
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -185,6 +255,20 @@ func layoutUI(gtx layout.Context, th *material.Theme, appState *ui.App, tabBar *
 			}
 			if closed >= 0 {
 				appState.CloseTab(closed)
+			}
+			return dims
+		}),
+		// Toolbar
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			action, dims := toolbar.Layout(gtx, th, colors, autoScroll)
+			if action == ui.ToolbarOpen {
+				go openFileDialog(appState, fileExplorer)
+			}
+			// Handle follow checkbox toggle
+			if toolbar.FollowChk.Value != autoScroll {
+				newVal := toolbar.FollowChk.Value
+				appState.SetAutoScroll(newVal)
+				logView.SetAutoScroll(newVal)
 			}
 			return dims
 		}),
@@ -222,7 +306,10 @@ func layoutStatusBar(gtx layout.Context, th *material.Theme, colors ui.Colors, t
 				func(gtx layout.Context) layout.Dimensions {
 					var status string
 					if tab != nil {
-						status = fmt.Sprintf("%s — %d lines", tab.FilePath, len(lines))
+						status = fmt.Sprintf("%s — %d lines (total: %d)", tab.FilePath, len(lines), tab.TotalLines)
+						if tab.AutoScroll {
+							status += " [following]"
+						}
 					} else {
 						status = "No file open — Ctrl+O to open"
 					}

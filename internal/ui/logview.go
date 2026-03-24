@@ -46,6 +46,21 @@ func (lv *LogView) SetAutoScroll(on bool) {
 	lv.List.ScrollToEnd = on
 }
 
+// Position returns the current first visible index and visible count.
+func (lv *LogView) Position() (first, count, total int) {
+	p := lv.List.Position
+	return p.First, p.Count, p.Length
+}
+
+// ScrollBy adjusts the first visible index by delta lines.
+func (lv *LogView) ScrollBy(delta int) {
+	lv.List.Position.First += delta
+	if lv.List.Position.First < 0 {
+		lv.List.Position.First = 0
+	}
+	lv.List.Position.Offset = 0
+}
+
 // Layout renders the log lines with highlighting.
 func (lv *LogView) Layout(gtx layout.Context, th *material.Theme, colors Colors,
 	lines []tailer.Line, engine *rules.Engine, showLineNumbers bool, fontSize int) layout.Dimensions {
