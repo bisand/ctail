@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -11,10 +12,37 @@ import (
 	"gioui.org/widget/material"
 )
 
-// Toolbar renders the toolbar with action buttons.
+// Toolbar renders the menu bar and toolbar area.
 type Toolbar struct {
-	OpenBtn   widget.Clickable
+	// Menu bar buttons
+	FileBtn     widget.Clickable
+	EditBtn     widget.Clickable
+	ViewBtn     widget.Clickable
+	HelpBtn     widget.Clickable
+
+	// Dropdown state
+	OpenMenu    string // which menu is open: "file", "edit", "view", "help", ""
+	menuItems   map[string][]menuItem
+
+	// Menu item clickables (persistent across frames)
+	miOpen       widget.Clickable
+	miCloseTab   widget.Clickable
+	miQuit       widget.Clickable
+	miFind       widget.Clickable
+	miSettings   widget.Clickable
+	miToggleTheme widget.Clickable
+	miAbout      widget.Clickable
+
+	// Toolbar widgets
 	FollowChk widget.Bool
+}
+
+type menuItem struct {
+	label     string
+	shortcut  string
+	clickable *widget.Clickable
+	separator bool
+	action    ToolbarAction
 }
 
 // ToolbarAction indicates which toolbar action was triggered.
@@ -23,20 +51,175 @@ type ToolbarAction int
 const (
 	ToolbarNone ToolbarAction = iota
 	ToolbarOpen
+	ToolbarCloseTab
+	ToolbarQuit
+	ToolbarFind
+	ToolbarSettings
+	ToolbarToggleTheme
+	ToolbarAbout
+	ToolbarFollowChanged
 )
 
-// Layout draws the toolbar and returns the triggered action.
+func (tb *Toolbar) initMenuItems() {
+	if tb.menuItems != nil {
+		return
+	}
+	tb.menuItems = map[string][]menuItem{
+		"file": {
+			{label: "Open File...", shortcut: "Ctrl+O", clickable: &tb.miOpen, action: ToolbarOpen},
+			{separator: true},
+			{label: "Close Tab", shortcut: "Ctrl+W", clickable: &tb.miCloseTab, action: ToolbarCloseTab},
+			{separator: true},
+			{label: "Quit", shortcut: "Ctrl+Q", clickable: &tb.miQuit, action: ToolbarQuit},
+		},
+		"edit": {
+			{label: "Find...", shortcut: "Ctrl+F", clickable: &tb.miFind, action: ToolbarFind},
+		},
+		"view": {
+			{label: "Settings", shortcut: "Ctrl+,", clickable: &tb.miSettings, action: ToolbarSettings},
+			{separator: true},
+			{label: "Toggle Theme", clickable: &tb.miToggleTheme, action: ToolbarToggleTheme},
+		},
+		"help": {
+			{label: "About ctail", clickable: &tb.miAbout, action: ToolbarAbout},
+		},
+	}
+}
+
+// Layout draws the menu bar, toolbar, and optional dropdown, returns the triggered action.
 func (tb *Toolbar) Layout(gtx layout.Context, th *material.Theme, colors Colors, autoScroll bool) (ToolbarAction, layout.Dimensions) {
+	tb.initMenuItems()
 	action := ToolbarNone
 
-	if tb.OpenBtn.Clicked(gtx) {
-		action = ToolbarOpen
+	// Check menu bar button clicks (toggle dropdown)
+	if tb.FileBtn.Clicked(gtx) {
+		tb.toggleMenu("file")
+	}
+	if tb.EditBtn.Clicked(gtx) {
+		tb.toggleMenu("edit")
+	}
+	if tb.ViewBtn.Clicked(gtx) {
+		tb.toggleMenu("view")
+	}
+	if tb.HelpBtn.Clicked(gtx) {
+		tb.toggleMenu("help")
+	}
+
+	// Check dropdown item clicks
+	for _, items := range tb.menuItems {
+		for _, mi := range items {
+			if mi.clickable != nil && mi.clickable.Clicked(gtx) {
+				action = mi.action
+				tb.OpenMenu = ""
+			}
+		}
 	}
 
 	// Sync checkbox state with tab's auto-scroll
 	tb.FollowChk.Value = autoScroll
 
-	dims := layout.Stack{}.Layout(gtx,
+	// Detect user click on checkbox (Update toggles Value and returns true)
+	if tb.FollowChk.Update(gtx) {
+		action = ToolbarFollowChanged
+	}
+
+	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// Menu bar row
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return tb.layoutMenuBar(gtx, th, colors)
+		}),
+		// Toolbar row (follow checkbox etc.)
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return tb.layoutToolbarRow(gtx, th, colors, autoScroll)
+		}),
+		// Dropdown overlay (if open)
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if tb.OpenMenu == "" {
+				return layout.Dimensions{}
+			}
+			return tb.layoutDropdown(gtx, th, colors)
+		}),
+	)
+
+	return action, dims
+}
+
+func (tb *Toolbar) toggleMenu(name string) {
+	if tb.OpenMenu == name {
+		tb.OpenMenu = ""
+	} else {
+		tb.OpenMenu = name
+	}
+}
+
+func (tb *Toolbar) layoutMenuBar(gtx layout.Context, th *material.Theme, colors Colors) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)
+			defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+			paint.ColorOp{Color: colors.BgSecondary}.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return tb.layoutMenuButton(gtx, th, colors, &tb.FileBtn, "File", tb.OpenMenu == "file")
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return tb.layoutMenuButton(gtx, th, colors, &tb.EditBtn, "Edit", tb.OpenMenu == "edit")
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return tb.layoutMenuButton(gtx, th, colors, &tb.ViewBtn, "View", tb.OpenMenu == "view")
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return tb.layoutMenuButton(gtx, th, colors, &tb.HelpBtn, "Help", tb.OpenMenu == "help")
+						}),
+					)
+				},
+			)
+		}),
+	)
+}
+
+func (tb *Toolbar) layoutMenuButton(gtx layout.Context, th *material.Theme, colors Colors,
+	btn *widget.Clickable, label string, active bool) layout.Dimensions {
+
+	bg := colors.BgSecondary
+	if active {
+		bg = colors.BgHover
+	}
+	if btn.Hovered() && !active {
+		bg = blendColor(colors.BgSecondary, colors.BgHover, 0.5)
+	}
+
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := image.Pt(gtx.Constraints.Min.X, gtx.Constraints.Min.Y)
+			defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+			paint.ColorOp{Color: bg}.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{
+					Top: unit.Dp(4), Bottom: unit.Dp(4),
+					Left: unit.Dp(8), Right: unit.Dp(8),
+				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Label(th, unit.Sp(13), label)
+					lbl.Color = colors.TextPrimary
+					return lbl.Layout(gtx)
+				})
+			})
+		}),
+	)
+}
+
+func (tb *Toolbar) layoutToolbarRow(gtx layout.Context, th *material.Theme, colors Colors, autoScroll bool) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			size := image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)
 			defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
@@ -46,45 +229,108 @@ func (tb *Toolbar) Layout(gtx layout.Context, th *material.Theme, colors Colors,
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{
-				Top: unit.Dp(4), Bottom: unit.Dp(4),
+				Top: unit.Dp(3), Bottom: unit.Dp(3),
 				Left: unit.Dp(8), Right: unit.Dp(8),
 			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Spacing: layout.SpaceEnd}.Layout(gtx,
-					// Open file button
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						btn := material.Button(th, &tb.OpenBtn, "📂 Open")
-						btn.Background = colors.Accent
-						btn.TextSize = unit.Sp(13)
-						btn.Inset = layout.Inset{
-							Top: unit.Dp(4), Bottom: unit.Dp(4),
-							Left: unit.Dp(10), Right: unit.Dp(10),
-						}
-						return btn.Layout(gtx)
-					}),
-					// Spacer
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Spacer{Width: unit.Dp(16)}.Layout(gtx)
-					}),
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					// Follow/tail checkbox
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								chk := material.CheckBox(th, &tb.FollowChk, "")
-								chk.Size = unit.Dp(18)
-								chk.IconColor = colors.Accent
-								return chk.Layout(gtx)
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Label(th, unit.Sp(13), "Follow tail")
-								lbl.Color = colors.TextSecondary
-								return lbl.Layout(gtx)
-							}),
-						)
+						chk := material.CheckBox(th, &tb.FollowChk, "Follow tail")
+						chk.Size = unit.Dp(18)
+						chk.IconColor = colors.Accent
+						chk.TextSize = unit.Sp(13)
+						chk.Color = colors.TextSecondary
+						return chk.Layout(gtx)
 					}),
 				)
 			})
 		}),
 	)
+}
 
-	return action, dims
+func (tb *Toolbar) layoutDropdown(gtx layout.Context, th *material.Theme, colors Colors) layout.Dimensions {
+	items, ok := tb.menuItems[tb.OpenMenu]
+	if !ok || len(items) == 0 {
+		return layout.Dimensions{}
+	}
+
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := image.Pt(gtx.Constraints.Min.X, gtx.Constraints.Min.Y)
+			defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+			paint.ColorOp{Color: colors.BgSurface}.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			// Draw border
+			children := make([]layout.FlexChild, 0, len(items))
+			for _, mi := range items {
+				mi := mi
+				if mi.separator {
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(1)))
+						return FillRect(gtx, colors.Border, size)
+					}))
+					continue
+				}
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return tb.layoutMenuItem(gtx, th, colors, mi)
+				}))
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+		}),
+	)
+}
+
+func (tb *Toolbar) layoutMenuItem(gtx layout.Context, th *material.Theme, colors Colors, mi menuItem) layout.Dimensions {
+	bg := colors.BgSurface
+	if mi.clickable.Hovered() {
+		bg = colors.BgHover
+	}
+
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)
+			defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+			paint.ColorOp{Color: bg}.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return material.Clickable(gtx, mi.clickable, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{
+					Top: unit.Dp(6), Bottom: unit.Dp(6),
+					Left: unit.Dp(16), Right: unit.Dp(16),
+				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Label(th, unit.Sp(13), mi.label)
+							lbl.Color = colors.TextPrimary
+							return lbl.Layout(gtx)
+						}),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							if mi.shortcut == "" {
+								return layout.Dimensions{}
+							}
+							return layout.Inset{Left: unit.Dp(32)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Label(th, unit.Sp(11), mi.shortcut)
+								lbl.Color = colors.TextMuted
+								return lbl.Layout(gtx)
+							})
+						}),
+					)
+				})
+			})
+		}),
+	)
+}
+
+func blendColor(a, b color.NRGBA, t float32) color.NRGBA {
+	return color.NRGBA{
+		R: uint8(float32(a.R)*(1-t) + float32(b.R)*t),
+		G: uint8(float32(a.G)*(1-t) + float32(b.G)*t),
+		B: uint8(float32(a.B)*(1-t) + float32(b.B)*t),
+		A: uint8(float32(a.A)*(1-t) + float32(b.A)*t),
+	}
 }

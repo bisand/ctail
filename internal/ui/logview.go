@@ -61,6 +61,14 @@ func (lv *LogView) ScrollBy(delta int) {
 	lv.List.Position.Offset = 0
 }
 
+// ScrollToEnd scrolls to the very end of the list.
+func (lv *LogView) ScrollToEnd() {
+	lv.List.ScrollToEnd = true
+	// Set First to a very high number so Gio jumps to end on next frame
+	lv.List.Position.First = 1<<31 - 1
+	lv.List.Position.Offset = 0
+}
+
 // Layout renders the log lines with highlighting.
 func (lv *LogView) Layout(gtx layout.Context, th *material.Theme, colors Colors,
 	lines []tailer.Line, engine *rules.Engine, showLineNumbers bool, fontSize int) layout.Dimensions {

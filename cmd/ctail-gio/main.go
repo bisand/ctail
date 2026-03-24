@@ -87,7 +87,7 @@ func run(w *app.Window, appState *ui.App) error {
 
 			handleKeys(gtx, w, appState, fileExplorer, logView)
 
-			layoutAll(gtx, th, appState, tabBar, toolbar, logView, fileExplorer, maxWindow)
+			layoutAll(gtx, th, appState, tabBar, toolbar, logView, fileExplorer, w, maxWindow)
 
 			// After layout, check scroll thresholds for preloading
 			checkScrollThresholds(appState, logView, maxWindow)
@@ -142,6 +142,7 @@ func handleKeys(gtx layout.Context, w *app.Window, appState *ui.App, fileExplore
 		case ke.Name == key.NameEnd && ke.Modifiers.Contain(key.ModCtrl):
 			appState.SetAutoScroll(true)
 			logView.SetAutoScroll(true)
+			logView.ScrollToEnd()
 
 		case ke.Name == key.NameHome && ke.Modifiers.Contain(key.ModCtrl):
 			appState.SetAutoScroll(false)
@@ -217,7 +218,7 @@ func checkScrollThresholds(appState *ui.App, logView *ui.LogView, maxWindow int)
 
 func layoutAll(gtx layout.Context, th *material.Theme, appState *ui.App,
 	tabBar *ui.TabBar, toolbar *ui.Toolbar, logView *ui.LogView,
-	fileExplorer *explorer.Explorer, maxWindow int) layout.Dimensions {
+	fileExplorer *explorer.Explorer, w *app.Window, maxWindow int) layout.Dimensions {
 
 	appState.Lock()
 	colors := appState.Colors
@@ -258,17 +259,34 @@ func layoutAll(gtx layout.Context, th *material.Theme, appState *ui.App,
 			}
 			return dims
 		}),
-		// Toolbar
+		// Menu bar + toolbar
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			action, dims := toolbar.Layout(gtx, th, colors, autoScroll)
-			if action == ui.ToolbarOpen {
+			switch action {
+			case ui.ToolbarOpen:
 				go openFileDialog(appState, fileExplorer)
-			}
-			// Handle follow checkbox toggle
-			if toolbar.FollowChk.Value != autoScroll {
+			case ui.ToolbarCloseTab:
+				appState.Lock()
+				idx := appState.Active
+				appState.Unlock()
+				if idx >= 0 {
+					appState.CloseTab(idx)
+				}
+			case ui.ToolbarQuit:
+				w.Perform(system.ActionClose)
+			case ui.ToolbarSettings:
+				// TODO: open settings panel
+			case ui.ToolbarToggleTheme:
+				appState.ToggleTheme()
+			case ui.ToolbarAbout:
+				// TODO: show about dialog
+			case ui.ToolbarFollowChanged:
 				newVal := toolbar.FollowChk.Value
 				appState.SetAutoScroll(newVal)
 				logView.SetAutoScroll(newVal)
+				if newVal {
+					logView.ScrollToEnd()
+				}
 			}
 			return dims
 		}),

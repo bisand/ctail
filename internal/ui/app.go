@@ -239,6 +239,20 @@ func (a *App) SetAutoScroll(on bool) {
 	}
 }
 
+// ToggleTheme switches between dark and light theme mode.
+func (a *App) ToggleTheme() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.Settings.ThemeMode == "light" {
+		a.Settings.ThemeMode = "dark"
+	} else {
+		a.Settings.ThemeMode = "light"
+	}
+	a.Colors = loadColors(a.Config, a.Settings)
+	// Persist the setting
+	_ = a.Config.SaveSettings(a.Settings)
+}
+
 const (
 	FetchBatch    = 200
 	MaxCachedPages = 2
