@@ -28,6 +28,7 @@ type TabInfo struct {
 	FileName string `json:"fileName"`
 	Profile  string `json:"profile"`
 	tailer   *tailer.Tailer
+	throttle *lineThrottle
 }
 
 // App is the main application struct bound to Wails
@@ -46,6 +47,54 @@ type App struct {
 	stopWinTracker    chan struct{}
 	stopUpdateChecker chan struct{}
 	copilotCancel     context.CancelFunc // cancels a running device-flow poll
+}
+
+// lineThrottle batches line events per tab and flushes at most once per interval.
+// This prevents event flooding from overwhelming the Wails IPC bridge and WebKit
+// renderer, especially after VPN reconnections when all tabs reread simultaneously.
+type lineThrottle struct {
+	mu       sync.Mutex
+	pending  []tailer.Line
+	timer    *time.Timer
+	interval time.Duration
+	flush    func([]tailer.Line)
+}
+
+func newLineThrottle(interval time.Duration, flush func([]tailer.Line)) *lineThrottle {
+	return &lineThrottle{
+		interval: interval,
+		flush:    flush,
+	}
+}
+
+func (lt *lineThrottle) add(lines []tailer.Line) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	lt.pending = append(lt.pending, lines...)
+	if lt.timer == nil {
+		lt.timer = time.AfterFunc(lt.interval, lt.doFlush)
+	}
+}
+
+func (lt *lineThrottle) doFlush() {
+	lt.mu.Lock()
+	batch := lt.pending
+	lt.pending = nil
+	lt.timer = nil
+	lt.mu.Unlock()
+	if len(batch) > 0 {
+		lt.flush(batch)
+	}
+}
+
+func (lt *lineThrottle) stop() {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	if lt.timer != nil {
+		lt.timer.Stop()
+		lt.timer = nil
+	}
+	lt.pending = nil
 }
 
 // UpdateCheckResult is returned by ManualCheckForUpdates for the frontend dialog
@@ -122,6 +171,9 @@ func (a *App) shutdown(ctx context.Context) {
 	done := make(chan struct{})
 	go func() {
 		for _, tab := range tabsCopy {
+			if tab.throttle != nil {
+				tab.throttle.stop()
+			}
 			if tab.tailer != nil {
 				tab.tailer.Stop()
 			}
@@ -377,20 +429,27 @@ func (a *App) OpenTab(filePath string) (string, error) {
 
 	t := tailer.New(filePath, pollInterval, settings.BufferSize)
 
+	// Per-tab line event throttle: batch lines and emit at most once per 100ms
+	// to prevent IPC/rendering flooding after VPN reconnections.
+	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
+			"tabId": id,
+			"lines": lines,
+		})
+	})
+
 	tab := &TabInfo{
 		ID:       id,
 		FilePath: filePath,
 		FileName: filepath.Base(filePath),
 		Profile:  "Common Logs",
 		tailer:   t,
+		throttle: throttle,
 	}
 
 	// Set up callbacks
 	t.OnLines(func(lines []tailer.Line) {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
-			"tabId": id,
-			"lines": lines,
-		})
+		throttle.add(lines)
 	})
 
 	t.OnTruncated(func() {
@@ -444,6 +503,7 @@ func (a *App) CloseTab(tabID string) {
 	a.mu.Unlock()
 
 	if ok && tab.tailer != nil {
+		tab.throttle.stop()
 		go tab.tailer.Stop()
 	}
 }

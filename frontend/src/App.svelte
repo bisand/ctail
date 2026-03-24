@@ -110,10 +110,28 @@
       console.error('Failed to load profiles:', e);
     }
 
-    // Listen for tailer events
+    // Listen for tailer events — batch line events per animation frame to
+    // prevent store/DOM update flooding from overwhelming WebKit's renderer.
+    const pendingLines = new Map();
+    let lineRafScheduled = false;
+
+    function flushPendingLines() {
+      lineRafScheduled = false;
+      for (const [tabId, lines] of pendingLines) {
+        tabStore.appendLines(tabId, lines);
+      }
+      pendingLines.clear();
+    }
+
     EventsOn('tailer:lines', (data) => {
       if (data.tabId && data.lines) {
-        tabStore.appendLines(data.tabId, data.lines);
+        const existing = pendingLines.get(data.tabId) || [];
+        existing.push(...data.lines);
+        pendingLines.set(data.tabId, existing);
+        if (!lineRafScheduled) {
+          lineRafScheduled = true;
+          requestAnimationFrame(flushPendingLines);
+        }
       }
     });
 
@@ -254,6 +272,24 @@
     window.addEventListener('keydown', handleGlobalKeydown, true);
     window.addEventListener('keyup', handleGlobalKeyup, true);
     window.addEventListener('ctail:open-ai', () => { showAI = true; });
+
+    // WebKit repaint recovery: when the page regains visibility (e.g. after
+    // monitor switch, VPN reconnection, or compositor stall), nudge the
+    // renderer to repaint by toggling a CSS transform.
+    function forceRepaint() {
+      const el = document.documentElement;
+      el.style.transform = 'translateZ(0)';
+      requestAnimationFrame(() => {
+        el.style.transform = '';
+      });
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) forceRepaint();
+    });
+
+    window.addEventListener('focus', forceRepaint);
+    window.addEventListener('resize', forceRepaint);
 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);
