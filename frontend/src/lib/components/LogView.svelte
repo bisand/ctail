@@ -43,6 +43,7 @@
   const MAX_CACHED_PAGES = 2;
   let swapping = false;
   let prefetching = false;
+  let programmaticScroll = false;
 
   // Per-tab scroll position tracking
   const scrollPositions = new Map();
@@ -232,8 +233,12 @@
 
     tabStore.prependLines(tabId, page, MAX_WINDOW);
     cache.after = [];
-    // Set scrollTop before tick to avoid a frame with wrong position
-    if (container) container.scrollTop = prevScrollTop + adjustment;
+    // Suppress handleScroll during programmatic adjustment to prevent feedback
+    if (container) {
+      programmaticScroll = true;
+      container.scrollTop = prevScrollTop + adjustment;
+      programmaticScroll = false;
+    }
     await tick();
     if (container) updateVisibleRange();
     swapping = false;
@@ -253,12 +258,14 @@
 
     tabStore.appendRangeLines(tabId, page, MAX_WINDOW);
     cache.before = [];
-    // Pre-calculate trim and adjust scrollTop before tick
+    // Suppress handleScroll during programmatic adjustment to prevent feedback
     if (container) {
       const newSize = Math.min(prevBufferSize + page.length, MAX_WINDOW);
       const trimmed = (prevBufferSize + page.length) - newSize;
       if (trimmed > 0) {
+        programmaticScroll = true;
         container.scrollTop = prevScrollTop - trimmed * lineHeight;
+        programmaticScroll = false;
       }
     }
     await tick();
@@ -288,7 +295,11 @@
       const adjustment = olderLines.length * lineHeight;
       tabStore.prependLines(tabId, olderLines, MAX_WINDOW);
       clearCache(tabId);
-      if (container) container.scrollTop = prevScrollTop + adjustment;
+      if (container) {
+        programmaticScroll = true;
+        container.scrollTop = prevScrollTop + adjustment;
+        programmaticScroll = false;
+      }
       await tick();
       if (container) updateVisibleRange();
     } catch (e) {
@@ -323,7 +334,9 @@
         const newSize = Math.min(prevBufferSize + newerLines.length, MAX_WINDOW);
         const trimmed = (prevBufferSize + newerLines.length) - newSize;
         if (trimmed > 0) {
+          programmaticScroll = true;
           container.scrollTop = prevScrollTop - trimmed * lineHeight;
+          programmaticScroll = false;
         }
       }
       await tick();
@@ -339,7 +352,7 @@
   }
 
   function handleScroll() {
-    if (!container || !currentTab) return;
+    if (!container || !currentTab || programmaticScroll) return;
 
     updateVisibleRange();
 
@@ -766,6 +779,7 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: auto;
+    overflow-anchor: none;
     overscroll-behavior: none;
     padding: 4px 0;
     contain: size;
