@@ -587,10 +587,10 @@ func (ca *ctailApp) fetchEarlierLines(tab *logTab) {
 		tab.fetching = false
 		ca.mu.Unlock()
 
-		// Scroll offset adjustment: shift down by the number of prepended lines
-		// Fyne's List widget manages its own scroll, so we just refresh
-		tab.list.Refresh()
-		ca.updateStatusBar()
+		fyne.Do(func() {
+			tab.list.Refresh()
+			ca.updateStatusBar()
+		})
 	}()
 }
 
@@ -629,8 +629,10 @@ func (ca *ctailApp) fetchLaterLines(tab *logTab, lastLineNum int64) {
 		tab.fetching = false
 		ca.mu.Unlock()
 
-		tab.list.Refresh()
-		ca.updateStatusBar()
+		fyne.Do(func() {
+			tab.list.Refresh()
+			ca.updateStatusBar()
+		})
 	}()
 }
 
@@ -793,7 +795,7 @@ func (ca *ctailApp) openFile(filePath string) {
 		}
 	}
 
-	// Wire callbacks
+	// Wire callbacks — all UI updates must go through fyne.Do()
 	t.OnLines(func(_ []tailer.Line) {
 		ca.mu.Lock()
 		tab.lines = t.GetLines()
@@ -801,11 +803,13 @@ func (ca *ctailApp) openFile(filePath string) {
 		shouldScroll := tab.autoScroll
 		ca.mu.Unlock()
 		updateFileSize()
-		tab.list.Refresh()
-		if shouldScroll {
-			tab.list.ScrollToBottom()
-		}
-		ca.updateStatusBar()
+		fyne.Do(func() {
+			tab.list.Refresh()
+			if shouldScroll {
+				tab.list.ScrollToBottom()
+			}
+			ca.updateStatusBar()
+		})
 	})
 	t.OnTruncated(func() {
 		ca.mu.Lock()
@@ -813,8 +817,10 @@ func (ca *ctailApp) openFile(filePath string) {
 		tab.total = t.GetTotalLines()
 		ca.mu.Unlock()
 		updateFileSize()
-		tab.list.Refresh()
-		ca.updateStatusBar()
+		fyne.Do(func() {
+			tab.list.Refresh()
+			ca.updateStatusBar()
+		})
 	})
 	t.OnReady(func() {
 		ca.mu.Lock()
@@ -824,11 +830,13 @@ func (ca *ctailApp) openFile(filePath string) {
 		shouldScroll := tab.autoScroll
 		ca.mu.Unlock()
 		updateFileSize()
-		tab.list.Refresh()
-		if shouldScroll {
-			tab.list.ScrollToBottom()
-		}
-		ca.updateStatusBar()
+		fyne.Do(func() {
+			tab.list.Refresh()
+			if shouldScroll {
+				tab.list.ScrollToBottom()
+			}
+			ca.updateStatusBar()
+		})
 	})
 
 	go func() {
