@@ -16,7 +16,6 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -240,7 +239,8 @@ func (ca *ctailApp) showOpenDialog() {
 		reader.Close()
 		ca.openFile(path)
 	}, ca.mainWindow)
-	fd.SetFilter(storage.NewExtensionFileFilter([]string{})) // all files
+	// No filter — show all files
+	fd.Resize(fyne.NewSize(800, 600))
 	fd.Show()
 }
 
@@ -343,18 +343,27 @@ func (ca *ctailApp) openFile(filePath string) {
 }
 
 func (ca *ctailApp) createLineTemplate() fyne.CanvasObject {
+	fontSize := ca.getTextSize()
+
 	lineNum := canvas.NewText("      ", color.Gray{Y: 128})
 	lineNum.TextStyle = fyne.TextStyle{Monospace: true}
-	lineNum.TextSize = float32(ca.settings.FontSize)
-	if lineNum.TextSize < 8 {
-		lineNum.TextSize = 14
-	}
+	lineNum.TextSize = fontSize
 
 	lineText := canvas.NewText("", color.White)
 	lineText.TextStyle = fyne.TextStyle{Monospace: true}
-	lineText.TextSize = lineNum.TextSize
+	lineText.TextSize = fontSize
 
 	return container.NewHBox(lineNum, lineText)
+}
+
+// getTextSize returns the font size scaled for Fyne's dp system.
+// Config fontSize is in points (8-32), Fyne default is 14dp.
+func (ca *ctailApp) getTextSize() float32 {
+	fs := ca.settings.FontSize
+	if fs < 8 || fs > 32 {
+		fs = 12
+	}
+	return float32(fs)
 }
 
 func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.CanvasObject) {
@@ -369,8 +378,8 @@ func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.C
 	engine := ca.engine
 	ca.mu.Unlock()
 
-	if fontSize < 8 {
-		fontSize = 14
+	if fontSize < 8 || fontSize > 32 {
+		fontSize = 12
 	}
 
 	box := obj.(*fyne.Container)
@@ -633,6 +642,18 @@ func (t *ctailTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 }
 
 func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
+	switch name {
+	case theme.SizeNameText:
+		fs := t.settings.FontSize
+		if fs < 8 || fs > 32 {
+			fs = 12
+		}
+		return float32(fs)
+	case theme.SizeNamePadding:
+		return 3
+	case theme.SizeNameLineSpacing:
+		return 1
+	}
 	return theme.DefaultTheme().Size(name)
 }
 
