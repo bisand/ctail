@@ -342,7 +342,6 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 			ca.settings.FontSize = fs
 			newSettings := ca.settings
 			ca.mu.Unlock()
-			ca.fyneApp.Settings().SetTheme(&ctailTheme{cfg: ca.cfg, settings: newSettings})
 			_ = ca.cfg.SaveSettings(newSettings)
 			ca.refreshAllTabs()
 		}
@@ -1176,12 +1175,6 @@ func (t *ctailTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 
 func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
-	case theme.SizeNameText:
-		fs := t.settings.FontSize
-		if fs < 8 || fs > 32 {
-			fs = 12
-		}
-		return float32(fs) * 0.65
 	case theme.SizeNamePadding:
 		return 2
 	case theme.SizeNameInnerPadding:
