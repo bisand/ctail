@@ -446,7 +446,7 @@
     wrapper.appendChild(fragment);
     const lineNumbers = wrapper.querySelectorAll('.line-number');
     lineNumbers.forEach(el => el.remove());
-    const logLines = wrapper.querySelectorAll('.log-line');
+    const logLines = wrapper.querySelectorAll('.line-content');
     if (logLines.length > 0) {
       return Array.from(logLines).map(el => el.textContent).join('\n');
     }
