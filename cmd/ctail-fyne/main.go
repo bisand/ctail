@@ -111,6 +111,7 @@ type ctailApp struct {
 	cfg      *config.Manager
 	settings config.AppSettings
 	engine   *rules.Engine
+	theme    *ctailTheme
 
 	tabs       []*logTab
 	activeTab  int
@@ -123,8 +124,6 @@ type ctailApp struct {
 	settingsPanelWidget fyne.CanvasObject
 	settingsVisible     bool
 	contentWrapper      *fyne.Container
-
-	selectedLineText string // last selected line text for copy
 }
 
 // logTab represents one open file tab.
@@ -160,10 +159,12 @@ func main() {
 	engine := loadRulesEngine(cfg, settings)
 
 	fyneApp := app.NewWithID("com.ctail.app")
-	fyneApp.Settings().SetTheme(&ctailTheme{
-		cfg:      cfg,
-		settings: settings,
-	})
+	ct := &ctailTheme{
+		cfg:           cfg,
+		settings:      settings,
+		dynamicColors: make(map[fyne.ThemeColorName]color.Color),
+	}
+	fyneApp.Settings().SetTheme(ct)
 
 	w := fyneApp.NewWindow("ctail")
 	w.Resize(fyne.NewSize(1200, 800))
@@ -174,6 +175,7 @@ func main() {
 		cfg:        cfg,
 		settings:   settings,
 		engine:     engine,
+		theme:      ct,
 		activeTab:  -1,
 	}
 
@@ -364,6 +366,7 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 			ca.settings.FontSize = fs
 			newSettings := ca.settings
 			ca.mu.Unlock()
+			ca.theme.updateSettings(newSettings)
 			_ = ca.cfg.SaveSettings(newSettings)
 			ca.refreshAllTabs()
 		}
@@ -426,7 +429,8 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 		ca.settings.Theme = selected
 		newSettings := ca.settings
 		ca.mu.Unlock()
-		ca.fyneApp.Settings().SetTheme(&ctailTheme{cfg: ca.cfg, settings: newSettings})
+		ca.theme.updateSettings(newSettings)
+		ca.fyneApp.Settings().SetTheme(ca.theme)
 		_ = ca.cfg.SaveSettings(newSettings)
 		ca.refreshAllTabs()
 	})
@@ -1015,15 +1019,6 @@ func (ca *ctailApp) setupMenus() {
 	)
 
 	editMenu := fyne.NewMenu("Edit",
-		fyne.NewMenuItem("Copy Line (Ctrl+C)", func() {
-			ca.mu.Lock()
-			text := ca.selectedLineText
-			ca.mu.Unlock()
-			if text != "" {
-				ca.mainWindow.Clipboard().SetContent(text)
-			}
-		}),
-		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Find...", func() {
 			// TODO: implement find
 		}),
@@ -1050,15 +1045,6 @@ func (ca *ctailApp) setupMenus() {
 	ca.mainWindow.SetMainMenu(fyne.NewMainMenu(fileMenu, editMenu, viewMenu, toolsMenu, helpMenu))
 
 	// Keyboard shortcuts
-	ca.mainWindow.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(_ fyne.Shortcut) {
-		ca.mu.Lock()
-		text := ca.selectedLineText
-		ca.mu.Unlock()
-		if text != "" {
-			ca.mainWindow.Clipboard().SetContent(text)
-		}
-	})
-
 	openShortcut := &customShortcut{KeyName: fyne.KeyO, Modifier: fyne.KeyModifierControl}
 	ca.mainWindow.Canvas().AddShortcut(openShortcut, func(_ fyne.Shortcut) {
 		ca.showOpenDialog()
@@ -1152,15 +1138,6 @@ func (ca *ctailApp) openFile(filePath string) {
 			ca.updateLineItem(tab, id, obj)
 		},
 	)
-	tab.list.OnSelected = func(id widget.ListItemID) {
-		ca.mu.Lock()
-		if id >= 0 && id < len(tab.lines) {
-			ca.selectedLineText = tab.lines[id].Text
-		}
-		ca.mu.Unlock()
-		// Deselect to allow re-selecting the same line
-		tab.list.UnselectAll()
-	}
 
 	tab.tabItem = container.NewTabItemWithIcon(tab.name, nil, tab.list)
 
@@ -1248,28 +1225,37 @@ func (ca *ctailApp) openFile(filePath string) {
 	}()
 }
 
+// Custom theme size/color names for log view text
+const (
+	logTextSizeName fyne.ThemeSizeName  = "logText"
+	logNumColorName fyne.ThemeColorName = "logNum"
+)
+
 func (ca *ctailApp) createLineTemplate() fyne.CanvasObject {
-	fontSize := ca.getTextSize()
+	numRT := widget.NewRichText(&widget.TextSegment{
+		Text: "      ",
+		Style: widget.RichTextStyle{
+			ColorName: logNumColorName,
+			SizeName:  logTextSizeName,
+			TextStyle: fyne.TextStyle{Monospace: true},
+			Inline:    true,
+		},
+	})
+	numRT.Wrapping = fyne.TextWrapOff
+	numRT.Truncation = fyne.TextTruncateOff
 
-	lineNum := canvas.NewText("      ", color.Gray{Y: 128})
-	lineNum.TextStyle = fyne.TextStyle{Monospace: true}
-	lineNum.TextSize = fontSize
+	lineRT := widget.NewRichText(&widget.TextSegment{
+		Text: "",
+		Style: widget.RichTextStyle{
+			SizeName:  logTextSizeName,
+			TextStyle: fyne.TextStyle{Monospace: true},
+			Inline:    true,
+		},
+	})
+	lineRT.Wrapping = fyne.TextWrapOff
+	lineRT.Truncation = fyne.TextTruncateOff
 
-	// Inner container holds text segments (rebuilt in updateLineItem)
-	textSegments := container.NewHBox(
-		canvas.NewText("", color.White),
-	)
-
-	return container.NewHBox(lineNum, textSegments)
-}
-
-// getTextSize returns the font size scaled for Fyne's dp system.
-func (ca *ctailApp) getTextSize() float32 {
-	fs := ca.settings.FontSize
-	if fs < 8 || fs > 32 {
-		fs = 12
-	}
-	return float32(fs) * 0.65
+	return container.NewBorder(nil, nil, numRT, nil, lineRT)
 }
 
 func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.CanvasObject) {
@@ -1283,132 +1269,144 @@ func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.C
 	engine := ca.engine
 	ca.mu.Unlock()
 
-	scaledSize := ca.getTextSize()
-
-	box := obj.(*fyne.Container)
-	numLabel := box.Objects[0].(*canvas.Text)
-	segBox := box.Objects[1].(*fyne.Container)
+	border := obj.(*fyne.Container)
+	// Border layout: Objects = [top, bottom, left, right, center]
+	// We used NewBorder(nil, nil, numRT, nil, lineRT)
+	// Objects[0]=numRT (left), Objects[1]=lineRT (center)
+	numRT := border.Objects[0].(*widget.RichText)
+	lineRT := border.Objects[1].(*widget.RichText)
 
 	if showNums {
-		numLabel.Text = fmt.Sprintf("%6d ", line.Number)
-		numLabel.Show()
+		numRT.Segments = []widget.RichTextSegment{
+			&widget.TextSegment{
+				Text: fmt.Sprintf("%6d ", line.Number),
+				Style: widget.RichTextStyle{
+					ColorName: logNumColorName,
+					SizeName:  logTextSizeName,
+					TextStyle: fyne.TextStyle{Monospace: true},
+					Inline:    true,
+				},
+			},
+		}
+		numRT.Show()
 	} else {
-		numLabel.Text = ""
-		numLabel.Hide()
+		numRT.Segments = nil
+		numRT.Hide()
 	}
-	numLabel.TextSize = scaledSize
-	numLabel.Color = color.Gray{Y: 128}
 
 	// Apply highlighting
 	result := engine.Apply(line.Text)
 
 	if len(result.Matches) > 0 && !result.FullLine {
-		// Per-match highlighting: split text into colored segments
-		segments := ca.buildMatchSegments(line.Text, result, scaledSize)
-		segBox.Objects = segments
+		lineRT.Segments = ca.buildRichSegments(line.Text, result)
+	} else if result.FullLine {
+		colorName := fyne.ThemeColorName(theme.ColorNameForeground)
+		if result.Foreground != "" {
+			colorName = ca.theme.registerColor(result.Foreground)
+		}
+		lineRT.Segments = []widget.RichTextSegment{
+			&widget.TextSegment{
+				Text: line.Text,
+				Style: widget.RichTextStyle{
+					ColorName: colorName,
+					SizeName:  logTextSizeName,
+					TextStyle: fyne.TextStyle{Monospace: true, Bold: result.Bold, Italic: result.Italic},
+					Inline:    true,
+				},
+			},
+		}
 	} else {
-		// Full-line or no match: single text object
-		var txt *canvas.Text
-		if len(segBox.Objects) == 1 {
-			if t, ok := segBox.Objects[0].(*canvas.Text); ok {
-				txt = t
-			}
+		lineRT.Segments = []widget.RichTextSegment{
+			&widget.TextSegment{
+				Text: line.Text,
+				Style: widget.RichTextStyle{
+					ColorName: theme.ColorNameForeground,
+					SizeName:  logTextSizeName,
+					TextStyle: fyne.TextStyle{Monospace: true},
+					Inline:    true,
+				},
+			},
 		}
-		if txt == nil {
-			txt = canvas.NewText("", color.White)
-			txt.TextStyle = fyne.TextStyle{Monospace: true}
-		}
-		txt.Text = line.Text
-		txt.TextSize = scaledSize
-		txt.TextStyle.Monospace = true
-
-		if result.FullLine {
-			if result.Foreground != "" {
-				txt.Color = hexToColor(result.Foreground)
-			} else {
-				txt.Color = color.White
-			}
-			txt.TextStyle.Bold = result.Bold
-			txt.TextStyle.Italic = result.Italic
-		} else {
-			txt.Color = color.White
-			txt.TextStyle.Bold = false
-			txt.TextStyle.Italic = false
-		}
-		segBox.Objects = []fyne.CanvasObject{txt}
 	}
 
-	numLabel.Refresh()
-	segBox.Refresh()
+	numRT.Refresh()
+	lineRT.Refresh()
 
 	// Trigger scroll preloading when rendering near buffer edges
 	go ca.checkScrollPreload(tab, id)
 }
 
-// buildMatchSegments splits line text into colored canvas.Text segments
-// based on per-match highlighting results from the rules engine.
-func (ca *ctailApp) buildMatchSegments(text string, result rules.LineResult, fontSize float32) []fyne.CanvasObject {
+// buildRichSegments creates RichText segments for per-match highlighting.
+func (ca *ctailApp) buildRichSegments(text string, result rules.LineResult) []widget.RichTextSegment {
 	type region struct {
-		start, end int
-		fg, bg     string
-		bold, ital bool
+		start, end   int
+		fg           string
+		bold, italic bool
 	}
 
-	// Sort matches by start position
-	matches := result.Matches
-	sortedMatches := make([]region, 0, len(matches))
-	for _, m := range matches {
-		sortedMatches = append(sortedMatches, region{
-			start: m.Start, end: m.End,
-			fg: m.Foreground, bg: m.Background,
-			bold: m.Bold, ital: m.Italic,
-		})
+	sorted := make([]region, 0, len(result.Matches))
+	for _, m := range result.Matches {
+		sorted = append(sorted, region{m.Start, m.End, m.Foreground, m.Bold, m.Italic})
 	}
-	// Simple insertion sort (usually few matches)
-	for i := 1; i < len(sortedMatches); i++ {
-		for j := i; j > 0 && sortedMatches[j].start < sortedMatches[j-1].start; j-- {
-			sortedMatches[j], sortedMatches[j-1] = sortedMatches[j-1], sortedMatches[j]
+	for i := 1; i < len(sorted); i++ {
+		for j := i; j > 0 && sorted[j].start < sorted[j-1].start; j-- {
+			sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
 		}
 	}
 
-	var segments []fyne.CanvasObject
+	defaultStyle := widget.RichTextStyle{
+		ColorName: theme.ColorNameForeground,
+		SizeName:  logTextSizeName,
+		TextStyle: fyne.TextStyle{Monospace: true},
+		Inline:    true,
+	}
+
+	var segments []widget.RichTextSegment
 	pos := 0
-	for _, m := range sortedMatches {
-		if m.start > pos {
-			// Unmatched text before this match
-			seg := canvas.NewText(text[pos:m.start], color.White)
-			seg.TextStyle = fyne.TextStyle{Monospace: true}
-			seg.TextSize = fontSize
-			segments = append(segments, seg)
+	for _, m := range sorted {
+		if m.start > pos && m.start <= len(text) {
+			segments = append(segments, &widget.TextSegment{
+				Text:  text[pos:m.start],
+				Style: defaultStyle,
+			})
 		}
-		// Matched text
-		var fgColor color.Color = color.White
+		colorName := fyne.ThemeColorName(theme.ColorNameForeground)
 		if m.fg != "" {
-			fgColor = hexToColor(m.fg)
+			colorName = ca.theme.registerColor(m.fg)
 		}
-		seg := canvas.NewText(text[m.start:m.end], fgColor)
-		seg.TextStyle = fyne.TextStyle{Monospace: true, Bold: m.bold, Italic: m.ital}
-		seg.TextSize = fontSize
-		segments = append(segments, seg)
+		end := m.end
+		if end > len(text) {
+			end = len(text)
+		}
+		start := m.start
+		if start > len(text) {
+			start = len(text)
+		}
+		segments = append(segments, &widget.TextSegment{
+			Text: text[start:end],
+			Style: widget.RichTextStyle{
+				ColorName: colorName,
+				SizeName:  logTextSizeName,
+				TextStyle: fyne.TextStyle{Monospace: true, Bold: m.bold, Italic: m.italic},
+				Inline:    true,
+			},
+		})
 		if m.end > pos {
 			pos = m.end
 		}
 	}
-	// Remaining unmatched text
 	if pos < len(text) {
-		seg := canvas.NewText(text[pos:], color.White)
-		seg.TextStyle = fyne.TextStyle{Monospace: true}
-		seg.TextSize = fontSize
-		segments = append(segments, seg)
+		segments = append(segments, &widget.TextSegment{
+			Text:  text[pos:],
+			Style: defaultStyle,
+		})
 	}
-
 	if len(segments) == 0 {
-		seg := canvas.NewText(text, color.White)
-		seg.TextStyle = fyne.TextStyle{Monospace: true}
-		seg.TextSize = fontSize
-		segments = append(segments, seg)
+		segments = append(segments, &widget.TextSegment{
+			Text:  text,
+			Style: defaultStyle,
+		})
 	}
-
 	return segments
 }
 
@@ -1494,7 +1492,8 @@ func (ca *ctailApp) toggleTheme() {
 	s := ca.settings
 	ca.mu.Unlock()
 
-	ca.fyneApp.Settings().SetTheme(&ctailTheme{cfg: ca.cfg, settings: s})
+	ca.theme.updateSettings(s)
+	ca.fyneApp.Settings().SetTheme(ca.theme)
 	_ = ca.cfg.SaveSettings(s)
 }
 
@@ -1524,11 +1523,44 @@ func formatFileSize(size int64) string {
 
 // ctailTheme applies colors from the config theme system.
 type ctailTheme struct {
-	cfg      *config.Manager
-	settings config.AppSettings
+	cfg           *config.Manager
+	settings      config.AppSettings
+	mu            sync.RWMutex
+	dynamicColors map[fyne.ThemeColorName]color.Color
+}
+
+func (t *ctailTheme) updateSettings(s config.AppSettings) {
+	t.mu.Lock()
+	t.settings = s
+	t.mu.Unlock()
+}
+
+// registerColor registers a hex color and returns its ThemeColorName.
+func (t *ctailTheme) registerColor(hex string) fyne.ThemeColorName {
+	if hex == "" {
+		return theme.ColorNameForeground
+	}
+	name := fyne.ThemeColorName("dyn-" + strings.TrimPrefix(hex, "#"))
+	t.mu.Lock()
+	t.dynamicColors[name] = hexToColor(hex)
+	t.mu.Unlock()
+	return name
 }
 
 func (t *ctailTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	// Check dynamic colors first
+	t.mu.RLock()
+	if c, ok := t.dynamicColors[name]; ok {
+		t.mu.RUnlock()
+		return c
+	}
+	t.mu.RUnlock()
+
+	// Log line number color
+	if name == logNumColorName {
+		return color.NRGBA{R: 128, G: 128, B: 128, A: 255}
+	}
+
 	tc := t.getColors()
 	switch name {
 	case theme.ColorNameBackground:
@@ -1572,6 +1604,8 @@ func (t *ctailTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 
 func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
+	case theme.SizeNameText:
+		return 12
 	case theme.SizeNamePadding:
 		return 3
 	case theme.SizeNameInnerPadding:
@@ -1580,6 +1614,14 @@ func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
 		return 0
 	case theme.SizeNameSeparatorThickness:
 		return 0
+	case logTextSizeName:
+		t.mu.RLock()
+		fs := t.settings.FontSize
+		t.mu.RUnlock()
+		if fs < 8 || fs > 32 {
+			fs = 12
+		}
+		return float32(fs) * 0.65
 	}
 	return theme.DefaultTheme().Size(name)
 }
