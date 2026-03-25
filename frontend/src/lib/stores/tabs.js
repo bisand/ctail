@@ -87,7 +87,11 @@ function createTabStore() {
         const changes = { totalLines: tab.totalLines + newLines.length };
 
         if (tab.autoScroll) {
-          changes.lines = [...tab.lines, ...newLines];
+          const combined = [...tab.lines, ...newLines];
+          // Evict the same number of lines from the start to keep memory bounded
+          changes.lines = combined.length > tab.lines.length
+            ? combined.slice(newLines.length)
+            : combined;
         }
 
         if (state.activeTabId !== tabId) changes.hasUpdate = true;
