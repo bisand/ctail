@@ -51,6 +51,7 @@ type App struct {
 	stopWinTracker    chan struct{}
 	stopUpdateChecker chan struct{}
 	copilotCancel     context.CancelFunc // cancels a running device-flow poll
+	savedTabCache     []config.TabState  // cached at startup so OpenTab can restore metadata
 }
 
 // lineThrottle batches line events per tab and flushes at most once per interval.
@@ -451,8 +452,22 @@ func (a *App) OpenTab(filePath string) (string, error) {
 		throttle: throttle,
 	}
 
-	// Restore saved metadata (label, color, position) from settings if available
-	if a.config != nil {
+	// Restore saved metadata (label, color, position) from the startup cache
+	// first (immune to persistTabs overwrites), then fall back to current settings.
+	restored := false
+	for _, saved := range a.savedTabCache {
+		if saved.FilePath == filePath {
+			tab.Label = saved.Label
+			tab.Color = saved.Color
+			tab.Position = saved.Position
+			if saved.ProfileID != "" {
+				tab.Profile = saved.ProfileID
+			}
+			restored = true
+			break
+		}
+	}
+	if !restored && a.config != nil {
 		for _, saved := range a.config.GetSettings().Tabs {
 			if saved.FilePath == filePath {
 				tab.Label = saved.Label
@@ -818,7 +833,9 @@ func (a *App) persistTabs() {
 	_ = a.config.SaveSettingsWithTabs(settings)
 }
 
-// GetSavedTabs returns previously open tabs for restoration
+// GetSavedTabs returns previously open tabs for restoration.
+// Also caches the saved tabs so OpenTab can restore metadata even after
+// persistTabs() overwrites settings during sequential tab opens.
 func (a *App) GetSavedTabs() []config.TabState {
 	if a.config == nil {
 		return nil
@@ -827,6 +844,7 @@ func (a *App) GetSavedTabs() []config.TabState {
 	if !settings.RestoreTabs {
 		return nil
 	}
+	a.savedTabCache = append([]config.TabState(nil), settings.Tabs...)
 	return settings.Tabs
 }
 
