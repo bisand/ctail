@@ -229,12 +229,12 @@ func main() {
 	openBtn := widget.NewButtonWithIcon("Open", theme.FolderOpenIcon(), func() {
 		ca.showOpenDialog()
 	})
-	openBtn.Importance = widget.HighImportance
+	openBtn.Importance = widget.MediumImportance
 
 	settingsBtn := widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), func() {
 		ca.toggleSettingsPanel()
 	})
-	settingsBtn.Importance = widget.MediumImportance
+	settingsBtn.Importance = widget.LowImportance
 
 	brandLabel := widget.NewLabel("ctail")
 
@@ -243,7 +243,7 @@ func main() {
 
 	// Build settings panel
 	ca.settingsPanel = ca.buildSettingsPanel()
-	ca.settingsPanelWidget = newFixedWidth(320, ca.settingsPanel)
+	ca.settingsPanelWidget = newFixedWidth(250, ca.settingsPanel)
 	ca.settingsVisible = false
 
 	// Content wrapper: swapped between full-width and split layout
@@ -1595,6 +1595,12 @@ func (t *ctailTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) 
 }
 
 func (t *ctailTheme) Font(style fyne.TextStyle) fyne.Resource {
+	// Return regular weight even when bold is requested for UI elements
+	// (Fyne hardcodes Bold for tab labels, which looks too heavy on Linux).
+	// Log line rules that set Bold will still get monospace regular.
+	if style.Bold && !style.Monospace {
+		style.Bold = false
+	}
 	return theme.DefaultTheme().Font(style)
 }
 
@@ -1606,6 +1612,12 @@ func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
 	case theme.SizeNameText:
 		return 12
+	case theme.SizeNameHeadingText:
+		return 16
+	case theme.SizeNameSubHeadingText:
+		return 14
+	case theme.SizeNameCaptionText:
+		return 10
 	case theme.SizeNamePadding:
 		return 3
 	case theme.SizeNameInnerPadding:
