@@ -100,6 +100,9 @@ function createTabStore() {
     setColor(tabId, color) {
       update(state => replaceTab(state, tabId, { color }));
     },
+    setFilePath(tabId, filePath, fileName) {
+      update(state => replaceTab(state, tabId, { filePath, fileName, lines: [], totalLines: 0, status: 'loading' }));
+    },
     setLoadingLines(tabId, value) {
       update(state => replaceTab(state, tabId, { loadingLines: value }));
     },

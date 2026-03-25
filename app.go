@@ -451,6 +451,21 @@ func (a *App) OpenTab(filePath string) (string, error) {
 		throttle: throttle,
 	}
 
+	// Restore saved metadata (label, color, position) from settings if available
+	if a.config != nil {
+		for _, saved := range a.config.GetSettings().Tabs {
+			if saved.FilePath == filePath {
+				tab.Label = saved.Label
+				tab.Color = saved.Color
+				tab.Position = saved.Position
+				if saved.ProfileID != "" {
+					tab.Profile = saved.ProfileID
+				}
+				break
+			}
+		}
+	}
+
 	// Set up callbacks
 	t.OnLines(func(lines []tailer.Line) {
 		throttle.add(lines)
@@ -668,6 +683,98 @@ func (a *App) SetTabColor(tabID, color string) {
 	}
 	a.mu.Unlock()
 	a.persistTabs()
+}
+
+// ChangeTabFilePath swaps the file a tab is tailing while preserving all metadata.
+func (a *App) ChangeTabFilePath(tabID, newPath string) error {
+	if newPath == "" {
+		return fmt.Errorf("no file path provided")
+	}
+
+	// Check the new file exists
+	if _, err := os.Stat(newPath); err != nil {
+		return fmt.Errorf("file not accessible: %w", err)
+	}
+
+	a.mu.Lock()
+	tab, ok := a.tabs[tabID]
+	if !ok {
+		a.mu.Unlock()
+		return fmt.Errorf("tab not found: %s", tabID)
+	}
+
+	// Check if another tab already has this file open
+	for _, other := range a.tabs {
+		if other.ID != tabID && other.FilePath == newPath {
+			a.mu.Unlock()
+			return fmt.Errorf("file already open in another tab")
+		}
+	}
+	a.mu.Unlock()
+
+	// Stop old tailer
+	if tab.tailer != nil {
+		tab.throttle.stop()
+		tab.tailer.Stop()
+	}
+
+	// Create new tailer
+	settings := a.config.GetSettings()
+	pollInterval := time.Duration(settings.PollIntervalMs) * time.Millisecond
+	if pollInterval < 100*time.Millisecond {
+		pollInterval = 100 * time.Millisecond
+	}
+
+	t := tailer.New(newPath, pollInterval, settings.BufferSize)
+
+	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
+			"tabId": tabID,
+			"lines": lines,
+		})
+	})
+
+	t.OnLines(func(lines []tailer.Line) {
+		throttle.add(lines)
+	})
+	t.OnTruncated(func() {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
+			"tabId": tabID,
+		})
+	})
+	t.OnError(func(err error) {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:error", map[string]interface{}{
+			"tabId":   tabID,
+			"message": err.Error(),
+		})
+	})
+	t.OnReady(func() {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
+			"tabId": tabID,
+		})
+	})
+	t.OnReconnecting(func() {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
+			"tabId": tabID,
+		})
+	})
+
+	// Update tab in-place — preserves label, color, position, profile
+	a.mu.Lock()
+	tab.FilePath = newPath
+	tab.FileName = filepath.Base(newPath)
+	tab.tailer = t
+	tab.throttle = throttle
+	a.mu.Unlock()
+
+	if err := t.Start(); err != nil {
+		return fmt.Errorf("failed to start tailing: %w", err)
+	}
+
+	a.AddRecentFile(newPath)
+	a.persistTabs()
+
+	return nil
 }
 
 // --- Config API ---

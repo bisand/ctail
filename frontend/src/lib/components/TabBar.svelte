@@ -2,6 +2,8 @@
   import { tabs, activeTabId, tabStore } from '../stores/tabs.js';
   import { CloseTab, RevealInFileManager, SetTabLabel, SetTabColor, SaveTabOrder } from '../../../wailsjs/go/main/App.js';
 
+  let { onAddTab, onChangeFile } = $props();
+
   const TAB_COLORS = [
     '', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'
   ];
@@ -15,8 +17,6 @@
     CloseTab(id);
     tabStore.removeTab(id);
   }
-
-  let { onAddTab } = $props();
 
   // Drag and drop reordering
   let dragIndex = $state(-1);
@@ -180,6 +180,13 @@
   function closeColorPicker() {
     colorPickerTabId = null;
   }
+
+  function ctxChangeFile() {
+    if (ctxTab && onChangeFile) {
+      onChangeFile(ctxTab.id, ctxTab.filePath);
+    }
+    closeCtxMenu();
+  }
 </script>
 
 <svelte:window onclick={(e) => { closeCtxMenu(); closeColorPicker(); }} />
@@ -258,6 +265,9 @@
         Close to the right
       </button>
       <div class="ctx-separator"></div>
+      <button class="ctx-item" onclick={ctxChangeFile}>
+        Change file path…
+      </button>
       <button class="ctx-item" onclick={ctxCopyPath}>
         Copy file path
       </button>

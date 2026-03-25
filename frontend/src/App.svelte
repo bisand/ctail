@@ -7,6 +7,7 @@
   import AboutDialog from './lib/components/AboutDialog.svelte';
   import AIDialog from './lib/components/AIDialog.svelte';
   import UpdateDialog from './lib/components/UpdateDialog.svelte';
+  import ChangeFileDialog from './lib/components/ChangeFileDialog.svelte';
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
@@ -28,6 +29,17 @@
 
   // Update notification state
   let updateAvailable = $state(null);
+
+  // Change file dialog state
+  let showChangeFile = $state(false);
+  let changeFileTabId = $state('');
+  let changeFilePath = $state('');
+
+  function handleChangeFile(tabId, filePath) {
+    changeFileTabId = tabId;
+    changeFilePath = filePath;
+    showChangeFile = true;
+  }
 
   // Ctrl+Tab cycling state
   let isCycling = false;
@@ -406,7 +418,7 @@
     </div>
   {/if}
   <Toolbar onOpenFile={openFile} />
-  <TabBar onAddTab={openFile} />
+  <TabBar onAddTab={openFile} onChangeFile={handleChangeFile} />
   <div class="main-area">
     <LogView />
     {#if $settingsPanelOpen}
@@ -418,6 +430,7 @@
 <AboutDialog bind:show={showAbout} />
 <AIDialog bind:show={showAI} />
 <UpdateDialog bind:show={showUpdateDialog} result={updateCheckResult} />
+<ChangeFileDialog bind:show={showChangeFile} tabId={changeFileTabId} filePath={changeFilePath} />
 
 <style>
   .app {

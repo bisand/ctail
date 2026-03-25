@@ -11,6 +11,8 @@ export function AskAI(arg1:string,arg2:string,arg3:string,arg4:number,arg5:numbe
 
 export function AskAIRules(arg1:string):Promise<config.Profile>;
 
+export function ChangeTabFilePath(arg1:string,arg2:string):Promise<void>;
+
 export function ClearRecentFiles():Promise<void>;
 
 export function CloseTab(arg1:string):Promise<void>;
