@@ -296,12 +296,6 @@
           onchange={e => updateSetting('pollIntervalMs', parseInt(e.target.value))} />
       </label>
       <label>
-        <span>Scroll Buffer (lines)</span>
-        <input type="number" min="100" max="5000" step="100"
-          value={$settings.scrollBuffer || 500}
-          onchange={e => updateSetting('scrollBuffer', parseInt(e.target.value))} />
-      </label>
-      <label>
         <span>Scroll Speed</span>
         <input type="range" min="1" max="10" step="1"
           value={$settings.scrollSpeed || 1}

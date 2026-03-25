@@ -1,5 +1,4 @@
-import { writable, derived, get } from 'svelte/store';
-import { settings } from './settings.js';
+import { writable, derived } from 'svelte/store';
 
 // Immutable helper: replace a tab by id, producing new state/array/object refs
 // so Svelte 5 $derived() detects the change via Object.is().
@@ -80,12 +79,7 @@ function createTabStore() {
         const changes = { totalLines: tab.totalLines + newLines.length };
 
         if (tab.autoScroll) {
-          let merged = [...tab.lines, ...newLines];
-          const maxWindow = get(settings).scrollBuffer || 500;
-          if (merged.length > maxWindow) {
-            merged = merged.slice(merged.length - maxWindow);
-          }
-          changes.lines = merged;
+          changes.lines = [...tab.lines, ...newLines];
         }
 
         if (state.activeTabId !== tabId) changes.hasUpdate = true;
@@ -109,26 +103,11 @@ function createTabStore() {
       if (errorMessage !== undefined) changes.errorMessage = errorMessage;
       update(state => replaceTab(state, tabId, changes));
     },
-    prependLines(tabId, olderLines, maxWindow) {
+    prependLines(tabId, olderLines) {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
         if (!tab || olderLines.length === 0) return state;
-        let merged = [...olderLines, ...tab.lines];
-        if (merged.length > maxWindow) {
-          merged = merged.slice(0, maxWindow);
-        }
-        return replaceTab(state, tabId, { lines: merged });
-      });
-    },
-    appendRangeLines(tabId, newerLines, maxWindow) {
-      update(state => {
-        const tab = state.tabs.find(t => t.id === tabId);
-        if (!tab || newerLines.length === 0) return state;
-        let merged = [...tab.lines, ...newerLines];
-        if (merged.length > maxWindow) {
-          merged = merged.slice(merged.length - maxWindow);
-        }
-        return replaceTab(state, tabId, { lines: merged });
+        return replaceTab(state, tabId, { lines: [...olderLines, ...tab.lines] });
       });
     },
     toggleAutoScroll(tabId) {

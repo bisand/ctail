@@ -39,32 +39,13 @@
   let searchQuery = $state('');
   let searchVisible = $state(false);
 
-  const FETCH_BATCH = 200;
-  const MAX_CACHED_PAGES = 2;
+  const FETCH_BATCH = 1000;
   let swapping = false;
-  let prefetching = false;
   let programmaticScroll = false;
   let lastScrollTop = 0;
 
   // Per-tab scroll position tracking
   const scrollPositions = new Map();
-
-  // --- Prefetch cache: per-tab pages stored ahead/behind scroll buffer ---
-  // Map<tabId, { before: Array<lines[]>, after: Array<lines[]> }>
-  const pageCache = new Map();
-
-  function getCache(tabId) {
-    if (!pageCache.has(tabId)) {
-      pageCache.set(tabId, { before: [], after: [] });
-    }
-    return pageCache.get(tabId);
-  }
-
-  function clearCache(tabId) {
-    pageCache.delete(tabId);
-  }
-
-  let MAX_WINDOW = $derived($settings.scrollBuffer || 500);
 
   let currentTab = $derived($activeTab);
   let lines = $derived(currentTab ? currentTab.lines : []);
@@ -84,7 +65,6 @@
         scrollPositions.set(prevTabId, container.scrollTop);
       }
       // Clear prefetch cache for the tab we're leaving (deferred to avoid lag)
-      if (prevTabId) { const oldId = prevTabId; setTimeout(() => clearCache(oldId), 0); }
       prevTabId = newId;
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
@@ -104,7 +84,7 @@
             updateVisibleRange();
           }
         });
-        prefetchPages(); refreshStats();
+        refreshStats();
       }
     }
   });
@@ -113,7 +93,7 @@
   let windowStart = $derived(lines.length > 0 ? lines[0].number : 0);
   let windowEnd = $derived(lines.length > 0 ? lines[lines.length - 1].number : 0);
   let canScrollBack = $derived(windowStart > 1);
-  let canScrollForward = $derived(!autoScroll && windowEnd < totalLines);
+  let canScrollForward = $derived(!autoScroll && windowEnd > 0 && windowEnd < totalLines);
   let tabStatus = $derived(currentTab ? currentTab.status : null);
   let tabError = $derived(currentTab ? currentTab.errorMessage : '');
 
@@ -174,111 +154,7 @@
     }
   });
 
-  // --- Tier 3: Background prefetch (decoupled from scroll buffer) ---
-  async function prefetchPages() {
-    if (!currentTab || prefetching) return;
-    prefetching = true;
-    const tabId = currentTab.id;
-
-    try {
-      const cache = getCache(tabId);
-
-      // Prefetch pages BEFORE the current scroll buffer
-      while (cache.before.length < MAX_CACHED_PAGES) {
-        const ws = lines.length > 0 ? lines[0].number : 0;
-        // Account for already-cached pages
-        const cachedBefore = cache.before.reduce((sum, p) => sum + p.length, 0);
-        const targetStart = ws - cachedBefore;
-        if (targetStart <= 1) break;
-
-        const fetchStart = Math.max(1, targetStart - FETCH_BATCH);
-        const fetchCount = targetStart - fetchStart;
-        if (fetchCount <= 0) break;
-
-        const page = await GetTabLineRange(tabId, fetchStart, fetchCount);
-        if (!page || page.length === 0) break;
-        if (!currentTab || currentTab.id !== tabId) return;
-
-        cache.before.push(page);
-      }
-
-      // Prefetch pages AFTER the current scroll buffer
-      while (cache.after.length < MAX_CACHED_PAGES) {
-        const we = lines.length > 0 ? lines[lines.length - 1].number : 0;
-        const cachedAfter = cache.after.reduce((sum, p) => sum + p.length, 0);
-        const targetStart = we + cachedAfter + 1;
-
-        const page = await GetTabLineRange(tabId, targetStart, FETCH_BATCH);
-        if (!page || page.length === 0) break;
-        if (!currentTab || currentTab.id !== tabId) return;
-
-        cache.after.push(page);
-      }
-    } catch (e) {
-      console.error('Prefetch error:', e);
-    } finally {
-      prefetching = false;
-    }
-  }
-
-  // --- Swap cached pages into scroll buffer ---
-  async function swapEarlierPage() {
-    if (!currentTab || swapping) return false;
-    const tabId = currentTab.id;
-    const cache = getCache(tabId);
-    if (cache.before.length === 0) return false;
-
-    swapping = true;
-    const page = cache.before.shift();
-    const prevScrollTop = container ? container.scrollTop : 0;
-    const adjustment = page.length * lineHeight;
-
-    tabStore.prependLines(tabId, page, MAX_WINDOW);
-    cache.after = [];
-    // Suppress handleScroll during programmatic adjustment to prevent feedback
-    if (container) {
-      programmaticScroll = true;
-      container.scrollTop = prevScrollTop + adjustment;
-      lastScrollTop = container.scrollTop;
-      programmaticScroll = false;
-    }
-    await tick();
-    if (container) updateVisibleRange();
-    swapping = false;
-    return true;
-  }
-
-  async function swapLaterPage() {
-    if (!currentTab || swapping) return false;
-    const tabId = currentTab.id;
-    const cache = getCache(tabId);
-    if (cache.after.length === 0) return false;
-
-    swapping = true;
-    const page = cache.after.shift();
-    const prevBufferSize = lines.length;
-    const prevScrollTop = container ? container.scrollTop : 0;
-
-    tabStore.appendRangeLines(tabId, page, MAX_WINDOW);
-    cache.before = [];
-    // Suppress handleScroll during programmatic adjustment to prevent feedback
-    if (container) {
-      const newSize = Math.min(prevBufferSize + page.length, MAX_WINDOW);
-      const trimmed = (prevBufferSize + page.length) - newSize;
-      if (trimmed > 0) {
-        programmaticScroll = true;
-        container.scrollTop = prevScrollTop - trimmed * lineHeight;
-        programmaticScroll = false;
-      }
-      lastScrollTop = container.scrollTop;
-    }
-    await tick();
-    if (container) updateVisibleRange();
-    swapping = false;
-    return true;
-  }
-
-  // --- Fetch fallback (when cache is empty) ---
+  // --- Fetch earlier lines when user scrolls near top ---
   async function fetchEarlierLines() {
     if (!currentTab || swapping) return;
     const tabId = currentTab.id;
@@ -297,8 +173,7 @@
 
       const prevScrollTop = container ? container.scrollTop : 0;
       const adjustment = olderLines.length * lineHeight;
-      tabStore.prependLines(tabId, olderLines, MAX_WINDOW);
-      clearCache(tabId);
+      tabStore.prependLines(tabId, olderLines);
       if (container) {
         programmaticScroll = true;
         container.scrollTop = prevScrollTop + adjustment;
@@ -317,6 +192,7 @@
     }
   }
 
+  // --- Fetch later lines when user scrolls near bottom (not in auto-scroll) ---
   async function fetchLaterLines() {
     if (!currentTab || swapping) return;
     const tabId = currentTab.id;
@@ -326,25 +202,13 @@
     try {
       const we = lines.length > 0 ? lines[lines.length - 1].number : 0;
       const fetchStart = we + 1;
-      const prevBufferSize = lines.length;
-      const prevScrollTop = container ? container.scrollTop : 0;
 
       const newerLines = await GetTabLineRange(tabId, fetchStart, FETCH_BATCH);
       if (!newerLines || newerLines.length === 0) return;
       if (!currentTab || currentTab.id !== tabId) return;
 
-      tabStore.appendRangeLines(tabId, newerLines, MAX_WINDOW);
-      clearCache(tabId);
-      if (container) {
-        const newSize = Math.min(prevBufferSize + newerLines.length, MAX_WINDOW);
-        const trimmed = (prevBufferSize + newerLines.length) - newSize;
-        if (trimmed > 0) {
-          programmaticScroll = true;
-          container.scrollTop = prevScrollTop - trimmed * lineHeight;
-          programmaticScroll = false;
-        }
-        lastScrollTop = container.scrollTop;
-      }
+      const merged = [...lines, ...newerLines];
+      tabStore.setLines(tabId, merged);
       await tick();
       if (container) updateVisibleRange();
     } catch (e) {
@@ -362,13 +226,11 @@
 
     updateVisibleRange();
 
-    // Track scroll direction: negative = scrolling up, positive = scrolling down
     const scrollDelta = container.scrollTop - lastScrollTop;
     lastScrollTop = container.scrollTop;
 
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
 
-    // Auto-scroll toggle is immediate
     if (isAtBottom && !atBottom) {
       tabStore.setAutoScroll(currentTab.id, false);
     }
@@ -377,7 +239,11 @@
     }
     isAtBottom = atBottom;
 
-    checkAndFetch(scrollDelta);
+    if (scrollDelta < 0) {
+      checkAndFetchUp();
+    } else if (scrollDelta > 0) {
+      checkAndFetchDown();
+    }
   }
 
   let scrollSpeed = $derived($settings.scrollSpeed || 1);
@@ -409,46 +275,31 @@
     }
 
     if (e.deltaY < 0 && container.scrollTop <= 0 && canScrollBack) {
-      checkAndFetch(-1);
+      checkAndFetchUp();
     }
     if (e.deltaY > 0 && container.scrollTop + container.clientHeight >= container.scrollHeight - 5 && canScrollForward) {
-      checkAndFetch(1);
+      checkAndFetchDown();
     }
   }
 
-  // scrollDirection: negative = user scrolling up, positive = scrolling down
-  function checkAndFetch(scrollDirection = 0) {
-    if (!container || !currentTab || swapping) return;
+  // Fetch earlier lines when user scrolls near the top of the buffer
+  function checkAndFetchUp() {
+    if (!container || !currentTab || swapping || !canScrollBack) return;
 
-    const bufferSize = filteredLines.length;
-    if (bufferSize === 0) return;
+    const triggerZone = container.scrollHeight * 0.2;
+    if (container.scrollTop < triggerZone) {
+      fetchEarlierLines();
+    }
+  }
 
-    const lh = lineHeight;
-    if (lh <= 0) return;
-    const firstVisibleIdx = Math.floor(container.scrollTop / lh);
-    const visibleCount = Math.ceil(container.clientHeight / lh);
-    const lastVisibleIdx = firstVisibleIdx + visibleCount;
+  // Fetch later lines when user scrolls near the bottom of the buffer
+  function checkAndFetchDown() {
+    if (!container || !currentTab || swapping || !canScrollForward) return;
 
-    const triggerTop = Math.floor(bufferSize / 4);
-    const triggerBottom = Math.floor(bufferSize * 3 / 4);
-
-    // Only trigger the fetch matching scroll direction to prevent
-    // oscillation: a backward swap shifts scrollTop up which could
-    // push lastVisibleIdx past triggerBottom, and vice versa.
-    if (scrollDirection <= 0 && firstVisibleIdx < triggerTop && canScrollBack) {
-      // Try instant swap from cache first, fall back to async fetch
-      swapEarlierPage().then(swapped => {
-        if (!swapped) fetchEarlierLines();
-        prefetchPages();
-      });
-    } else if (scrollDirection >= 0 && lastVisibleIdx > triggerBottom && canScrollForward) {
-      swapLaterPage().then(swapped => {
-        if (!swapped) fetchLaterLines();
-        prefetchPages();
-      });
-    } else {
-      // In the middle — good time to top up the cache
-      prefetchPages();
+    const bottomDistance = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const triggerZone = container.scrollHeight * 0.2;
+    if (bottomDistance < triggerZone) {
+      fetchLaterLines();
     }
   }
 
@@ -472,10 +323,9 @@
     if (!currentTab) return;
     try {
       tabStore.setAutoScroll(currentTab.id, false);
-      const startLines = await GetTabLineRange(currentTab.id, 1, MAX_WINDOW);
+      const startLines = await GetTabLineRange(currentTab.id, 1, FETCH_BATCH);
       if (startLines && startLines.length > 0) {
         tabStore.setLines(currentTab.id, startLines);
-        clearCache(currentTab.id);
       }
       await tick();
       if (container) {
@@ -493,11 +343,10 @@
     try {
       const total = await GetTabTotalLines(currentTab.id);
       tabStore.setTotalLines(currentTab.id, total);
-      const fetchStart = Math.max(1, total - MAX_WINDOW + 1);
-      const latestLines = await GetTabLineRange(currentTab.id, fetchStart, MAX_WINDOW);
+      const fetchStart = Math.max(1, total - FETCH_BATCH + 1);
+      const latestLines = await GetTabLineRange(currentTab.id, fetchStart, FETCH_BATCH);
       if (latestLines && latestLines.length > 0) {
         tabStore.setLines(currentTab.id, latestLines, total);
-        clearCache(currentTab.id);
       }
       await tick();
       if (container) {
@@ -570,7 +419,8 @@
     // Force Svelte to flush DOM updates (spacers) before the browser paints,
     // preventing blank gaps after large jumps like PgUp/PgDn.
     await tick();
-    checkAndFetch(scrollDelta);
+    if (scrollDelta < 0) checkAndFetchUp();
+    else if (scrollDelta > 0) checkAndFetchDown();
   }
 
   // Context menu state

@@ -14,7 +14,7 @@
   import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
   import { loadAndApplyTheme } from './lib/utils/themes.js';
 
-  let scrollBuffer = 500;
+  const INITIAL_TAIL = 1000;
 
   // About dialog state
   let showAbout = $state(false);
@@ -68,8 +68,8 @@
     pendingInitLoads.add(tabId);
     try {
       const total = await GetTabTotalLines(tabId);
-      const fetchStart = Math.max(1, total - scrollBuffer + 1);
-      const lines = await GetTabLineRange(tabId, fetchStart, scrollBuffer);
+      const fetchStart = Math.max(1, total - INITIAL_TAIL + 1);
+      const lines = await GetTabLineRange(tabId, fetchStart, INITIAL_TAIL);
       if (lines && lines.length > 0) {
         tabStore.setLines(tabId, lines, total);
       }
@@ -88,7 +88,6 @@
       const s = await GetSettings();
       if (s) {
         settings.set(s);
-        scrollBuffer = s.scrollBuffer || 500;
         if (s.theme) {
           const themeName = s.theme || 'catppuccin';
           const themeMode = s.themeMode || 'dark';
