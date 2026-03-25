@@ -407,7 +407,7 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	})
 	profileSelect.SetSelected(s.ActiveProfile)
 
-	// Build forms using widget.NewCard + widget.Form (Fyne demo style)
+	// Build forms
 	displayForm := widget.NewForm(
 		&widget.FormItem{Text: "Font Size", Widget: fontSizeEntry, HintText: "8–32"},
 		&widget.FormItem{Text: "Line Numbers", Widget: lineNumChk},
@@ -415,7 +415,6 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 		&widget.FormItem{Text: "Theme", Widget: themeSelect},
 		&widget.FormItem{Text: "Profile", Widget: profileSelect},
 	)
-	displayCard := widget.NewCard("Display", "", displayForm)
 
 	scrollForm := widget.NewForm(
 		&widget.FormItem{Text: "Poll Interval", Widget: pollEntry, HintText: "ms (≥50)"},
@@ -423,14 +422,28 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 		&widget.FormItem{Text: "Scroll Speed", Widget: scrollSpeedSlider},
 		&widget.FormItem{Text: "Smooth Scroll", Widget: smoothScrollChk},
 	)
-	scrollCard := widget.NewCard("Scrolling", "", scrollForm)
 
 	generalForm := widget.NewForm(
 		&widget.FormItem{Text: "Restore Tabs", Widget: restoreTabsChk},
 	)
-	generalCard := widget.NewCard("General", "", generalForm)
 
-	content := container.NewVBox(displayCard, scrollCard, generalCard)
+	// Lightweight section headers
+	sectionLabel := func(text string) fyne.CanvasObject {
+		l := widget.NewLabel(text)
+		l.TextStyle = fyne.TextStyle{Bold: true}
+		return l
+	}
+
+	content := container.NewVBox(
+		sectionLabel("Display"),
+		displayForm,
+		widget.NewSeparator(),
+		sectionLabel("Scrolling"),
+		scrollForm,
+		widget.NewSeparator(),
+		sectionLabel("General"),
+		generalForm,
+	)
 	return container.NewVScroll(content)
 }
 
@@ -445,28 +458,223 @@ func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
 
 	rulesList := container.NewVBox()
 
-	refreshRules := func(profileName string) {
-		rulesList.Objects = nil
-		if p, ok := ca.cfg.GetProfile(profileName); ok {
-			for _, r := range p.Rules {
-				rule := r
-				enabledChk := widget.NewCheck("", nil)
-				enabledChk.Checked = rule.Enabled
+	// Forward-declare refreshRules so it can be referenced in closures
+	var refreshRules func(string)
 
-				typeBadge := widget.NewLabel("[" + rule.MatchType + "]")
-				typeBadge.TextStyle = fyne.TextStyle{Bold: true}
+	// showRuleEditor opens a dialog to edit or create a rule.
+	showRuleEditor := func(profileName string, rule *config.Rule, isNew bool) {
+		nameEntry := widget.NewEntry()
+		nameEntry.SetPlaceHolder("Rule name")
+		patternEntry := widget.NewEntry()
+		patternEntry.SetPlaceHolder("Regex pattern")
+		matchTypeSelect := widget.NewSelect([]string{"line", "match"}, nil)
+		fgEntry := widget.NewEntry()
+		fgEntry.SetPlaceHolder("#ff6b6b")
+		bgEntry := widget.NewEntry()
+		bgEntry.SetPlaceHolder("#3d1f1f")
+		boldChk := widget.NewCheck("", nil)
+		italicChk := widget.NewCheck("", nil)
+		enabledChk := widget.NewCheck("", nil)
 
-				nameLabel := widget.NewLabel(rule.Name)
-				nameLabel.TextStyle = fyne.TextStyle{Bold: true}
+		if rule != nil {
+			nameEntry.SetText(rule.Name)
+			patternEntry.SetText(rule.Pattern)
+			matchTypeSelect.SetSelected(rule.MatchType)
+			fgEntry.SetText(rule.Foreground)
+			bgEntry.SetText(rule.Background)
+			boldChk.Checked = rule.Bold
+			italicChk.Checked = rule.Italic
+			enabledChk.Checked = rule.Enabled
+		} else {
+			matchTypeSelect.SetSelected("line")
+			enabledChk.Checked = true
+		}
 
-				patternLabel := widget.NewLabel(rule.Pattern)
-				patternLabel.TextStyle = fyne.TextStyle{Monospace: true}
-				patternLabel.Wrapping = fyne.TextTruncate
+		form := widget.NewForm(
+			&widget.FormItem{Text: "Name", Widget: nameEntry},
+			&widget.FormItem{Text: "Pattern", Widget: patternEntry, HintText: "regex"},
+			&widget.FormItem{Text: "Match Type", Widget: matchTypeSelect},
+			&widget.FormItem{Text: "Foreground", Widget: fgEntry, HintText: "hex color"},
+			&widget.FormItem{Text: "Background", Widget: bgEntry, HintText: "hex color"},
+			&widget.FormItem{Text: "Bold", Widget: boldChk},
+			&widget.FormItem{Text: "Italic", Widget: italicChk},
+			&widget.FormItem{Text: "Enabled", Widget: enabledChk},
+		)
 
-				row := container.NewHBox(enabledChk, typeBadge, nameLabel)
-				item := container.NewVBox(row, patternLabel, widget.NewSeparator())
-				rulesList.Add(item)
+		title := "Edit Rule"
+		if isNew {
+			title = "Add Rule"
+		}
+
+		d := dialog.NewCustomConfirm(title, "Save", "Cancel", form, func(ok bool) {
+			if !ok {
+				return
 			}
+			p, exists := ca.cfg.GetProfile(profileName)
+			if !exists {
+				return
+			}
+
+			newRule := config.Rule{
+				Name:       nameEntry.Text,
+				Pattern:    patternEntry.Text,
+				MatchType:  matchTypeSelect.Selected,
+				Foreground: fgEntry.Text,
+				Background: bgEntry.Text,
+				Bold:       boldChk.Checked,
+				Italic:     italicChk.Checked,
+				Enabled:    enabledChk.Checked,
+			}
+
+			if isNew {
+				newRule.ID = fmt.Sprintf("rule-%d", time.Now().UnixMilli())
+				newRule.Priority = len(p.Rules)
+				p.Rules = append(p.Rules, newRule)
+			} else if rule != nil {
+				newRule.ID = rule.ID
+				newRule.Priority = rule.Priority
+				for i, r := range p.Rules {
+					if r.ID == rule.ID {
+						p.Rules[i] = newRule
+						break
+					}
+				}
+			}
+
+			_ = ca.cfg.SaveProfile(p)
+			ca.mu.Lock()
+			ca.engine = loadRulesEngine(ca.cfg, ca.settings)
+			ca.mu.Unlock()
+			refreshRules(profileName)
+			ca.refreshAllTabs()
+		}, ca.mainWindow)
+		d.Resize(fyne.NewSize(400, 450))
+		d.Show()
+	}
+
+	refreshRules = func(profileName string) {
+		rulesList.Objects = nil
+		p, ok := ca.cfg.GetProfile(profileName)
+		if !ok {
+			rulesList.Refresh()
+			return
+		}
+		for idx, r := range p.Rules {
+			rule := r
+			ruleIdx := idx
+
+			enabledChk := widget.NewCheck("", func(on bool) {
+				pp, exists := ca.cfg.GetProfile(profileName)
+				if !exists || ruleIdx >= len(pp.Rules) {
+					return
+				}
+				pp.Rules[ruleIdx].Enabled = on
+				_ = ca.cfg.SaveProfile(pp)
+				ca.mu.Lock()
+				ca.engine = loadRulesEngine(ca.cfg, ca.settings)
+				ca.mu.Unlock()
+				ca.refreshAllTabs()
+			})
+			enabledChk.Checked = rule.Enabled
+
+			nameLabel := widget.NewLabel(rule.Name)
+			nameLabel.TextStyle = fyne.TextStyle{Bold: true}
+
+			typeBadge := widget.NewLabel("[" + rule.MatchType + "]")
+
+			// Color preview
+			colorInfo := ""
+			if rule.Foreground != "" {
+				colorInfo = "fg:" + rule.Foreground
+			}
+			if rule.Background != "" {
+				if colorInfo != "" {
+					colorInfo += " "
+				}
+				colorInfo += "bg:" + rule.Background
+			}
+
+			editBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
+				showRuleEditor(profileName, &rule, false)
+			})
+			editBtn.Importance = widget.LowImportance
+
+			deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+				pp, exists := ca.cfg.GetProfile(profileName)
+				if !exists {
+					return
+				}
+				for i, rr := range pp.Rules {
+					if rr.ID == rule.ID {
+						pp.Rules = append(pp.Rules[:i], pp.Rules[i+1:]...)
+						break
+					}
+				}
+				_ = ca.cfg.SaveProfile(pp)
+				ca.mu.Lock()
+				ca.engine = loadRulesEngine(ca.cfg, ca.settings)
+				ca.mu.Unlock()
+				refreshRules(profileName)
+				ca.refreshAllTabs()
+			})
+			deleteBtn.Importance = widget.LowImportance
+
+			// Move up/down buttons
+			upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() {
+				pp, exists := ca.cfg.GetProfile(profileName)
+				if !exists || ruleIdx <= 0 || ruleIdx >= len(pp.Rules) {
+					return
+				}
+				pp.Rules[ruleIdx], pp.Rules[ruleIdx-1] = pp.Rules[ruleIdx-1], pp.Rules[ruleIdx]
+				for i := range pp.Rules {
+					pp.Rules[i].Priority = i
+				}
+				_ = ca.cfg.SaveProfile(pp)
+				ca.mu.Lock()
+				ca.engine = loadRulesEngine(ca.cfg, ca.settings)
+				ca.mu.Unlock()
+				refreshRules(profileName)
+				ca.refreshAllTabs()
+			})
+			upBtn.Importance = widget.LowImportance
+
+			downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() {
+				pp, exists := ca.cfg.GetProfile(profileName)
+				if !exists || ruleIdx >= len(pp.Rules)-1 {
+					return
+				}
+				pp.Rules[ruleIdx], pp.Rules[ruleIdx+1] = pp.Rules[ruleIdx+1], pp.Rules[ruleIdx]
+				for i := range pp.Rules {
+					pp.Rules[i].Priority = i
+				}
+				_ = ca.cfg.SaveProfile(pp)
+				ca.mu.Lock()
+				ca.engine = loadRulesEngine(ca.cfg, ca.settings)
+				ca.mu.Unlock()
+				refreshRules(profileName)
+				ca.refreshAllTabs()
+			})
+			downBtn.Importance = widget.LowImportance
+
+			patternLabel := widget.NewLabel(rule.Pattern)
+			patternLabel.TextStyle = fyne.TextStyle{Monospace: true}
+			patternLabel.Wrapping = fyne.TextTruncate
+
+			topRow := container.NewHBox(enabledChk, upBtn, downBtn, nameLabel, typeBadge)
+			btnRow := container.NewHBox(editBtn, deleteBtn)
+			header := container.NewBorder(nil, nil, topRow, btnRow)
+
+			var extraInfo fyne.CanvasObject
+			if colorInfo != "" {
+				cl := widget.NewLabel(colorInfo)
+				cl.TextStyle = fyne.TextStyle{Monospace: true}
+				extraInfo = container.NewVBox(patternLabel, cl, widget.NewSeparator())
+			} else {
+				extraInfo = container.NewVBox(patternLabel, widget.NewSeparator())
+			}
+
+			item := container.NewVBox(header, extraInfo)
+			rulesList.Add(item)
 		}
 		rulesList.Refresh()
 	}
@@ -484,18 +692,20 @@ func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
 		ca.refreshAllTabs()
 	}
 
-	profileForm := widget.NewForm(
-		&widget.FormItem{Text: "Profile", Widget: profileSelect},
-	)
-	profileCard := widget.NewCard("Rules", "", profileForm)
+	profileLabel := widget.NewLabel("Profile")
+	profileLabel.TextStyle = fyne.TextStyle{Bold: true}
+	profileHeader := container.NewVBox(profileLabel, profileSelect, widget.NewSeparator())
 
 	addBtn := widget.NewButtonWithIcon("Add Rule", theme.ContentAddIcon(), func() {
-		// TODO: implement add rule dialog
+		ca.mu.Lock()
+		pName := ca.settings.ActiveProfile
+		ca.mu.Unlock()
+		showRuleEditor(pName, nil, true)
 	})
-	addBtn.Importance = widget.LowImportance
+	addBtn.Importance = widget.HighImportance
 
 	rulesScroll := container.NewVScroll(rulesList)
-	return container.NewBorder(profileCard, addBtn, nil, nil, rulesScroll)
+	return container.NewBorder(profileHeader, addBtn, nil, nil, rulesScroll)
 }
 
 func (ca *ctailApp) refreshAllTabs() {
@@ -943,11 +1153,16 @@ func (ca *ctailApp) openFile(filePath string) {
 		updateFileSize()
 		fyne.Do(func() {
 			tab.list.Refresh()
-			if shouldScroll && nLines > 0 {
-				// ScrollTo the last item to open at tail instantly
-				tab.list.ScrollTo(nLines - 1)
-			}
 			ca.updateStatusBar()
+			if shouldScroll && nLines > 0 {
+				// Delay scroll to allow the list to finish layout
+				go func() {
+					time.Sleep(50 * time.Millisecond)
+					fyne.Do(func() {
+						tab.list.ScrollTo(nLines - 1)
+					})
+				}()
+			}
 		})
 	})
 
@@ -1201,6 +1416,8 @@ func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameInnerPadding:
 		return 2
 	case theme.SizeNameLineSpacing:
+		return 0
+	case theme.SizeNameSeparatorThickness:
 		return 0
 	}
 	return theme.DefaultTheme().Size(name)
