@@ -438,13 +438,19 @@
   function getSelectedText() {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return '';
-    // Extract text only from .line-content spans, skipping line numbers
+    // Extract text only from .line-content spans, skipping line numbers,
+    // and join with newlines so each log line is preserved.
     const range = sel.getRangeAt(0);
     const fragment = range.cloneContents();
     const wrapper = document.createElement('div');
     wrapper.appendChild(fragment);
     const lineNumbers = wrapper.querySelectorAll('.line-number');
     lineNumbers.forEach(el => el.remove());
+    const logLines = wrapper.querySelectorAll('.log-line');
+    if (logLines.length > 0) {
+      return Array.from(logLines).map(el => el.textContent).join('\n');
+    }
+    // Fallback for partial selection within a single line
     return wrapper.textContent || '';
   }
 
