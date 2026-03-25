@@ -150,14 +150,14 @@ func main() {
 	ca.followChk = widget.NewCheck("Follow", func(on bool) {
 		ca.mu.Lock()
 		tab := ca.getActiveTab()
-		ca.mu.Unlock()
-		if tab != nil {
-			ca.mu.Lock()
-			tab.autoScroll = on
+		if tab == nil {
 			ca.mu.Unlock()
-			if on {
-				tab.list.ScrollToBottom()
-			}
+			return
+		}
+		tab.autoScroll = on
+		ca.mu.Unlock()
+		if on {
+			ca.jumpToEnd(tab)
 		}
 	})
 	ca.followChk.Checked = true
@@ -512,14 +512,28 @@ const fetchBatch = 200
 
 // checkScrollPreload detects when the list is rendering items near the
 // edges of the buffer and triggers a preload of earlier/later lines.
+// It also auto-disables Follow when the user scrolls away from the bottom.
 func (ca *ctailApp) checkScrollPreload(tab *logTab, visibleID int) {
 	ca.mu.Lock()
-	if tab.fetching {
+	nLines := len(tab.lines)
+	if nLines == 0 {
 		ca.mu.Unlock()
 		return
 	}
-	nLines := len(tab.lines)
-	if nLines == 0 {
+
+	// Auto-disable Follow when user scrolls away from the bottom
+	nearBottom := visibleID >= nLines-5
+	if tab.autoScroll && !nearBottom && nLines > 10 {
+		tab.autoScroll = false
+		ca.mu.Unlock()
+		fyne.Do(func() {
+			ca.followChk.Checked = false
+			ca.followChk.Refresh()
+		})
+		ca.mu.Lock()
+	}
+
+	if tab.fetching {
 		ca.mu.Unlock()
 		return
 	}
@@ -528,13 +542,14 @@ func (ca *ctailApp) checkScrollPreload(tab *logTab, visibleID int) {
 	triggerBottom := nLines * 3 / 4
 	firstLineNum := tab.lines[0].Number
 	lastLineNum := tab.lines[nLines-1].Number
+	totalLines := tab.total
 	ca.mu.Unlock()
 
 	if visibleID < triggerTop && firstLineNum > 1 {
 		// Scrolling near top — fetch earlier lines
 		ca.fetchEarlierLines(tab)
-	} else if visibleID > triggerBottom && !tab.autoScroll {
-		// Scrolling near bottom — fetch later lines
+	} else if visibleID > triggerBottom && lastLineNum < totalLines {
+		// Scrolling near bottom — fetch later lines (regardless of autoScroll)
 		ca.fetchLaterLines(tab, lastLineNum)
 	}
 }
@@ -637,6 +652,48 @@ func (ca *ctailApp) fetchLaterLines(tab *logTab, lastLineNum int64) {
 
 		fyne.Do(func() {
 			tab.list.Refresh()
+			ca.updateStatusBar()
+		})
+	}()
+}
+
+// jumpToEnd loads the latest lines from the file into the buffer and scrolls to the bottom.
+func (ca *ctailApp) jumpToEnd(tab *logTab) {
+	go func() {
+		ca.mu.Lock()
+		totalLines := tab.total
+		bufSize := ca.settings.BufferSize
+		if bufSize < 1000 {
+			bufSize = 10000
+		}
+		ca.mu.Unlock()
+
+		if totalLines <= 0 {
+			// Fallback: use tailer's current buffer
+			ca.mu.Lock()
+			tab.lines = tab.tailer.GetLines()
+			ca.mu.Unlock()
+		} else {
+			// Read the last bufSize lines from file
+			startLine := totalLines - int64(bufSize) + 1
+			if startLine < 1 {
+				startLine = 1
+			}
+			count := int(totalLines - startLine + 1)
+			latestLines := tab.tailer.ReadRange(startLine, count)
+			if len(latestLines) > 0 {
+				ca.mu.Lock()
+				tab.lines = latestLines
+				if len(tab.lines) > bufSize {
+					tab.lines = tab.lines[len(tab.lines)-bufSize:]
+				}
+				ca.mu.Unlock()
+			}
+		}
+
+		fyne.Do(func() {
+			tab.list.Refresh()
+			tab.list.ScrollToBottom()
 			ca.updateStatusBar()
 		})
 	}()
@@ -802,11 +859,21 @@ func (ca *ctailApp) openFile(filePath string) {
 	}
 
 	// Wire callbacks — all UI updates must go through fyne.Do()
-	t.OnLines(func(_ []tailer.Line) {
+	t.OnLines(func(newLines []tailer.Line) {
 		ca.mu.Lock()
-		tab.lines = t.GetLines()
 		tab.total = t.GetTotalLines()
 		shouldScroll := tab.autoScroll
+
+		if shouldScroll {
+			// Follow mode: replace buffer with latest lines, trim from start
+			tab.lines = t.GetLines()
+			if len(tab.lines) > bufSize {
+				tab.lines = tab.lines[len(tab.lines)-bufSize:]
+			}
+		} else {
+			// Not following: only update total, keep current buffer position.
+			// The user can scroll down to see new lines via preloading.
+		}
 		ca.mu.Unlock()
 		updateFileSize()
 		fyne.Do(func() {
