@@ -25,6 +25,8 @@ function createTabStore() {
           id,
           filePath,
           fileName,
+          label: '',
+          color: '',
           profile: 'Common Logs',
           lines: [],
           totalLines: 0,
@@ -91,6 +93,12 @@ function createTabStore() {
     },
     setProfile(tabId, profileName) {
       update(state => replaceTab(state, tabId, { profile: profileName }));
+    },
+    setLabel(tabId, label) {
+      update(state => replaceTab(state, tabId, { label }));
+    },
+    setColor(tabId, color) {
+      update(state => replaceTab(state, tabId, { color }));
     },
     setLoadingLines(tabId, value) {
       update(state => replaceTab(state, tabId, { loadingLines: value }));

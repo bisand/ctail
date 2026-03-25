@@ -27,6 +27,9 @@ type TabState struct {
 	FilePath   string `json:"filePath"`
 	ProfileID  string `json:"profileId"`
 	AutoScroll bool   `json:"autoScroll"`
+	Label      string `json:"label,omitempty"`
+	Color      string `json:"color,omitempty"`
+	Position   int    `json:"position"`
 }
 
 // WindowState stores window geometry for persistence

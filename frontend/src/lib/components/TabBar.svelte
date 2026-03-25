@@ -1,6 +1,10 @@
 <script>
   import { tabs, activeTabId, tabStore } from '../stores/tabs.js';
-  import { CloseTab, RevealInFileManager } from '../../../wailsjs/go/main/App.js';
+  import { CloseTab, RevealInFileManager, SetTabLabel, SetTabColor, SaveTabOrder } from '../../../wailsjs/go/main/App.js';
+
+  const TAB_COLORS = [
+    '', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'
+  ];
 
   function switchTab(id) {
     tabStore.setActive(id);
@@ -41,6 +45,16 @@
     e.preventDefault();
     if (dragIndex >= 0 && dragIndex !== index) {
       tabStore.moveTab(dragIndex, index);
+      // Persist new order
+      const tabStates = $tabs.map((t, i) => ({
+        filePath: t.filePath,
+        profileId: t.profile || '',
+        autoScroll: t.autoScroll || true,
+        label: t.label || '',
+        color: t.color || '',
+        position: i,
+      }));
+      SaveTabOrder(tabStates).catch(() => {});
     }
     dragIndex = -1;
     dropIndex = -1;
@@ -112,9 +126,63 @@
     }
     closeCtxMenu();
   }
+
+  // Rename tab
+  let renameTabId = $state(null);
+  let renameValue = $state('');
+
+  function ctxRename() {
+    if (ctxTab) {
+      renameTabId = ctxTab.id;
+      renameValue = ctxTab.label || ctxTab.fileName;
+    }
+    closeCtxMenu();
+  }
+
+  function commitRename() {
+    if (renameTabId) {
+      const label = renameValue.trim();
+      const tab = $tabs.find(t => t.id === renameTabId);
+      // Clear label if it matches the filename (revert to default)
+      const finalLabel = (tab && label === tab.fileName) ? '' : label;
+      tabStore.setLabel(renameTabId, finalLabel);
+      SetTabLabel(renameTabId, finalLabel).catch(() => {});
+    }
+    renameTabId = null;
+    renameValue = '';
+  }
+
+  function cancelRename() {
+    renameTabId = null;
+    renameValue = '';
+  }
+
+  // Color picker
+  let colorPickerTabId = $state(null);
+  let colorPickerPos = $state({ x: 0, y: 0 });
+
+  function ctxSetColor() {
+    if (ctxTab) {
+      colorPickerTabId = ctxTab.id;
+      colorPickerPos = { x: ctxMenu.x, y: ctxMenu.y };
+    }
+    closeCtxMenu();
+  }
+
+  function pickColor(color) {
+    if (colorPickerTabId) {
+      tabStore.setColor(colorPickerTabId, color);
+      SetTabColor(colorPickerTabId, color).catch(() => {});
+    }
+    colorPickerTabId = null;
+  }
+
+  function closeColorPicker() {
+    colorPickerTabId = null;
+  }
 </script>
 
-<svelte:window onclick={closeCtxMenu} />
+<svelte:window onclick={(e) => { closeCtxMenu(); closeColorPicker(); }} />
 
 <div class="tab-bar">
   <div class="tabs-scroll">
@@ -137,14 +205,31 @@
         ondrop={(e) => handleDrop(e, i)}
         ondragend={handleDragEnd}
         oncontextmenu={(e) => handleTabContext(e, tab, i)}
+        ondblclick={() => { renameTabId = tab.id; renameValue = tab.label || tab.fileName; }}
         title={tab.status === 'error' ? `${tab.filePath}\n⚠ ${tab.errorMessage}` : tab.filePath}
       >
+        {#if tab.color}
+          <span class="tab-color" style="background: {tab.color}"></span>
+        {/if}
         {#if tab.status === 'loading'}
           <span class="tab-spinner"></span>
         {:else if tab.status === 'error'}
           <span class="tab-error-icon" title={tab.errorMessage}>⚠</span>
         {/if}
-        <span class="tab-name">{tab.fileName}</span>
+        {#if renameTabId === tab.id}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="tab-rename-input"
+            type="text"
+            bind:value={renameValue}
+            autofocus
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') cancelRename(); e.stopPropagation(); }}
+            onblur={commitRename}
+          />
+        {:else}
+          <span class="tab-name">{tab.label || tab.fileName}</span>
+        {/if}
         {#if tab.hasUpdate}
           <span class="badge"></span>
         {/if}
@@ -156,6 +241,13 @@
 
   {#if ctxMenu.visible}
     <div class="tab-ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <button class="ctx-item" onclick={ctxRename}>
+        Rename
+      </button>
+      <button class="ctx-item" onclick={ctxSetColor}>
+        Set color
+      </button>
+      <div class="ctx-separator"></div>
       <button class="ctx-item" onclick={ctxClose}>
         Close <span class="ctx-key">Ctrl+W</span>
       </button>
@@ -172,6 +264,22 @@
       <button class="ctx-item" onclick={ctxReveal}>
         Reveal in file manager
       </button>
+    </div>
+  {/if}
+
+  {#if colorPickerTabId}
+    <div class="color-picker" style="left: {colorPickerPos.x}px; top: {colorPickerPos.y}px" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+      {#each TAB_COLORS as c}
+        <button
+          class="color-swatch"
+          class:active={($tabs.find(t => t.id === colorPickerTabId)?.color || '') === c}
+          style={c ? `background: ${c}` : ''}
+          title={c || 'No color'}
+          onclick={() => pickColor(c)}
+        >
+          {#if !c}✕{/if}
+        </button>
+      {/each}
     </div>
   {/if}
 </div>
@@ -236,6 +344,26 @@
     overflow: hidden;
     text-overflow: ellipsis;
     font-size: 12px;
+  }
+
+  .tab-color {
+    width: 4px;
+    height: 16px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .tab-rename-input {
+    flex: 1;
+    min-width: 60px;
+    max-width: 160px;
+    font-size: 12px;
+    padding: 1px 4px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    outline: none;
   }
 
   .tab-spinner {
@@ -356,5 +484,39 @@
     height: 1px;
     background: var(--border);
     margin: 4px 0;
+  }
+
+  .color-picker {
+    position: fixed;
+    z-index: 1001;
+    background: var(--bg-surface, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px;
+    display: flex;
+    gap: 4px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+
+  .color-swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-primary);
+  }
+
+  .color-swatch:hover {
+    border-color: var(--text-primary);
+  }
+
+  .color-swatch.active {
+    border-color: var(--accent);
   }
 </style>

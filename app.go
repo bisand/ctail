@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,9 @@ type TabInfo struct {
 	FilePath string `json:"filePath"`
 	FileName string `json:"fileName"`
 	Profile  string `json:"profile"`
+	Label    string `json:"label"`
+	Color    string `json:"color"`
+	Position int    `json:"position"`
 	tailer   *tailer.Tailer
 	throttle *lineThrottle
 }
@@ -479,6 +483,14 @@ func (a *App) OpenTab(filePath string) (string, error) {
 
 	// Register tab immediately so it appears in the UI
 	a.mu.Lock()
+	// Assign position at the end of the tab list
+	maxPos := -1
+	for _, t := range a.tabs {
+		if t.Position > maxPos {
+			maxPos = t.Position
+		}
+	}
+	tab.Position = maxPos + 1
 	a.tabs[id] = tab
 	a.mu.Unlock()
 
@@ -489,6 +501,8 @@ func (a *App) OpenTab(filePath string) (string, error) {
 
 	// Track in recent files
 	a.AddRecentFile(filePath)
+
+	a.persistTabs()
 
 	return id, nil
 }
@@ -506,6 +520,8 @@ func (a *App) CloseTab(tabID string) {
 		tab.throttle.stop()
 		go tab.tailer.Stop()
 	}
+
+	a.persistTabs()
 }
 
 // GetTabLines returns the current buffered lines for a tab
@@ -634,7 +650,54 @@ func (a *App) SetTabProfile(tabID, profileName string) {
 	}
 }
 
+// SetTabLabel sets a custom display name for a tab.
+func (a *App) SetTabLabel(tabID, label string) {
+	a.mu.Lock()
+	if tab, ok := a.tabs[tabID]; ok {
+		tab.Label = label
+	}
+	a.mu.Unlock()
+	a.persistTabs()
+}
+
+// SetTabColor sets a color indicator for a tab.
+func (a *App) SetTabColor(tabID, color string) {
+	a.mu.Lock()
+	if tab, ok := a.tabs[tabID]; ok {
+		tab.Color = color
+	}
+	a.mu.Unlock()
+	a.persistTabs()
+}
+
 // --- Config API ---
+
+// persistTabs saves the current open tab list to settings.
+func (a *App) persistTabs() {
+	if a.config == nil {
+		return
+	}
+	a.mu.RLock()
+	tabs := make([]config.TabState, 0, len(a.tabs))
+	for _, tab := range a.tabs {
+		tabs = append(tabs, config.TabState{
+			FilePath:   tab.FilePath,
+			ProfileID:  tab.Profile,
+			AutoScroll: true,
+			Label:      tab.Label,
+			Color:      tab.Color,
+			Position:   tab.Position,
+		})
+	}
+	a.mu.RUnlock()
+
+	// Sort by position so restored order is deterministic
+	sort.Slice(tabs, func(i, j int) bool { return tabs[i].Position < tabs[j].Position })
+
+	settings := a.config.GetSettings()
+	settings.Tabs = tabs
+	_ = a.config.SaveSettings(settings)
+}
 
 // GetSavedTabs returns previously open tabs for restoration
 func (a *App) GetSavedTabs() []config.TabState {
@@ -649,11 +712,29 @@ func (a *App) GetSavedTabs() []config.TabState {
 }
 
 // SaveTabOrder persists the current tab list in display order.
-// Called from the frontend whenever tabs are opened, closed, or reordered.
+// Called from the frontend whenever tabs are reordered.
 func (a *App) SaveTabOrder(tabStates []config.TabState) {
 	if a.config == nil {
 		return
 	}
+	// Sync positions and metadata back to in-memory tabs
+	a.mu.Lock()
+	for _, ts := range tabStates {
+		for _, tab := range a.tabs {
+			if tab.FilePath == ts.FilePath {
+				tab.Position = ts.Position
+				if ts.Label != "" {
+					tab.Label = ts.Label
+				}
+				if ts.Color != "" {
+					tab.Color = ts.Color
+				}
+				break
+			}
+		}
+	}
+	a.mu.Unlock()
+
 	settings := a.config.GetSettings()
 	settings.Tabs = tabStates
 	_ = a.config.SaveSettings(settings)

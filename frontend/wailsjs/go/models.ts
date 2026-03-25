@@ -49,6 +49,9 @@ export namespace config {
 	    filePath: string;
 	    profileId: string;
 	    autoScroll: boolean;
+	    label?: string;
+	    color?: string;
+	    position: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new TabState(source);
@@ -59,6 +62,9 @@ export namespace config {
 	        this.filePath = source["filePath"];
 	        this.profileId = source["profileId"];
 	        this.autoScroll = source["autoScroll"];
+	        this.label = source["label"];
+	        this.color = source["color"];
+	        this.position = source["position"];
 	    }
 	}
 	export class AppSettings {
@@ -310,6 +316,9 @@ export namespace main {
 	    filePath: string;
 	    fileName: string;
 	    profile: string;
+	    label: string;
+	    color: string;
+	    position: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new TabInfo(source);
@@ -321,6 +330,9 @@ export namespace main {
 	        this.filePath = source["filePath"];
 	        this.fileName = source["fileName"];
 	        this.profile = source["profile"];
+	        this.label = source["label"];
+	        this.color = source["color"];
+	        this.position = source["position"];
 	    }
 	}
 	export class UpdateCheckResult {

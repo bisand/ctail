@@ -71,6 +71,10 @@ export function SaveSettings(arg1:config.AppSettings):Promise<void>;
 
 export function SaveTabOrder(arg1:Array<config.TabState>):Promise<void>;
 
+export function SetTabColor(arg1:string,arg2:string):Promise<void>;
+
+export function SetTabLabel(arg1:string,arg2:string):Promise<void>;
+
 export function SetTabProfile(arg1:string,arg2:string):Promise<void>;
 
 export function StartCopilotAuth():Promise<ai.DeviceCodeResponse>;

@@ -10,7 +10,7 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveTabOrder, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates } from '../wailsjs/go/main/App.js';
   import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
   import { loadAndApplyTheme } from './lib/utils/themes.js';
 
@@ -38,19 +38,6 @@
 
   // Track the previous tab for toggle
   let previousTabId = null;
-
-  // Persist tab order to backend whenever tabs change
-  let tabsInitialized = false;
-  $effect(() => {
-    if (tabsInitialized && $tabs) {
-      const tabStates = $tabs.map(t => ({
-        filePath: t.filePath,
-        profileId: t.profile || '',
-        autoScroll: t.autoScroll || true,
-      }));
-      SaveTabOrder(tabStates).catch(() => {});
-    }
-  });
 
   // If the previous tab gets closed, clear it
   $effect(() => {
@@ -247,13 +234,21 @@
     try {
       const savedTabs = await GetSavedTabs();
       if (savedTabs && savedTabs.length > 0) {
-        for (const tab of savedTabs) {
+        // Sort by saved position so tabs restore in the right order
+        const sorted = [...savedTabs].sort((a, b) => (a.position || 0) - (b.position || 0));
+        for (const tab of sorted) {
           try {
             const fileName = tab.filePath.split(/[/\\]/).pop();
             const tabId = await OpenTab(tab.filePath);
             tabStore.addTab(tabId, tab.filePath, fileName);
             if (tab.profileId) {
               tabStore.setProfile(tabId, tab.profileId);
+            }
+            if (tab.label) {
+              tabStore.setLabel(tabId, tab.label);
+            }
+            if (tab.color) {
+              tabStore.setColor(tabId, tab.color);
             }
             // Lines will arrive via tailer:ready → loadInitialLines
           } catch (e) {
@@ -264,9 +259,6 @@
     } catch (e) {
       console.error('Failed to restore tabs:', e);
     }
-
-    // Enable tab order persistence now that restoration is complete
-    tabsInitialized = true;
 
     // Keyboard shortcuts — use capture phase so WebKit doesn't swallow
     // key combos like Ctrl+Shift+Tab before they reach our handler.

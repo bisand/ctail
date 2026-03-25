@@ -134,6 +134,14 @@ export function SaveTabOrder(arg1) {
   return window['go']['main']['App']['SaveTabOrder'](arg1);
 }
 
+export function SetTabColor(arg1, arg2) {
+  return window['go']['main']['App']['SetTabColor'](arg1, arg2);
+}
+
+export function SetTabLabel(arg1, arg2) {
+  return window['go']['main']['App']['SetTabLabel'](arg1, arg2);
+}
+
 export function SetTabProfile(arg1, arg2) {
   return window['go']['main']['App']['SetTabProfile'](arg1, arg2);
 }
