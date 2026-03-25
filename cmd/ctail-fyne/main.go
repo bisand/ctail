@@ -101,9 +101,10 @@ type logTab struct {
 	total    int64
 	fileSize int64
 
-	autoScroll bool
-	loading    bool
-	fetching   bool // prevents concurrent preloads
+	autoScroll    bool
+	loading       bool
+	fetching      bool // prevents concurrent preloads
+	lastVisibleID int  // last rendered item index (for scroll adjustment)
 
 	// UI widgets
 	list    *widget.List
@@ -512,7 +513,7 @@ const fetchBatch = 200
 
 // checkScrollPreload detects when the list is rendering items near the
 // edges of the buffer and triggers a preload of earlier/later lines.
-// It also auto-disables Follow when the user scrolls away from the bottom.
+// It also manages the Follow checkbox based on scroll position.
 func (ca *ctailApp) checkScrollPreload(tab *logTab, visibleID int) {
 	ca.mu.Lock()
 	nLines := len(tab.lines)
@@ -521,9 +522,24 @@ func (ca *ctailApp) checkScrollPreload(tab *logTab, visibleID int) {
 		return
 	}
 
-	// Auto-disable Follow when user scrolls away from the bottom
+	// Track last visible item for scroll adjustment after prepending
+	tab.lastVisibleID = visibleID
+
+	// Auto-enable/disable Follow based on proximity to bottom
 	nearBottom := visibleID >= nLines-5
-	if tab.autoScroll && !nearBottom && nLines > 10 {
+	atEnd := nLines > 0 && tab.lines[nLines-1].Number >= tab.total
+
+	if !tab.autoScroll && nearBottom && atEnd {
+		// User scrolled to the very end of the file — re-enable Follow
+		tab.autoScroll = true
+		ca.mu.Unlock()
+		fyne.Do(func() {
+			ca.followChk.Checked = true
+			ca.followChk.Refresh()
+		})
+		ca.mu.Lock()
+	} else if tab.autoScroll && !nearBottom && nLines > 10 {
+		// User scrolled away from bottom — disable Follow
 		tab.autoScroll = false
 		ca.mu.Unlock()
 		fyne.Do(func() {
@@ -549,7 +565,7 @@ func (ca *ctailApp) checkScrollPreload(tab *logTab, visibleID int) {
 		// Scrolling near top — fetch earlier lines
 		ca.fetchEarlierLines(tab)
 	} else if visibleID > triggerBottom && lastLineNum < totalLines {
-		// Scrolling near bottom — fetch later lines (regardless of autoScroll)
+		// Scrolling near bottom — fetch later lines
 		ca.fetchLaterLines(tab, lastLineNum)
 	}
 }
@@ -597,19 +613,24 @@ func (ca *ctailApp) fetchEarlierLines(tab *logTab) {
 		}
 
 		ca.mu.Lock()
-		// Prepend older lines, trim to buffer size
-		combined := make([]tailer.Line, 0, len(olderLines)+len(tab.lines))
+		// Prepend older lines, trim to buffer size from the END
+		prepended := len(olderLines)
+		combined := make([]tailer.Line, 0, prepended+len(tab.lines))
 		combined = append(combined, olderLines...)
 		combined = append(combined, tab.lines...)
 		if len(combined) > bufSize {
 			combined = combined[:bufSize]
 		}
 		tab.lines = combined
+		// Adjust the tracked visible position to compensate for prepended items
+		scrollTarget := tab.lastVisibleID + prepended
 		tab.fetching = false
 		ca.mu.Unlock()
 
 		fyne.Do(func() {
 			tab.list.Refresh()
+			// Scroll to maintain the user's visual position
+			tab.list.ScrollTo(scrollTarget)
 			ca.updateStatusBar()
 		})
 	}()
@@ -640,18 +661,29 @@ func (ca *ctailApp) fetchLaterLines(tab *logTab, lastLineNum int64) {
 
 		ca.mu.Lock()
 		// Append newer lines, trim from start to buffer size
-		combined := make([]tailer.Line, 0, len(tab.lines)+len(newerLines))
+		oldLen := len(tab.lines)
+		combined := make([]tailer.Line, 0, oldLen+len(newerLines))
 		combined = append(combined, tab.lines...)
 		combined = append(combined, newerLines...)
+		trimmed := 0
 		if len(combined) > bufSize {
-			combined = combined[len(combined)-bufSize:]
+			trimmed = len(combined) - bufSize
+			combined = combined[trimmed:]
 		}
 		tab.lines = combined
+		// Adjust scroll target: visible position shifted back by trimmed items
+		scrollTarget := tab.lastVisibleID - trimmed
+		if scrollTarget < 0 {
+			scrollTarget = 0
+		}
 		tab.fetching = false
 		ca.mu.Unlock()
 
 		fyne.Do(func() {
 			tab.list.Refresh()
+			if trimmed > 0 {
+				tab.list.ScrollTo(scrollTarget)
+			}
 			ca.updateStatusBar()
 		})
 	}()
