@@ -122,7 +122,9 @@ type ctailApp struct {
 	settingsPanel       *fyne.Container
 	settingsPanelWidget fyne.CanvasObject
 	settingsVisible     bool
-	contentWrapper      *fyne.Container // Stack wrapping the content area
+	contentWrapper      *fyne.Container
+
+	selectedLineText string // last selected line text for copy
 }
 
 // logTab represents one open file tab.
@@ -233,7 +235,6 @@ func main() {
 	settingsBtn.Importance = widget.MediumImportance
 
 	brandLabel := widget.NewLabel("ctail")
-	brandLabel.TextStyle = fyne.TextStyle{Bold: true}
 
 	toolbarRight := container.NewHBox(openBtn, settingsBtn)
 	toolbarRow := container.NewBorder(nil, nil, brandLabel, toolbarRight)
@@ -464,10 +465,9 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 		&widget.FormItem{Text: "Restore Tabs", Widget: restoreTabsChk},
 	)
 
-	// Lightweight section headers
+	// Section headers
 	sectionLabel := func(text string) fyne.CanvasObject {
 		l := widget.NewLabel(text)
-		l.TextStyle = fyne.TextStyle{Bold: true}
 		return l
 	}
 
@@ -613,7 +613,7 @@ func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
 				nameColor = hexToColor(rule.Foreground)
 			}
 			nameText := canvas.NewText(rule.Name, nameColor)
-			nameText.TextStyle = fyne.TextStyle{Bold: true}
+			nameText.TextStyle = fyne.TextStyle{}
 			nameText.TextSize = 12
 
 			// Match type badge
@@ -1015,6 +1015,15 @@ func (ca *ctailApp) setupMenus() {
 	)
 
 	editMenu := fyne.NewMenu("Edit",
+		fyne.NewMenuItem("Copy Line (Ctrl+C)", func() {
+			ca.mu.Lock()
+			text := ca.selectedLineText
+			ca.mu.Unlock()
+			if text != "" {
+				ca.mainWindow.Clipboard().SetContent(text)
+			}
+		}),
+		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Find...", func() {
 			// TODO: implement find
 		}),
@@ -1041,7 +1050,14 @@ func (ca *ctailApp) setupMenus() {
 	ca.mainWindow.SetMainMenu(fyne.NewMainMenu(fileMenu, editMenu, viewMenu, toolsMenu, helpMenu))
 
 	// Keyboard shortcuts
-	ca.mainWindow.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(_ fyne.Shortcut) {})
+	ca.mainWindow.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(_ fyne.Shortcut) {
+		ca.mu.Lock()
+		text := ca.selectedLineText
+		ca.mu.Unlock()
+		if text != "" {
+			ca.mainWindow.Clipboard().SetContent(text)
+		}
+	})
 
 	openShortcut := &customShortcut{KeyName: fyne.KeyO, Modifier: fyne.KeyModifierControl}
 	ca.mainWindow.Canvas().AddShortcut(openShortcut, func(_ fyne.Shortcut) {
@@ -1136,6 +1152,15 @@ func (ca *ctailApp) openFile(filePath string) {
 			ca.updateLineItem(tab, id, obj)
 		},
 	)
+	tab.list.OnSelected = func(id widget.ListItemID) {
+		ca.mu.Lock()
+		if id >= 0 && id < len(tab.lines) {
+			ca.selectedLineText = tab.lines[id].Text
+		}
+		ca.mu.Unlock()
+		// Deselect to allow re-selecting the same line
+		tab.list.UnselectAll()
+	}
 
 	tab.tabItem = container.NewTabItemWithIcon(tab.name, nil, tab.list)
 
@@ -1230,16 +1255,15 @@ func (ca *ctailApp) createLineTemplate() fyne.CanvasObject {
 	lineNum.TextStyle = fyne.TextStyle{Monospace: true}
 	lineNum.TextSize = fontSize
 
-	lineText := canvas.NewText("", color.White)
-	lineText.TextStyle = fyne.TextStyle{Monospace: true}
-	lineText.TextSize = fontSize
+	// Inner container holds text segments (rebuilt in updateLineItem)
+	textSegments := container.NewHBox(
+		canvas.NewText("", color.White),
+	)
 
-	return container.NewHBox(lineNum, lineText)
+	return container.NewHBox(lineNum, textSegments)
 }
 
 // getTextSize returns the font size scaled for Fyne's dp system.
-// Fyne dp units are roughly 1.5x CSS px, so we scale down to match
-// the density of the original Svelte UI.
 func (ca *ctailApp) getTextSize() float32 {
 	fs := ca.settings.FontSize
 	if fs < 8 || fs > 32 {
@@ -1263,7 +1287,7 @@ func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.C
 
 	box := obj.(*fyne.Container)
 	numLabel := box.Objects[0].(*canvas.Text)
-	textLabel := box.Objects[1].(*canvas.Text)
+	segBox := box.Objects[1].(*fyne.Container)
 
 	if showNums {
 		numLabel.Text = fmt.Sprintf("%6d ", line.Number)
@@ -1275,30 +1299,117 @@ func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.C
 	numLabel.TextSize = scaledSize
 	numLabel.Color = color.Gray{Y: 128}
 
-	textLabel.Text = line.Text
-	textLabel.TextSize = scaledSize
-
 	// Apply highlighting
 	result := engine.Apply(line.Text)
-	if result.FullLine {
-		if result.Foreground != "" {
-			textLabel.Color = hexToColor(result.Foreground)
-		} else {
-			textLabel.Color = color.White
-		}
-		textLabel.TextStyle.Bold = result.Bold
-		textLabel.TextStyle.Italic = result.Italic
+
+	if len(result.Matches) > 0 && !result.FullLine {
+		// Per-match highlighting: split text into colored segments
+		segments := ca.buildMatchSegments(line.Text, result, scaledSize)
+		segBox.Objects = segments
 	} else {
-		textLabel.Color = color.White
-		textLabel.TextStyle.Bold = false
-		textLabel.TextStyle.Italic = false
+		// Full-line or no match: single text object
+		var txt *canvas.Text
+		if len(segBox.Objects) == 1 {
+			if t, ok := segBox.Objects[0].(*canvas.Text); ok {
+				txt = t
+			}
+		}
+		if txt == nil {
+			txt = canvas.NewText("", color.White)
+			txt.TextStyle = fyne.TextStyle{Monospace: true}
+		}
+		txt.Text = line.Text
+		txt.TextSize = scaledSize
+		txt.TextStyle.Monospace = true
+
+		if result.FullLine {
+			if result.Foreground != "" {
+				txt.Color = hexToColor(result.Foreground)
+			} else {
+				txt.Color = color.White
+			}
+			txt.TextStyle.Bold = result.Bold
+			txt.TextStyle.Italic = result.Italic
+		} else {
+			txt.Color = color.White
+			txt.TextStyle.Bold = false
+			txt.TextStyle.Italic = false
+		}
+		segBox.Objects = []fyne.CanvasObject{txt}
 	}
 
 	numLabel.Refresh()
-	textLabel.Refresh()
+	segBox.Refresh()
 
 	// Trigger scroll preloading when rendering near buffer edges
 	go ca.checkScrollPreload(tab, id)
+}
+
+// buildMatchSegments splits line text into colored canvas.Text segments
+// based on per-match highlighting results from the rules engine.
+func (ca *ctailApp) buildMatchSegments(text string, result rules.LineResult, fontSize float32) []fyne.CanvasObject {
+	type region struct {
+		start, end int
+		fg, bg     string
+		bold, ital bool
+	}
+
+	// Sort matches by start position
+	matches := result.Matches
+	sortedMatches := make([]region, 0, len(matches))
+	for _, m := range matches {
+		sortedMatches = append(sortedMatches, region{
+			start: m.Start, end: m.End,
+			fg: m.Foreground, bg: m.Background,
+			bold: m.Bold, ital: m.Italic,
+		})
+	}
+	// Simple insertion sort (usually few matches)
+	for i := 1; i < len(sortedMatches); i++ {
+		for j := i; j > 0 && sortedMatches[j].start < sortedMatches[j-1].start; j-- {
+			sortedMatches[j], sortedMatches[j-1] = sortedMatches[j-1], sortedMatches[j]
+		}
+	}
+
+	var segments []fyne.CanvasObject
+	pos := 0
+	for _, m := range sortedMatches {
+		if m.start > pos {
+			// Unmatched text before this match
+			seg := canvas.NewText(text[pos:m.start], color.White)
+			seg.TextStyle = fyne.TextStyle{Monospace: true}
+			seg.TextSize = fontSize
+			segments = append(segments, seg)
+		}
+		// Matched text
+		var fgColor color.Color = color.White
+		if m.fg != "" {
+			fgColor = hexToColor(m.fg)
+		}
+		seg := canvas.NewText(text[m.start:m.end], fgColor)
+		seg.TextStyle = fyne.TextStyle{Monospace: true, Bold: m.bold, Italic: m.ital}
+		seg.TextSize = fontSize
+		segments = append(segments, seg)
+		if m.end > pos {
+			pos = m.end
+		}
+	}
+	// Remaining unmatched text
+	if pos < len(text) {
+		seg := canvas.NewText(text[pos:], color.White)
+		seg.TextStyle = fyne.TextStyle{Monospace: true}
+		seg.TextSize = fontSize
+		segments = append(segments, seg)
+	}
+
+	if len(segments) == 0 {
+		seg := canvas.NewText(text, color.White)
+		seg.TextStyle = fyne.TextStyle{Monospace: true}
+		seg.TextSize = fontSize
+		segments = append(segments, seg)
+	}
+
+	return segments
 }
 
 func (ca *ctailApp) closeTab(idx int) {
@@ -1468,7 +1579,7 @@ func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameLineSpacing:
 		return 0
 	case theme.SizeNameSeparatorThickness:
-		return 1
+		return 0
 	}
 	return theme.DefaultTheme().Size(name)
 }
