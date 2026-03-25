@@ -189,25 +189,17 @@ func main() {
 		ca.closeTabByItem(item)
 	}
 
-	// Toolbar
-	titleLabel := canvas.NewText("ctail", hexToColor("#89b4fa"))
-	titleLabel.TextStyle = fyne.TextStyle{Bold: true}
-	titleLabel.TextSize = 12
-
-	openBtn := widget.NewButton("Open", func() {
-		ca.showOpenDialog()
-	})
-	openBtn.Importance = widget.LowImportance
-
-	settingsBtn := widget.NewButton("Settings", nil)
-	settingsBtn.Importance = widget.LowImportance
-	settingsBtn.OnTapped = func() {
-		ca.toggleSettingsPanel()
-	}
-
-	toolbarLeft := container.NewHBox(titleLabel)
-	toolbarRight := container.NewHBox(openBtn, settingsBtn)
-	toolbar := container.NewBorder(nil, nil, toolbarLeft, toolbarRight)
+	// Toolbar — Fyne demo style with icon actions
+	toolbar := widget.NewToolbar(
+		widget.NewToolbarAction(theme.FolderOpenIcon(), func() {
+			ca.showOpenDialog()
+		}),
+		widget.NewToolbarSeparator(),
+		widget.NewToolbarSpacer(),
+		widget.NewToolbarAction(theme.SettingsIcon(), func() {
+			ca.toggleSettingsPanel()
+		}),
+	)
 
 	// Build settings panel
 	ca.settingsPanel = ca.buildSettingsPanel()
@@ -284,8 +276,6 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	ca.mu.Unlock()
 
 	// Poll Interval
-	pollLabel := widget.NewLabel("Poll Interval (ms)")
-	pollLabel.TextStyle = fyne.TextStyle{Bold: true}
 	pollEntry := widget.NewEntry()
 	pollEntry.SetText(strconv.Itoa(s.PollIntervalMs))
 	pollEntry.OnChanged = func(val string) {
@@ -300,8 +290,6 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	}
 
 	// Scroll Buffer
-	scrollBufLabel := widget.NewLabel("Scroll Buffer (lines)")
-	scrollBufLabel.TextStyle = fyne.TextStyle{Bold: true}
 	scrollBufEntry := widget.NewEntry()
 	scrollBufEntry.SetText(strconv.Itoa(s.ScrollBuffer))
 	scrollBufEntry.OnChanged = func(val string) {
@@ -315,8 +303,6 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	}
 
 	// Scroll Speed slider
-	scrollSpeedLabel := widget.NewLabel("Scroll Speed")
-	scrollSpeedLabel.TextStyle = fyne.TextStyle{Bold: true}
 	scrollSpeedSlider := widget.NewSlider(1, 10)
 	scrollSpeedSlider.Step = 1
 	scrollSpeedSlider.Value = float64(s.ScrollSpeed)
@@ -331,20 +317,7 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 		_ = ca.cfg.SaveSettings(newSettings)
 	}
 
-	// Smooth Scroll
-	smoothScrollChk := widget.NewCheck("Smooth Scroll (deceleration at edges)", nil)
-	smoothScrollChk.Checked = s.SmoothScroll
-	smoothScrollChk.OnChanged = func(on bool) {
-		ca.mu.Lock()
-		ca.settings.SmoothScroll = on
-		newSettings := ca.settings
-		ca.mu.Unlock()
-		_ = ca.cfg.SaveSettings(newSettings)
-	}
-
 	// Font Size
-	fontSizeLabel := widget.NewLabel("Font Size")
-	fontSizeLabel.TextStyle = fyne.TextStyle{Bold: true}
 	fontSizeEntry := widget.NewEntry()
 	fontSizeEntry.SetText(strconv.Itoa(s.FontSize))
 	fontSizeEntry.OnChanged = func(val string) {
@@ -358,8 +331,19 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 		}
 	}
 
+	// Smooth Scroll
+	smoothScrollChk := widget.NewCheck("", nil)
+	smoothScrollChk.Checked = s.SmoothScroll
+	smoothScrollChk.OnChanged = func(on bool) {
+		ca.mu.Lock()
+		ca.settings.SmoothScroll = on
+		newSettings := ca.settings
+		ca.mu.Unlock()
+		_ = ca.cfg.SaveSettings(newSettings)
+	}
+
 	// Show Line Numbers
-	lineNumChk := widget.NewCheck("Show Line Numbers", nil)
+	lineNumChk := widget.NewCheck("", nil)
 	lineNumChk.Checked = s.ShowLineNumbers
 	lineNumChk.OnChanged = func(on bool) {
 		ca.mu.Lock()
@@ -371,7 +355,7 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	}
 
 	// Word Wrap
-	wordWrapChk := widget.NewCheck("Word Wrap", nil)
+	wordWrapChk := widget.NewCheck("", nil)
 	wordWrapChk.Checked = s.WordWrap
 	wordWrapChk.OnChanged = func(on bool) {
 		ca.mu.Lock()
@@ -383,7 +367,7 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	}
 
 	// Restore Tabs
-	restoreTabsChk := widget.NewCheck("Restore Tabs on Startup", nil)
+	restoreTabsChk := widget.NewCheck("", nil)
 	restoreTabsChk.Checked = s.RestoreTabs
 	restoreTabsChk.OnChanged = func(on bool) {
 		ca.mu.Lock()
@@ -394,8 +378,6 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	}
 
 	// Theme dropdown
-	themeLabel := widget.NewLabel("Theme")
-	themeLabel.TextStyle = fyne.TextStyle{Bold: true}
 	themes := ca.cfg.ListThemes()
 	themeNames := make([]string, len(themes))
 	for i, t := range themes {
@@ -413,8 +395,6 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	themeSelect.SetSelected(s.Theme)
 
 	// Profile dropdown
-	profileLabel := widget.NewLabel("Profile")
-	profileLabel.TextStyle = fyne.TextStyle{Bold: true}
 	profiles := ca.cfg.ListProfiles()
 	profileSelect := widget.NewSelect(profiles, func(selected string) {
 		ca.mu.Lock()
@@ -427,19 +407,30 @@ func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
 	})
 	profileSelect.SetSelected(s.ActiveProfile)
 
-	content := container.NewVBox(
-		pollLabel, pollEntry,
-		scrollBufLabel, scrollBufEntry,
-		scrollSpeedLabel, scrollSpeedSlider,
-		smoothScrollChk,
-		fontSizeLabel, fontSizeEntry,
-		lineNumChk,
-		wordWrapChk,
-		restoreTabsChk,
-		themeLabel, themeSelect,
-		profileLabel, profileSelect,
+	// Build forms using widget.NewCard + widget.Form (Fyne demo style)
+	displayForm := widget.NewForm(
+		&widget.FormItem{Text: "Font Size", Widget: fontSizeEntry, HintText: "8–32"},
+		&widget.FormItem{Text: "Line Numbers", Widget: lineNumChk},
+		&widget.FormItem{Text: "Word Wrap", Widget: wordWrapChk},
+		&widget.FormItem{Text: "Theme", Widget: themeSelect},
+		&widget.FormItem{Text: "Profile", Widget: profileSelect},
 	)
+	displayCard := widget.NewCard("Display", "", displayForm)
 
+	scrollForm := widget.NewForm(
+		&widget.FormItem{Text: "Poll Interval", Widget: pollEntry, HintText: "ms (≥50)"},
+		&widget.FormItem{Text: "Scroll Buffer", Widget: scrollBufEntry, HintText: "lines (≥100)"},
+		&widget.FormItem{Text: "Scroll Speed", Widget: scrollSpeedSlider},
+		&widget.FormItem{Text: "Smooth Scroll", Widget: smoothScrollChk},
+	)
+	scrollCard := widget.NewCard("Scrolling", "", scrollForm)
+
+	generalForm := widget.NewForm(
+		&widget.FormItem{Text: "Restore Tabs", Widget: restoreTabsChk},
+	)
+	generalCard := widget.NewCard("General", "", generalForm)
+
+	content := container.NewVBox(displayCard, scrollCard, generalCard)
 	return container.NewVScroll(content)
 }
 
@@ -493,20 +484,18 @@ func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
 		ca.refreshAllTabs()
 	}
 
-	addBtn := widget.NewButton("Add Rule", func() {
+	profileForm := widget.NewForm(
+		&widget.FormItem{Text: "Profile", Widget: profileSelect},
+	)
+	profileCard := widget.NewCard("Rules", "", profileForm)
+
+	addBtn := widget.NewButtonWithIcon("Add Rule", theme.ContentAddIcon(), func() {
 		// TODO: implement add rule dialog
 	})
-
-	top := container.NewVBox(
-		widget.NewLabel("Profile"),
-		profileSelect,
-		widget.NewSeparator(),
-	)
-
-	bottom := container.NewVBox(widget.NewSeparator(), addBtn)
+	addBtn.Importance = widget.LowImportance
 
 	rulesScroll := container.NewVScroll(rulesList)
-	return container.NewBorder(top, bottom, nil, nil, rulesScroll)
+	return container.NewBorder(profileCard, addBtn, nil, nil, rulesScroll)
 }
 
 func (ca *ctailApp) refreshAllTabs() {
