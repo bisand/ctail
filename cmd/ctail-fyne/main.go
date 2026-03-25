@@ -19,6 +19,8 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/ncruces/zenity"
+
 	"ctail/internal/config"
 	"ctail/internal/rules"
 	"ctail/internal/tailer"
@@ -232,6 +234,15 @@ func main() {
 	// Open files from command line
 	for _, f := range flag.Args() {
 		ca.openFile(f)
+	}
+
+	// Restore tabs from previous session (if enabled and no CLI args)
+	if settings.RestoreTabs && len(flag.Args()) == 0 {
+		for _, ts := range settings.Tabs {
+			if _, err := os.Stat(ts.FilePath); err == nil {
+				ca.openFile(ts.FilePath)
+			}
+		}
 	}
 
 	w.ShowAndRun()
@@ -814,17 +825,18 @@ func (cs *customShortcut) ShortcutName() string {
 }
 
 func (ca *ctailApp) showOpenDialog() {
-	fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-		if err != nil || reader == nil {
+	go func() {
+		path, err := zenity.SelectFile(
+			zenity.Title("Open File"),
+			zenity.Filename(os.Getenv("HOME")+"/"),
+		)
+		if err != nil || path == "" {
 			return
 		}
-		path := reader.URI().Path()
-		reader.Close()
-		ca.openFile(path)
-	}, ca.mainWindow)
-	// No filter — show all files
-	fd.Resize(fyne.NewSize(800, 600))
-	fd.Show()
+		fyne.Do(func() {
+			ca.openFile(path)
+		})
+	}()
 }
 
 func (ca *ctailApp) openFile(filePath string) {
@@ -884,6 +896,7 @@ func (ca *ctailApp) openFile(filePath string) {
 
 	ca.tabBar.Append(tab.tabItem)
 	ca.tabBar.Select(tab.tabItem)
+	ca.saveOpenTabs()
 
 	updateFileSize := func() {
 		if info, err := os.Stat(filePath); err == nil {
@@ -935,13 +948,15 @@ func (ca *ctailApp) openFile(filePath string) {
 		tab.lines = t.GetLines()
 		tab.total = t.GetTotalLines()
 		tab.loading = false
+		nLines := len(tab.lines)
 		shouldScroll := tab.autoScroll
 		ca.mu.Unlock()
 		updateFileSize()
 		fyne.Do(func() {
 			tab.list.Refresh()
-			if shouldScroll {
-				tab.list.ScrollToBottom()
+			if shouldScroll && nLines > 0 {
+				// ScrollTo the last item to open at tail instantly
+				tab.list.ScrollTo(nLines - 1)
 			}
 			ca.updateStatusBar()
 		})
@@ -1048,6 +1063,7 @@ func (ca *ctailApp) closeTab(idx int) {
 
 	ca.tabBar.Remove(tab.tabItem)
 	ca.updateStatusBar()
+	ca.saveOpenTabs()
 }
 
 func (ca *ctailApp) closeTabByItem(item *container.TabItem) {
@@ -1067,6 +1083,22 @@ func (ca *ctailApp) getActiveTab() *logTab {
 		return nil
 	}
 	return ca.tabs[ca.activeTab]
+}
+
+// saveOpenTabs persists the current open tab paths to settings.
+func (ca *ctailApp) saveOpenTabs() {
+	ca.mu.Lock()
+	var tabStates []config.TabState
+	for _, t := range ca.tabs {
+		tabStates = append(tabStates, config.TabState{
+			FilePath:   t.filePath,
+			AutoScroll: t.autoScroll,
+		})
+	}
+	ca.settings.Tabs = tabStates
+	s := ca.settings
+	ca.mu.Unlock()
+	_ = ca.cfg.SaveSettings(s)
 }
 
 func (ca *ctailApp) updateStatusBar() {
