@@ -110,13 +110,16 @@
       console.error('Failed to load profiles:', e);
     }
 
-    // Listen for tailer events — batch line events per animation frame to
-    // prevent store/DOM update flooding from overwhelming WebKit's renderer.
+    // Listen for tailer events — batch line events and flush via a timer
+    // instead of requestAnimationFrame, because WebKit2GTK stops firing
+    // RAF callbacks when the window is hidden/backgrounded, which causes
+    // events to pile up and freeze the UI on return.
     const pendingLines = new Map();
-    let lineRafScheduled = false;
+    let lineFlushTimer = null;
+    const FLUSH_INTERVAL_MS = 100;
 
     function flushPendingLines() {
-      lineRafScheduled = false;
+      lineFlushTimer = null;
       for (const [tabId, lines] of pendingLines) {
         tabStore.appendLines(tabId, lines);
       }
@@ -125,12 +128,23 @@
 
     EventsOn('tailer:lines', (data) => {
       if (data.tabId && data.lines) {
+        // When backgrounded, discard events for inactive tabs and cap
+        // the pending buffer to avoid unbounded memory growth.
+        if (document.hidden) {
+          // Only keep lines for the active tab, and cap at 2000
+          const activeId = tabStore.getActiveTabId();
+          if (data.tabId !== activeId) return;
+          const existing = pendingLines.get(data.tabId) || [];
+          existing.push(...data.lines);
+          if (existing.length > 2000) existing.splice(0, existing.length - 2000);
+          pendingLines.set(data.tabId, existing);
+          return;
+        }
         const existing = pendingLines.get(data.tabId) || [];
         existing.push(...data.lines);
         pendingLines.set(data.tabId, existing);
-        if (!lineRafScheduled) {
-          lineRafScheduled = true;
-          requestAnimationFrame(flushPendingLines);
+        if (!lineFlushTimer) {
+          lineFlushTimer = setTimeout(flushPendingLines, FLUSH_INTERVAL_MS);
         }
       }
     });
@@ -279,8 +293,8 @@
     window.addEventListener('ctail:open-ai', () => { showAI = true; });
 
     // WebKit repaint recovery: when the page regains visibility (e.g. after
-    // monitor switch, VPN reconnection, or compositor stall), nudge the
-    // renderer to repaint by toggling a CSS transform.
+    // monitor switch, VPN reconnection, or compositor stall), flush any
+    // pending line events and nudge the renderer to repaint.
     function forceRepaint() {
       const el = document.documentElement;
       el.style.transform = 'translateZ(0)';
@@ -290,15 +304,29 @@
     }
 
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) forceRepaint();
+      if (!document.hidden) {
+        // Flush any events that accumulated while backgrounded
+        if (pendingLines.size > 0) {
+          if (lineFlushTimer) { clearTimeout(lineFlushTimer); lineFlushTimer = null; }
+          flushPendingLines();
+        }
+        forceRepaint();
+      }
     });
 
-    window.addEventListener('focus', forceRepaint);
+    window.addEventListener('focus', () => {
+      if (pendingLines.size > 0) {
+        if (lineFlushTimer) { clearTimeout(lineFlushTimer); lineFlushTimer = null; }
+        flushPendingLines();
+      }
+      forceRepaint();
+    });
     window.addEventListener('resize', forceRepaint);
 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);
       window.removeEventListener('keyup', handleGlobalKeyup, true);
+      if (lineFlushTimer) clearTimeout(lineFlushTimer);
     };
   });
 

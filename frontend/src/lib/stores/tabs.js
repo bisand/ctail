@@ -15,8 +15,14 @@ function createTabStore() {
     activeTabId: null
   });
 
+  let currentState = { tabs: [], activeTabId: null };
+  subscribe(s => { currentState = s; });
+
   return {
     subscribe,
+    getActiveTabId() {
+      return currentState.activeTabId;
+    },
     addTab(id, filePath, fileName) {
       update(state => ({
         ...state,
@@ -77,7 +83,7 @@ function createTabStore() {
     appendLines(tabId, newLines) {
       update(state => {
         const tab = state.tabs.find(t => t.id === tabId);
-        if (!tab) return state;
+        if (!tab || newLines.length === 0) return state;
         const changes = { totalLines: tab.totalLines + newLines.length };
 
         if (tab.autoScroll) {
