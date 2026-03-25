@@ -685,29 +685,41 @@ func (a *App) SetTabColor(tabID, color string) {
 	a.persistTabs()
 }
 
-// ChangeTabFilePath swaps the file a tab is tailing while preserving all metadata.
-func (a *App) ChangeTabFilePath(tabID, newPath string) error {
-	if newPath == "" {
-		return fmt.Errorf("no file path provided")
+// ChangeTabFilePath opens a file dialog in the same directory as the current
+// tab file, then swaps the tailed file while preserving all tab metadata.
+// Returns the new file path on success, or empty string if cancelled.
+func (a *App) ChangeTabFilePath(tabID string) (string, error) {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	if !ok {
+		a.mu.RUnlock()
+		return "", fmt.Errorf("tab not found: %s", tabID)
 	}
+	currentDir := filepath.Dir(tab.FilePath)
+	a.mu.RUnlock()
 
-	// Check the new file exists
-	if _, err := os.Stat(newPath); err != nil {
-		return fmt.Errorf("file not accessible: %w", err)
+	// Open native file dialog in the same directory
+	newPath, err := a.OpenFileDialog(currentDir)
+	if err != nil {
+		return "", err
+	}
+	if newPath == "" {
+		return "", nil // user cancelled
 	}
 
 	a.mu.Lock()
-	tab, ok := a.tabs[tabID]
+	// Re-check tab still exists
+	tab, ok = a.tabs[tabID]
 	if !ok {
 		a.mu.Unlock()
-		return fmt.Errorf("tab not found: %s", tabID)
+		return "", fmt.Errorf("tab not found: %s", tabID)
 	}
 
 	// Check if another tab already has this file open
 	for _, other := range a.tabs {
 		if other.ID != tabID && other.FilePath == newPath {
 			a.mu.Unlock()
-			return fmt.Errorf("file already open in another tab")
+			return "", fmt.Errorf("file already open in another tab")
 		}
 	}
 	a.mu.Unlock()
@@ -768,13 +780,13 @@ func (a *App) ChangeTabFilePath(tabID, newPath string) error {
 	a.mu.Unlock()
 
 	if err := t.Start(); err != nil {
-		return fmt.Errorf("failed to start tailing: %w", err)
+		return newPath, fmt.Errorf("failed to start tailing: %w", err)
 	}
 
 	a.AddRecentFile(newPath)
 	a.persistTabs()
 
-	return nil
+	return newPath, nil
 }
 
 // --- Config API ---
@@ -818,33 +830,23 @@ func (a *App) GetSavedTabs() []config.TabState {
 	return settings.Tabs
 }
 
-// SaveTabOrder persists the current tab list in display order.
-// Called from the frontend whenever tabs are reordered.
+// SaveTabOrder updates tab positions after a drag-reorder, then persists.
 func (a *App) SaveTabOrder(tabStates []config.TabState) {
 	if a.config == nil {
 		return
 	}
-	// Sync positions and metadata back to in-memory tabs
 	a.mu.Lock()
 	for _, ts := range tabStates {
 		for _, tab := range a.tabs {
 			if tab.FilePath == ts.FilePath {
 				tab.Position = ts.Position
-				if ts.Label != "" {
-					tab.Label = ts.Label
-				}
-				if ts.Color != "" {
-					tab.Color = ts.Color
-				}
 				break
 			}
 		}
 	}
 	a.mu.Unlock()
 
-	settings := a.config.GetSettings()
-	settings.Tabs = tabStates
-	_ = a.config.SaveSettings(settings)
+	a.persistTabs()
 }
 
 // GetSettings returns app settings

@@ -1,8 +1,8 @@
 <script>
   import { tabs, activeTabId, tabStore } from '../stores/tabs.js';
-  import { CloseTab, RevealInFileManager, SetTabLabel, SetTabColor, SaveTabOrder } from '../../../wailsjs/go/main/App.js';
+  import { CloseTab, RevealInFileManager, SetTabLabel, SetTabColor, SaveTabOrder, ChangeTabFilePath } from '../../../wailsjs/go/main/App.js';
 
-  let { onAddTab, onChangeFile } = $props();
+  let { onAddTab } = $props();
 
   const TAB_COLORS = [
     '', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'
@@ -181,11 +181,19 @@
     colorPickerTabId = null;
   }
 
-  function ctxChangeFile() {
-    if (ctxTab && onChangeFile) {
-      onChangeFile(ctxTab.id, ctxTab.filePath);
-    }
+  async function ctxChangeFile() {
+    if (!ctxTab) { closeCtxMenu(); return; }
+    const tabId = ctxTab.id;
     closeCtxMenu();
+    try {
+      const newPath = await ChangeTabFilePath(tabId);
+      if (newPath) {
+        const newFileName = newPath.split(/[/\\]/).pop();
+        tabStore.setFilePath(tabId, newPath, newFileName);
+      }
+    } catch (e) {
+      console.error('Failed to change file:', e);
+    }
   }
 </script>
 

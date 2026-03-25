@@ -14,8 +14,8 @@ export function AskAIRules(arg1) {
   return window['go']['main']['App']['AskAIRules'](arg1);
 }
 
-export function ChangeTabFilePath(arg1, arg2) {
-  return window['go']['main']['App']['ChangeTabFilePath'](arg1, arg2);
+export function ChangeTabFilePath(arg1) {
+  return window['go']['main']['App']['ChangeTabFilePath'](arg1);
 }
 
 export function ClearRecentFiles() {
