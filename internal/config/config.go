@@ -78,13 +78,36 @@ func (m *Manager) GetSettings() AppSettings {
 	defer m.mu.RUnlock()
 	s := m.settings
 	s.PollIntervalMs = int(s.PollInterval / time.Millisecond)
+	// Deep-copy slices so callers cannot mutate shared state
+	if s.Tabs != nil {
+		s.Tabs = append([]TabState(nil), s.Tabs...)
+	}
+	if s.RecentFiles != nil {
+		s.RecentFiles = append([]string(nil), s.RecentFiles...)
+	}
 	return s
 }
 
-// SaveSettings persists settings to disk
+// SaveSettings persists settings to disk.
+// Tabs are always preserved from the current in-memory state to prevent
+// concurrent callers from accidentally overwriting tab metadata.
+// Use SaveSettingsWithTabs to explicitly update tabs.
 func (m *Manager) SaveSettings(s AppSettings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Preserve current tabs — only SaveSettingsWithTabs may change them
+	s.Tabs = m.settings.Tabs
+	return m.saveSettingsLocked(s)
+}
+
+// SaveSettingsWithTabs persists settings including an updated Tabs slice.
+func (m *Manager) SaveSettingsWithTabs(s AppSettings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saveSettingsLocked(s)
+}
+
+func (m *Manager) saveSettingsLocked(s AppSettings) error {
 	s.PollInterval = time.Duration(s.PollIntervalMs) * time.Millisecond
 	if s.PollInterval < 100*time.Millisecond {
 		s.PollInterval = 100 * time.Millisecond

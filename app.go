@@ -815,7 +815,7 @@ func (a *App) persistTabs() {
 
 	settings := a.config.GetSettings()
 	settings.Tabs = tabs
-	_ = a.config.SaveSettings(settings)
+	_ = a.config.SaveSettingsWithTabs(settings)
 }
 
 // GetSavedTabs returns previously open tabs for restoration
@@ -858,15 +858,12 @@ func (a *App) GetSettings() config.AppSettings {
 }
 
 // SaveSettings saves app settings.
-// The frontend settings store does not track the Tabs slice (that is
-// managed separately via SaveTabOrder), so we preserve the current
-// persisted Tabs to avoid accidentally overwriting them.
+// Tabs are automatically preserved by config.SaveSettings so callers
+// cannot accidentally overwrite tab metadata.
 func (a *App) SaveSettings(s config.AppSettings) error {
 	if a.config == nil {
 		return fmt.Errorf("config not initialized")
 	}
-	current := a.config.GetSettings()
-	s.Tabs = current.Tabs
 	return a.config.SaveSettings(s)
 }
 
