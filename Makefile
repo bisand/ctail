@@ -8,7 +8,7 @@ VERSION := $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
 # Build number — read from file, targets that produce binaries bump it
 BUILD_NUMBER := $(shell cat BUILD_NUMBER 2>/dev/null || echo 0)
 
-.PHONY: dev build build-windows build-macos clean test install uninstall package-deb package-rpm
+.PHONY: dev build build-windows build-macos clean test install uninstall package-deb package-rpm build-fyne run-fyne
 
 dev:
 	wails dev -tags $(TAGS) -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)"
@@ -33,6 +33,12 @@ clean:
 
 test:
 	go test ./internal/... -v
+
+build-fyne:
+	CGO_LDFLAGS="-L$(CURDIR)/build/lib" go build -ldflags "-X main.version=$(VERSION) -X main.buildNumber=$(BUILD_NUMBER)" -o build/bin/ctail-fyne ./cmd/ctail-fyne/
+
+run-fyne: build-fyne
+	./build/bin/ctail-fyne
 
 install:
 	install -Dm755 build/bin/ctail $(DESTDIR)$(PREFIX)/bin/ctail

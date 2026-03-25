@@ -3,3 +3,6 @@ build/*.deb
 build/*.rpm
 node_modules
 frontend/dist
+build/lib
+/ctail-fyne
+/ctail-gio
