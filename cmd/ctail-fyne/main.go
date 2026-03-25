@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -28,6 +29,44 @@ var (
 	version     = "0.0.0-dev"
 	buildNumber = "dev"
 )
+
+// fixedWidthContainer wraps a canvas object with a fixed minimum width.
+type fixedWidthContainer struct {
+	widget.BaseWidget
+	width   float32
+	content fyne.CanvasObject
+}
+
+func newFixedWidth(width float32, content fyne.CanvasObject) *fixedWidthContainer {
+	fw := &fixedWidthContainer{width: width, content: content}
+	fw.ExtendBaseWidget(fw)
+	return fw
+}
+
+func (fw *fixedWidthContainer) CreateRenderer() fyne.WidgetRenderer {
+	return &fixedWidthRenderer{fw: fw}
+}
+
+type fixedWidthRenderer struct {
+	fw *fixedWidthContainer
+}
+
+func (r *fixedWidthRenderer) MinSize() fyne.Size {
+	min := r.fw.content.MinSize()
+	if min.Width < r.fw.width {
+		min.Width = r.fw.width
+	}
+	return min
+}
+
+func (r *fixedWidthRenderer) Layout(size fyne.Size) {
+	r.fw.content.Resize(size)
+	r.fw.content.Move(fyne.NewPos(0, 0))
+}
+
+func (r *fixedWidthRenderer) Refresh()                     { r.fw.content.Refresh() }
+func (r *fixedWidthRenderer) Objects() []fyne.CanvasObject { return []fyne.CanvasObject{r.fw.content} }
+func (r *fixedWidthRenderer) Destroy()                     {}
 
 // ctailApp holds all application state.
 type ctailApp struct {
@@ -44,7 +83,12 @@ type ctailApp struct {
 	activeTab  int
 	tabBar     *container.DocTabs
 	statusBar  *widget.Label
+	statusSize *widget.Label
 	followChk  *widget.Check
+
+	settingsPanel   *fyne.Container
+	settingsVisible bool
+	contentArea     *fyne.Container
 }
 
 // logTab represents one open file tab.
@@ -55,13 +99,14 @@ type logTab struct {
 	tailer   *tailer.Tailer
 	lines    []tailer.Line
 	total    int64
+	fileSize int64
 
 	autoScroll bool
 	loading    bool
 
 	// UI widgets
-	list      *widget.List
-	tabItem   *container.TabItem
+	list    *widget.List
+	tabItem *container.TabItem
 }
 
 func main() {
@@ -94,10 +139,14 @@ func main() {
 		activeTab:  -1,
 	}
 
+	// Status bar widgets
 	ca.statusBar = widget.NewLabel("No file open — Ctrl+O to open")
 	ca.statusBar.TextStyle = fyne.TextStyle{Monospace: true}
 
-	ca.followChk = widget.NewCheck("Follow tail", func(on bool) {
+	ca.statusSize = widget.NewLabel("")
+	ca.statusSize.TextStyle = fyne.TextStyle{Monospace: true}
+
+	ca.followChk = widget.NewCheck("Follow", func(on bool) {
 		ca.mu.Lock()
 		tab := ca.getActiveTab()
 		ca.mu.Unlock()
@@ -112,6 +161,11 @@ func main() {
 	})
 	ca.followChk.Checked = true
 
+	statusLeft := container.NewHBox(ca.statusBar, ca.statusSize)
+	statusRight := container.NewHBox(ca.followChk)
+	statusBarContainer := container.NewBorder(nil, nil, statusLeft, statusRight)
+
+	// Tab bar
 	ca.tabBar = container.NewDocTabs()
 	ca.tabBar.OnSelected = func(item *container.TabItem) {
 		ca.mu.Lock()
@@ -132,14 +186,39 @@ func main() {
 	}
 
 	// Toolbar
-	toolbar := container.NewHBox(ca.followChk)
+	titleLabel := canvas.NewText("ctail", hexToColor("#89b4fa"))
+	titleLabel.TextStyle = fyne.TextStyle{Bold: true}
+	titleLabel.TextSize = 16
+
+	openBtn := widget.NewButton("📁 Open", func() {
+		ca.showOpenDialog()
+	})
+
+	settingsBtn := widget.NewButton("⚙ Settings", nil)
+	settingsBtn.OnTapped = func() {
+		ca.toggleSettingsPanel()
+	}
+
+	toolbarLeft := container.NewHBox(titleLabel)
+	toolbarRight := container.NewHBox(openBtn, settingsBtn)
+	toolbar := container.NewBorder(nil, nil, toolbarLeft, toolbarRight)
+
+	// Build settings panel
+	ca.settingsPanel = ca.buildSettingsPanel()
+	ca.settingsPanel.Hide()
+	ca.settingsVisible = false
+
+	settingsPanelWidget := newFixedWidth(320, ca.settingsPanel)
+
+	// Content area: tabBar center, settings panel right
+	ca.contentArea = container.NewBorder(nil, nil, nil, settingsPanelWidget, ca.tabBar)
 
 	// Main layout
 	content := container.NewBorder(
-		container.NewVBox(toolbar, widget.NewSeparator()), // top
-		ca.statusBar, // bottom
-		nil, nil,     // left, right
-		ca.tabBar,    // center
+		container.NewVBox(toolbar, widget.NewSeparator()),
+		container.NewVBox(widget.NewSeparator(), statusBarContainer),
+		nil, nil,
+		ca.contentArea,
 	)
 
 	w.SetContent(content)
@@ -151,6 +230,274 @@ func main() {
 	}
 
 	w.ShowAndRun()
+}
+
+func (ca *ctailApp) toggleSettingsPanel() {
+	ca.mu.Lock()
+	ca.settingsVisible = !ca.settingsVisible
+	visible := ca.settingsVisible
+	ca.mu.Unlock()
+
+	if visible {
+		ca.settingsPanel.Show()
+	} else {
+		ca.settingsPanel.Hide()
+	}
+	ca.contentArea.Refresh()
+}
+
+func (ca *ctailApp) buildSettingsPanel() *fyne.Container {
+	settingsTab := ca.buildSettingsTab()
+	rulesTab := ca.buildRulesTab()
+
+	panelTabs := container.NewAppTabs(
+		container.NewTabItem("Settings", settingsTab),
+		container.NewTabItem("Rules", rulesTab),
+	)
+
+	return container.NewStack(panelTabs)
+}
+
+func (ca *ctailApp) buildSettingsTab() fyne.CanvasObject {
+	ca.mu.Lock()
+	s := ca.settings
+	ca.mu.Unlock()
+
+	// Poll Interval
+	pollLabel := widget.NewLabel("Poll Interval (ms)")
+	pollLabel.TextStyle = fyne.TextStyle{Bold: true}
+	pollEntry := widget.NewEntry()
+	pollEntry.SetText(strconv.Itoa(s.PollIntervalMs))
+	pollEntry.OnChanged = func(val string) {
+		if ms, err := strconv.Atoi(val); err == nil && ms >= 50 {
+			ca.mu.Lock()
+			ca.settings.PollIntervalMs = ms
+			ca.settings.PollInterval = time.Duration(ms) * time.Millisecond
+			newSettings := ca.settings
+			ca.mu.Unlock()
+			_ = ca.cfg.SaveSettings(newSettings)
+		}
+	}
+
+	// Scroll Buffer
+	scrollBufLabel := widget.NewLabel("Scroll Buffer (lines)")
+	scrollBufLabel.TextStyle = fyne.TextStyle{Bold: true}
+	scrollBufEntry := widget.NewEntry()
+	scrollBufEntry.SetText(strconv.Itoa(s.ScrollBuffer))
+	scrollBufEntry.OnChanged = func(val string) {
+		if sb, err := strconv.Atoi(val); err == nil && sb >= 100 {
+			ca.mu.Lock()
+			ca.settings.ScrollBuffer = sb
+			newSettings := ca.settings
+			ca.mu.Unlock()
+			_ = ca.cfg.SaveSettings(newSettings)
+		}
+	}
+
+	// Scroll Speed slider
+	scrollSpeedLabel := widget.NewLabel("Scroll Speed")
+	scrollSpeedLabel.TextStyle = fyne.TextStyle{Bold: true}
+	scrollSpeedSlider := widget.NewSlider(1, 10)
+	scrollSpeedSlider.Step = 1
+	scrollSpeedSlider.Value = float64(s.ScrollSpeed)
+	if scrollSpeedSlider.Value < 1 {
+		scrollSpeedSlider.Value = 1
+	}
+	scrollSpeedSlider.OnChanged = func(val float64) {
+		ca.mu.Lock()
+		ca.settings.ScrollSpeed = int(val)
+		newSettings := ca.settings
+		ca.mu.Unlock()
+		_ = ca.cfg.SaveSettings(newSettings)
+	}
+
+	// Smooth Scroll
+	smoothScrollChk := widget.NewCheck("Smooth Scroll (deceleration at edges)", nil)
+	smoothScrollChk.Checked = s.SmoothScroll
+	smoothScrollChk.OnChanged = func(on bool) {
+		ca.mu.Lock()
+		ca.settings.SmoothScroll = on
+		newSettings := ca.settings
+		ca.mu.Unlock()
+		_ = ca.cfg.SaveSettings(newSettings)
+	}
+
+	// Font Size
+	fontSizeLabel := widget.NewLabel("Font Size")
+	fontSizeLabel.TextStyle = fyne.TextStyle{Bold: true}
+	fontSizeEntry := widget.NewEntry()
+	fontSizeEntry.SetText(strconv.Itoa(s.FontSize))
+	fontSizeEntry.OnChanged = func(val string) {
+		if fs, err := strconv.Atoi(val); err == nil && fs >= 8 && fs <= 32 {
+			ca.mu.Lock()
+			ca.settings.FontSize = fs
+			newSettings := ca.settings
+			ca.mu.Unlock()
+			ca.fyneApp.Settings().SetTheme(&ctailTheme{cfg: ca.cfg, settings: newSettings})
+			_ = ca.cfg.SaveSettings(newSettings)
+			ca.refreshAllTabs()
+		}
+	}
+
+	// Show Line Numbers
+	lineNumChk := widget.NewCheck("Show Line Numbers", nil)
+	lineNumChk.Checked = s.ShowLineNumbers
+	lineNumChk.OnChanged = func(on bool) {
+		ca.mu.Lock()
+		ca.settings.ShowLineNumbers = on
+		newSettings := ca.settings
+		ca.mu.Unlock()
+		_ = ca.cfg.SaveSettings(newSettings)
+		ca.refreshAllTabs()
+	}
+
+	// Word Wrap
+	wordWrapChk := widget.NewCheck("Word Wrap", nil)
+	wordWrapChk.Checked = s.WordWrap
+	wordWrapChk.OnChanged = func(on bool) {
+		ca.mu.Lock()
+		ca.settings.WordWrap = on
+		newSettings := ca.settings
+		ca.mu.Unlock()
+		_ = ca.cfg.SaveSettings(newSettings)
+		ca.refreshAllTabs()
+	}
+
+	// Restore Tabs
+	restoreTabsChk := widget.NewCheck("Restore Tabs on Startup", nil)
+	restoreTabsChk.Checked = s.RestoreTabs
+	restoreTabsChk.OnChanged = func(on bool) {
+		ca.mu.Lock()
+		ca.settings.RestoreTabs = on
+		newSettings := ca.settings
+		ca.mu.Unlock()
+		_ = ca.cfg.SaveSettings(newSettings)
+	}
+
+	// Theme dropdown
+	themeLabel := widget.NewLabel("Theme")
+	themeLabel.TextStyle = fyne.TextStyle{Bold: true}
+	themes := ca.cfg.ListThemes()
+	themeNames := make([]string, len(themes))
+	for i, t := range themes {
+		themeNames[i] = t.Name
+	}
+	themeSelect := widget.NewSelect(themeNames, func(selected string) {
+		ca.mu.Lock()
+		ca.settings.Theme = selected
+		newSettings := ca.settings
+		ca.mu.Unlock()
+		ca.fyneApp.Settings().SetTheme(&ctailTheme{cfg: ca.cfg, settings: newSettings})
+		_ = ca.cfg.SaveSettings(newSettings)
+		ca.refreshAllTabs()
+	})
+	themeSelect.SetSelected(s.Theme)
+
+	// Profile dropdown
+	profileLabel := widget.NewLabel("Profile")
+	profileLabel.TextStyle = fyne.TextStyle{Bold: true}
+	profiles := ca.cfg.ListProfiles()
+	profileSelect := widget.NewSelect(profiles, func(selected string) {
+		ca.mu.Lock()
+		ca.settings.ActiveProfile = selected
+		newSettings := ca.settings
+		ca.engine = loadRulesEngine(ca.cfg, newSettings)
+		ca.mu.Unlock()
+		_ = ca.cfg.SaveSettings(newSettings)
+		ca.refreshAllTabs()
+	})
+	profileSelect.SetSelected(s.ActiveProfile)
+
+	content := container.NewVBox(
+		pollLabel, pollEntry,
+		scrollBufLabel, scrollBufEntry,
+		scrollSpeedLabel, scrollSpeedSlider,
+		smoothScrollChk,
+		fontSizeLabel, fontSizeEntry,
+		lineNumChk,
+		wordWrapChk,
+		restoreTabsChk,
+		themeLabel, themeSelect,
+		profileLabel, profileSelect,
+	)
+
+	return container.NewVScroll(content)
+}
+
+func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
+	ca.mu.Lock()
+	s := ca.settings
+	ca.mu.Unlock()
+
+	profiles := ca.cfg.ListProfiles()
+	profileSelect := widget.NewSelect(profiles, nil)
+	profileSelect.SetSelected(s.ActiveProfile)
+
+	rulesList := container.NewVBox()
+
+	refreshRules := func(profileName string) {
+		rulesList.Objects = nil
+		if p, ok := ca.cfg.GetProfile(profileName); ok {
+			for _, r := range p.Rules {
+				rule := r
+				enabledChk := widget.NewCheck("", nil)
+				enabledChk.Checked = rule.Enabled
+
+				typeBadge := widget.NewLabel("[" + rule.MatchType + "]")
+				typeBadge.TextStyle = fyne.TextStyle{Bold: true}
+
+				nameLabel := widget.NewLabel(rule.Name)
+				nameLabel.TextStyle = fyne.TextStyle{Bold: true}
+
+				patternLabel := widget.NewLabel(rule.Pattern)
+				patternLabel.TextStyle = fyne.TextStyle{Monospace: true}
+				patternLabel.Wrapping = fyne.TextTruncate
+
+				row := container.NewHBox(enabledChk, typeBadge, nameLabel)
+				item := container.NewVBox(row, patternLabel, widget.NewSeparator())
+				rulesList.Add(item)
+			}
+		}
+		rulesList.Refresh()
+	}
+
+	refreshRules(s.ActiveProfile)
+
+	profileSelect.OnChanged = func(selected string) {
+		ca.mu.Lock()
+		ca.settings.ActiveProfile = selected
+		newSettings := ca.settings
+		ca.engine = loadRulesEngine(ca.cfg, newSettings)
+		ca.mu.Unlock()
+		_ = ca.cfg.SaveSettings(newSettings)
+		refreshRules(selected)
+		ca.refreshAllTabs()
+	}
+
+	addBtn := widget.NewButton("Add Rule", func() {
+		// TODO: implement add rule dialog
+	})
+
+	top := container.NewVBox(
+		widget.NewLabel("Profile"),
+		profileSelect,
+		widget.NewSeparator(),
+	)
+
+	bottom := container.NewVBox(widget.NewSeparator(), addBtn)
+
+	rulesScroll := container.NewVScroll(rulesList)
+	return container.NewBorder(top, bottom, nil, nil, rulesScroll)
+}
+
+func (ca *ctailApp) refreshAllTabs() {
+	ca.mu.Lock()
+	tabs := make([]*logTab, len(ca.tabs))
+	copy(tabs, ca.tabs)
+	ca.mu.Unlock()
+	for _, t := range tabs {
+		t.list.Refresh()
+	}
 }
 
 func (ca *ctailApp) setupMenus() {
@@ -180,8 +527,8 @@ func (ca *ctailApp) setupMenus() {
 	)
 
 	viewMenu := fyne.NewMenu("View",
-		fyne.NewMenuItem("Settings", func() {
-			ca.showSettingsDialog()
+		fyne.NewMenuItem("Toggle Settings Panel", func() {
+			ca.toggleSettingsPanel()
 		}),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Toggle Theme", func() {
@@ -189,13 +536,15 @@ func (ca *ctailApp) setupMenus() {
 		}),
 	)
 
+	toolsMenu := fyne.NewMenu("Tools")
+
 	helpMenu := fyne.NewMenu("Help",
 		fyne.NewMenuItem("About ctail", func() {
 			ca.showAboutDialog()
 		}),
 	)
 
-	ca.mainWindow.SetMainMenu(fyne.NewMainMenu(fileMenu, editMenu, viewMenu, helpMenu))
+	ca.mainWindow.SetMainMenu(fyne.NewMainMenu(fileMenu, editMenu, viewMenu, toolsMenu, helpMenu))
 
 	// Keyboard shortcuts
 	ca.mainWindow.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(_ fyne.Shortcut) {})
@@ -217,7 +566,7 @@ func (ca *ctailApp) setupMenus() {
 
 	settingsShortcut := &customShortcut{KeyName: fyne.KeyComma, Modifier: fyne.KeyModifierControl}
 	ca.mainWindow.Canvas().AddShortcut(settingsShortcut, func(_ fyne.Shortcut) {
-		ca.showSettingsDialog()
+		ca.toggleSettingsPanel()
 	})
 }
 
@@ -274,6 +623,7 @@ func (ca *ctailApp) openFile(filePath string) {
 		name:       filepath.Base(filePath),
 		tailer:     t,
 		autoScroll: true,
+		loading:    true,
 	}
 
 	// Create the list widget for this tab
@@ -301,6 +651,14 @@ func (ca *ctailApp) openFile(filePath string) {
 	ca.tabBar.Append(tab.tabItem)
 	ca.tabBar.Select(tab.tabItem)
 
+	updateFileSize := func() {
+		if info, err := os.Stat(filePath); err == nil {
+			ca.mu.Lock()
+			tab.fileSize = info.Size()
+			ca.mu.Unlock()
+		}
+	}
+
 	// Wire callbacks
 	t.OnLines(func(_ []tailer.Line) {
 		ca.mu.Lock()
@@ -308,6 +666,7 @@ func (ca *ctailApp) openFile(filePath string) {
 		tab.total = t.GetTotalLines()
 		shouldScroll := tab.autoScroll
 		ca.mu.Unlock()
+		updateFileSize()
 		tab.list.Refresh()
 		if shouldScroll {
 			tab.list.ScrollToBottom()
@@ -319,6 +678,7 @@ func (ca *ctailApp) openFile(filePath string) {
 		tab.lines = t.GetLines()
 		tab.total = t.GetTotalLines()
 		ca.mu.Unlock()
+		updateFileSize()
 		tab.list.Refresh()
 		ca.updateStatusBar()
 	})
@@ -326,8 +686,10 @@ func (ca *ctailApp) openFile(filePath string) {
 		ca.mu.Lock()
 		tab.lines = t.GetLines()
 		tab.total = t.GetTotalLines()
+		tab.loading = false
 		shouldScroll := tab.autoScroll
 		ca.mu.Unlock()
+		updateFileSize()
 		tab.list.Refresh()
 		if shouldScroll {
 			tab.list.ScrollToBottom()
@@ -357,7 +719,6 @@ func (ca *ctailApp) createLineTemplate() fyne.CanvasObject {
 }
 
 // getTextSize returns the font size scaled for Fyne's dp system.
-// Config fontSize is in points (8-32), Fyne default is 14dp.
 func (ca *ctailApp) getTextSize() float32 {
 	fs := ca.settings.FontSize
 	if fs < 8 || fs > 32 {
@@ -459,17 +820,19 @@ func (ca *ctailApp) getActiveTab() *logTab {
 func (ca *ctailApp) updateStatusBar() {
 	ca.mu.Lock()
 	tab := ca.getActiveTab()
-	var text string
+	var pathText, sizeText string
 	if tab != nil {
-		text = fmt.Sprintf("%s — %d lines (total: %d)", tab.filePath, len(tab.lines), tab.total)
-		if tab.autoScroll {
-			text += " [following]"
+		pathText = fmt.Sprintf("%s  %d lines (total: %d)", tab.filePath, len(tab.lines), tab.total)
+		sizeText = formatFileSize(tab.fileSize)
+		if tab.loading {
+			sizeText += "  Loading..."
 		}
 	} else {
-		text = "No file open — Ctrl+O to open"
+		pathText = "No file open — Ctrl+O to open"
 	}
 	ca.mu.Unlock()
-	ca.statusBar.SetText(text)
+	ca.statusBar.SetText(pathText)
+	ca.statusSize.SetText(sizeText)
 }
 
 func (ca *ctailApp) toggleTheme() {
@@ -486,111 +849,28 @@ func (ca *ctailApp) toggleTheme() {
 	_ = ca.cfg.SaveSettings(s)
 }
 
-func (ca *ctailApp) showSettingsDialog() {
-	ca.mu.Lock()
-	s := ca.settings
-	ca.mu.Unlock()
-
-	// Theme selector
-	themes := ca.cfg.ListThemes()
-	themeNames := make([]string, len(themes))
-	currentThemeIdx := 0
-	for i, t := range themes {
-		themeNames[i] = t.Name
-		if t.Name == s.Theme {
-			currentThemeIdx = i
-		}
-	}
-	themeSelect := widget.NewSelect(themeNames, nil)
-	if currentThemeIdx < len(themeNames) {
-		themeSelect.SetSelectedIndex(currentThemeIdx)
-	}
-
-	// Theme mode
-	modeSelect := widget.NewRadioGroup([]string{"dark", "light"}, nil)
-	modeSelect.Selected = s.ThemeMode
-	modeSelect.Horizontal = true
-
-	// Profile selector
-	profiles := ca.cfg.ListProfiles()
-	profileSelect := widget.NewSelect(profiles, nil)
-	profileSelect.SetSelected(s.ActiveProfile)
-
-	// Font size
-	fontEntry := widget.NewEntry()
-	fontEntry.SetText(strconv.Itoa(s.FontSize))
-
-	// Checkboxes
-	lineNumChk := widget.NewCheck("Show line numbers", nil)
-	lineNumChk.Checked = s.ShowLineNumbers
-
-	wordWrapChk := widget.NewCheck("Word wrap", nil)
-	wordWrapChk.Checked = s.WordWrap
-
-	// Buffer size
-	bufEntry := widget.NewEntry()
-	bufEntry.SetText(strconv.Itoa(s.BufferSize))
-
-	// Scroll buffer
-	scrollBufEntry := widget.NewEntry()
-	scrollBufEntry.SetText(strconv.Itoa(s.ScrollBuffer))
-
-	form := widget.NewForm(
-		widget.NewFormItem("Theme", themeSelect),
-		widget.NewFormItem("Mode", modeSelect),
-		widget.NewFormItem("Profile", profileSelect),
-		widget.NewFormItem("Font Size", fontEntry),
-		widget.NewFormItem("", lineNumChk),
-		widget.NewFormItem("", wordWrapChk),
-		widget.NewFormItem("Buffer Size", bufEntry),
-		widget.NewFormItem("Scroll Buffer", scrollBufEntry),
-	)
-
-	d := dialog.NewCustomConfirm("Settings", "Save", "Cancel", form, func(save bool) {
-		if !save {
-			return
-		}
-		ca.mu.Lock()
-		if themeSelect.Selected != "" {
-			ca.settings.Theme = themeSelect.Selected
-		}
-		ca.settings.ThemeMode = modeSelect.Selected
-		if profileSelect.Selected != "" {
-			ca.settings.ActiveProfile = profileSelect.Selected
-		}
-		if fs, err := strconv.Atoi(fontEntry.Text); err == nil && fs >= 8 && fs <= 32 {
-			ca.settings.FontSize = fs
-		}
-		ca.settings.ShowLineNumbers = lineNumChk.Checked
-		ca.settings.WordWrap = wordWrapChk.Checked
-		if bs, err := strconv.Atoi(bufEntry.Text); err == nil && bs >= 1000 {
-			ca.settings.BufferSize = bs
-		}
-		if sb, err := strconv.Atoi(scrollBufEntry.Text); err == nil && sb >= 100 {
-			ca.settings.ScrollBuffer = sb
-		}
-		newSettings := ca.settings
-		ca.engine = loadRulesEngine(ca.cfg, newSettings)
-		ca.mu.Unlock()
-
-		ca.fyneApp.Settings().SetTheme(&ctailTheme{cfg: ca.cfg, settings: newSettings})
-		_ = ca.cfg.SaveSettings(newSettings)
-
-		// Refresh all tabs
-		ca.mu.Lock()
-		for _, t := range ca.tabs {
-			t.list.Refresh()
-		}
-		ca.mu.Unlock()
-	}, ca.mainWindow)
-
-	d.Resize(fyne.NewSize(500, 450))
-	d.Show()
-}
-
 func (ca *ctailApp) showAboutDialog() {
 	msg := fmt.Sprintf("ctail %s (build %s)\n\nA cross-platform log file viewer\nwith syntax highlighting.", version, buildNumber)
 	dialog.ShowInformation("About ctail", msg, ca.mainWindow)
+}
+
+// formatFileSize formats bytes into a human-readable string.
+func formatFileSize(size int64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+	switch {
+	case size >= GB:
+		return fmt.Sprintf("%.1f GB", float64(size)/float64(GB))
+	case size >= MB:
+		return fmt.Sprintf("%.1f MB", float64(size)/float64(MB))
+	case size >= KB:
+		return fmt.Sprintf("%.1f KB", float64(size)/float64(KB))
+	default:
+		return fmt.Sprintf("%d B", size)
+	}
 }
 
 // ctailTheme applies colors from the config theme system.
@@ -666,24 +946,24 @@ func (t *ctailTheme) getColors() config.ThemeColors {
 	}
 	// Catppuccin Mocha fallback
 	return config.ThemeColors{
-		BgPrimary:    "#1e1e2e",
-		BgSecondary:  "#181825",
-		BgSurface:    "#313244",
-		BgHover:      "#45475a",
-		TextPrimary:  "#cdd6f4",
+		BgPrimary:     "#1e1e2e",
+		BgSecondary:   "#181825",
+		BgSurface:     "#313244",
+		BgHover:       "#45475a",
+		TextPrimary:   "#cdd6f4",
 		TextSecondary: "#bac2de",
-		TextMuted:    "#6c7086",
-		Accent:       "#89b4fa",
-		AccentHover:  "#74c7ec",
-		Border:       "#45475a",
-		Danger:       "#f38ba8",
-		Success:      "#a6e3a1",
-		Warning:      "#f9e2af",
-		TabActive:    "#1e1e2e",
-		TabInactive:  "#181825",
-		BadgeColor:   "#f38ba8",
-		ScrollTrack:  "#313244",
-		ScrollThumb:  "#585b70",
+		TextMuted:     "#6c7086",
+		Accent:        "#89b4fa",
+		AccentHover:   "#74c7ec",
+		Border:        "#45475a",
+		Danger:        "#f38ba8",
+		Success:       "#a6e3a1",
+		Warning:       "#f9e2af",
+		TabActive:     "#1e1e2e",
+		TabInactive:   "#181825",
+		BadgeColor:    "#f38ba8",
+		ScrollTrack:   "#313244",
+		ScrollThumb:   "#585b70",
 	}
 }
 
@@ -717,3 +997,6 @@ func hexToColor(hex string) color.Color {
 	b, _ := strconv.ParseUint(hex[4:6], 16, 8)
 	return color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 255}
 }
+
+// Ensure layout import is used.
+var _ = layout.NewMaxLayout
