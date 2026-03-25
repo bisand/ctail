@@ -85,9 +85,10 @@ type ctailApp struct {
 	statusSize *widget.Label
 	followChk  *widget.Check
 
-	settingsPanel   *fyne.Container
-	settingsVisible bool
-	contentArea     *fyne.Container
+	settingsPanel       *fyne.Container
+	settingsPanelWidget fyne.CanvasObject
+	settingsVisible     bool
+	contentWrapper      *fyne.Container // Stack wrapping the content area
 }
 
 // logTab represents one open file tab.
@@ -207,20 +208,21 @@ func main() {
 
 	// Build settings panel
 	ca.settingsPanel = ca.buildSettingsPanel()
-	ca.settingsPanel.Hide()
+	ca.settingsPanelWidget = newFixedWidth(320, ca.settingsPanel)
 	ca.settingsVisible = false
 
-	settingsPanelWidget := newFixedWidth(320, ca.settingsPanel)
+	// Content wrapper: swapped between full-width and split layout
+	ca.contentWrapper = container.NewStack(ca.tabBar)
 
-	// Content area: tabBar center, settings panel right
-	ca.contentArea = container.NewBorder(nil, nil, nil, settingsPanelWidget, ca.tabBar)
+	topBar := container.NewVBox(toolbar, widget.NewSeparator())
+	bottomBar := container.NewVBox(widget.NewSeparator(), statusBarContainer)
 
 	// Main layout
 	content := container.NewBorder(
-		container.NewVBox(toolbar, widget.NewSeparator()),
-		container.NewVBox(widget.NewSeparator(), statusBarContainer),
+		topBar,
+		bottomBar,
 		nil, nil,
-		ca.contentArea,
+		ca.contentWrapper,
 	)
 
 	w.SetContent(content)
@@ -241,11 +243,15 @@ func (ca *ctailApp) toggleSettingsPanel() {
 	ca.mu.Unlock()
 
 	if visible {
-		ca.settingsPanel.Show()
+		// Split: tabBar center, settings panel right
+		ca.contentWrapper.Objects = []fyne.CanvasObject{
+			container.NewBorder(nil, nil, nil, ca.settingsPanelWidget, ca.tabBar),
+		}
 	} else {
-		ca.settingsPanel.Hide()
+		// Full width: tabBar only
+		ca.contentWrapper.Objects = []fyne.CanvasObject{ca.tabBar}
 	}
-	ca.contentArea.Refresh()
+	ca.contentWrapper.Refresh()
 }
 
 func (ca *ctailApp) buildSettingsPanel() *fyne.Container {
