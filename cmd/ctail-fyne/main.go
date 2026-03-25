@@ -69,6 +69,38 @@ func (r *fixedWidthRenderer) Refresh()                     { r.fw.content.Refres
 func (r *fixedWidthRenderer) Objects() []fyne.CanvasObject { return []fyne.CanvasObject{r.fw.content} }
 func (r *fixedWidthRenderer) Destroy()                     {}
 
+// fixedSquareContainer constrains a canvas object to a fixed square size.
+type fixedSquareContainer struct {
+	widget.BaseWidget
+	size    float32
+	content fyne.CanvasObject
+}
+
+func newFixedSquare(size float32, content fyne.CanvasObject) *fixedSquareContainer {
+	fs := &fixedSquareContainer{size: size, content: content}
+	fs.ExtendBaseWidget(fs)
+	return fs
+}
+
+func (fs *fixedSquareContainer) CreateRenderer() fyne.WidgetRenderer {
+	return &fixedSquareRenderer{fs: fs}
+}
+
+type fixedSquareRenderer struct {
+	fs *fixedSquareContainer
+}
+
+func (r *fixedSquareRenderer) MinSize() fyne.Size {
+	return fyne.NewSize(r.fs.size, r.fs.size)
+}
+func (r *fixedSquareRenderer) Layout(size fyne.Size) {
+	r.fs.content.Resize(fyne.NewSize(r.fs.size, r.fs.size))
+	r.fs.content.Move(fyne.NewPos(0, 0))
+}
+func (r *fixedSquareRenderer) Refresh()                     { r.fs.content.Refresh() }
+func (r *fixedSquareRenderer) Objects() []fyne.CanvasObject { return []fyne.CanvasObject{r.fs.content} }
+func (r *fixedSquareRenderer) Destroy()                     {}
+
 // ctailApp holds all application state.
 type ctailApp struct {
 	mu sync.Mutex
@@ -189,17 +221,22 @@ func main() {
 		ca.closeTabByItem(item)
 	}
 
-	// Toolbar — Fyne demo style with icon actions
-	toolbar := widget.NewToolbar(
-		widget.NewToolbarAction(theme.FolderOpenIcon(), func() {
-			ca.showOpenDialog()
-		}),
-		widget.NewToolbarSeparator(),
-		widget.NewToolbarSpacer(),
-		widget.NewToolbarAction(theme.SettingsIcon(), func() {
-			ca.toggleSettingsPanel()
-		}),
-	)
+	// Toolbar — text+icon buttons matching Svelte style
+	openBtn := widget.NewButtonWithIcon("Open", theme.FolderOpenIcon(), func() {
+		ca.showOpenDialog()
+	})
+	openBtn.Importance = widget.HighImportance
+
+	settingsBtn := widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), func() {
+		ca.toggleSettingsPanel()
+	})
+	settingsBtn.Importance = widget.MediumImportance
+
+	brandLabel := widget.NewLabel("ctail")
+	brandLabel.TextStyle = fyne.TextStyle{Bold: true}
+
+	toolbarRight := container.NewHBox(openBtn, settingsBtn)
+	toolbarRow := container.NewBorder(nil, nil, brandLabel, toolbarRight)
 
 	// Build settings panel
 	ca.settingsPanel = ca.buildSettingsPanel()
@@ -209,7 +246,7 @@ func main() {
 	// Content wrapper: swapped between full-width and split layout
 	ca.contentWrapper = container.NewStack(ca.tabBar)
 
-	topBar := container.NewVBox(toolbar, widget.NewSeparator())
+	topBar := container.NewVBox(toolbarRow, widget.NewSeparator())
 	bottomBar := container.NewVBox(widget.NewSeparator(), statusBarContainer)
 
 	// Main layout
@@ -458,10 +495,8 @@ func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
 
 	rulesList := container.NewVBox()
 
-	// Forward-declare refreshRules so it can be referenced in closures
 	var refreshRules func(string)
 
-	// showRuleEditor opens a dialog to edit or create a rule.
 	showRuleEditor := func(profileName string, rule *config.Rule, isNew bool) {
 		nameEntry := widget.NewEntry()
 		nameEntry.SetPlaceHolder("Rule name")
@@ -563,43 +598,35 @@ func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
 			rule := r
 			ruleIdx := idx
 
-			enabledChk := widget.NewCheck("", func(on bool) {
-				pp, exists := ca.cfg.GetProfile(profileName)
-				if !exists || ruleIdx >= len(pp.Rules) {
-					return
-				}
-				pp.Rules[ruleIdx].Enabled = on
-				_ = ca.cfg.SaveProfile(pp)
-				ca.mu.Lock()
-				ca.engine = loadRulesEngine(ca.cfg, ca.settings)
-				ca.mu.Unlock()
-				ca.refreshAllTabs()
-			})
-			enabledChk.Checked = rule.Enabled
-
-			nameLabel := widget.NewLabel(rule.Name)
-			nameLabel.TextStyle = fyne.TextStyle{Bold: true}
-
-			typeBadge := widget.NewLabel("[" + rule.MatchType + "]")
-
-			// Color preview
-			colorInfo := ""
+			// Colored indicator dot (using rule's foreground color)
+			indicatorColor := color.NRGBA{R: 128, G: 128, B: 128, A: 255}
 			if rule.Foreground != "" {
-				colorInfo = "fg:" + rule.Foreground
+				indicatorColor = hexToNRGBA(rule.Foreground)
 			}
-			if rule.Background != "" {
-				if colorInfo != "" {
-					colorInfo += " "
-				}
-				colorInfo += "bg:" + rule.Background
-			}
+			indicator := canvas.NewCircle(indicatorColor)
+			indicator.StrokeWidth = 0
+			indicatorWrap := container.NewStack(newFixedSquare(10, indicator))
 
-			editBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
+			// Rule name in the rule's foreground color
+			var nameColor color.Color = color.White
+			if rule.Foreground != "" {
+				nameColor = hexToColor(rule.Foreground)
+			}
+			nameText := canvas.NewText(rule.Name, nameColor)
+			nameText.TextStyle = fyne.TextStyle{Bold: true}
+			nameText.TextSize = 12
+
+			// Match type badge
+			typeBadge := widget.NewLabel(rule.MatchType)
+
+			// Edit button
+			editBtn := widget.NewButtonWithIcon("Edit", theme.DocumentCreateIcon(), func() {
 				showRuleEditor(profileName, &rule, false)
 			})
 			editBtn.Importance = widget.LowImportance
 
-			deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+			// Delete button (×)
+			deleteBtn := widget.NewButtonWithIcon("", theme.CancelIcon(), func() {
 				pp, exists := ca.cfg.GetProfile(profileName)
 				if !exists {
 					return
@@ -619,62 +646,36 @@ func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
 			})
 			deleteBtn.Importance = widget.LowImportance
 
-			// Move up/down buttons
-			upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() {
+			// Enable/disable toggle
+			enabledChk := widget.NewCheck("", func(on bool) {
 				pp, exists := ca.cfg.GetProfile(profileName)
-				if !exists || ruleIdx <= 0 || ruleIdx >= len(pp.Rules) {
+				if !exists || ruleIdx >= len(pp.Rules) {
 					return
 				}
-				pp.Rules[ruleIdx], pp.Rules[ruleIdx-1] = pp.Rules[ruleIdx-1], pp.Rules[ruleIdx]
-				for i := range pp.Rules {
-					pp.Rules[i].Priority = i
-				}
+				pp.Rules[ruleIdx].Enabled = on
 				_ = ca.cfg.SaveProfile(pp)
 				ca.mu.Lock()
 				ca.engine = loadRulesEngine(ca.cfg, ca.settings)
 				ca.mu.Unlock()
-				refreshRules(profileName)
 				ca.refreshAllTabs()
 			})
-			upBtn.Importance = widget.LowImportance
+			enabledChk.Checked = rule.Enabled
 
-			downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() {
-				pp, exists := ca.cfg.GetProfile(profileName)
-				if !exists || ruleIdx >= len(pp.Rules)-1 {
-					return
-				}
-				pp.Rules[ruleIdx], pp.Rules[ruleIdx+1] = pp.Rules[ruleIdx+1], pp.Rules[ruleIdx]
-				for i := range pp.Rules {
-					pp.Rules[i].Priority = i
-				}
-				_ = ca.cfg.SaveProfile(pp)
-				ca.mu.Lock()
-				ca.engine = loadRulesEngine(ca.cfg, ca.settings)
-				ca.mu.Unlock()
-				refreshRules(profileName)
-				ca.refreshAllTabs()
-			})
-			downBtn.Importance = widget.LowImportance
+			// Pattern text below
+			patternText := canvas.NewText(rule.Pattern, color.Gray{Y: 160})
+			patternText.TextStyle = fyne.TextStyle{Monospace: true}
+			patternText.TextSize = 11
 
-			patternLabel := widget.NewLabel(rule.Pattern)
-			patternLabel.TextStyle = fyne.TextStyle{Monospace: true}
-			patternLabel.Wrapping = fyne.TextTruncate
+			// Layout: top row = indicator + name + badge + buttons
+			nameAndBadge := container.NewHBox(indicatorWrap, enabledChk, nameText, typeBadge)
+			btns := container.NewHBox(editBtn, deleteBtn)
+			topRow := container.NewBorder(nil, nil, nameAndBadge, btns)
 
-			topRow := container.NewHBox(enabledChk, upBtn, downBtn, nameLabel, typeBadge)
-			btnRow := container.NewHBox(editBtn, deleteBtn)
-			header := container.NewBorder(nil, nil, topRow, btnRow)
+			// Card-like container with padding
+			ruleCard := container.NewVBox(topRow, container.NewPadded(patternText))
 
-			var extraInfo fyne.CanvasObject
-			if colorInfo != "" {
-				cl := widget.NewLabel(colorInfo)
-				cl.TextStyle = fyne.TextStyle{Monospace: true}
-				extraInfo = container.NewVBox(patternLabel, cl, widget.NewSeparator())
-			} else {
-				extraInfo = container.NewVBox(patternLabel, widget.NewSeparator())
-			}
-
-			item := container.NewVBox(header, extraInfo)
-			rulesList.Add(item)
+			// Subtle separator between rules
+			rulesList.Add(container.NewVBox(ruleCard, widget.NewSeparator()))
 		}
 		rulesList.Refresh()
 	}
@@ -692,20 +693,69 @@ func (ca *ctailApp) buildRulesTab() fyne.CanvasObject {
 		ca.refreshAllTabs()
 	}
 
-	profileLabel := widget.NewLabel("Profile")
-	profileLabel.TextStyle = fyne.TextStyle{Bold: true}
-	profileHeader := container.NewVBox(profileLabel, profileSelect, widget.NewSeparator())
+	// Profile header with +/trash buttons (matching Svelte)
+	addProfileBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+		nameEntry := widget.NewEntry()
+		nameEntry.SetPlaceHolder("New profile name")
+		d := dialog.NewCustomConfirm("New Profile", "Create", "Cancel",
+			widget.NewForm(&widget.FormItem{Text: "Name", Widget: nameEntry}),
+			func(ok bool) {
+				if !ok || nameEntry.Text == "" {
+					return
+				}
+				newProfile := config.Profile{Name: nameEntry.Text, Rules: []config.Rule{}}
+				_ = ca.cfg.SaveProfile(newProfile)
+				profileSelect.Options = ca.cfg.ListProfiles()
+				profileSelect.SetSelected(nameEntry.Text)
+				profileSelect.Refresh()
+			}, ca.mainWindow)
+		d.Show()
+	})
+	addProfileBtn.Importance = widget.LowImportance
 
-	addBtn := widget.NewButtonWithIcon("Add Rule", theme.ContentAddIcon(), func() {
+	deleteProfileBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+		ca.mu.Lock()
+		pName := ca.settings.ActiveProfile
+		ca.mu.Unlock()
+		if pName == "" {
+			return
+		}
+		dialog.ShowConfirm("Delete Profile", fmt.Sprintf("Delete profile '%s'?", pName), func(ok bool) {
+			if !ok {
+				return
+			}
+			_ = ca.cfg.DeleteProfile(pName)
+			profiles := ca.cfg.ListProfiles()
+			profileSelect.Options = profiles
+			if len(profiles) > 0 {
+				profileSelect.SetSelected(profiles[0])
+			}
+			profileSelect.Refresh()
+		}, ca.mainWindow)
+	})
+	deleteProfileBtn.Importance = widget.LowImportance
+
+	profileRow := container.NewBorder(nil, nil, nil,
+		container.NewHBox(addProfileBtn, deleteProfileBtn),
+		profileSelect,
+	)
+
+	helpText := widget.NewLabel("Rules are applied top to bottom. Rules lower in the list take precedence over earlier ones.")
+	helpText.Wrapping = fyne.TextWrapWord
+	helpText.TextStyle = fyne.TextStyle{Italic: true}
+
+	profileHeader := container.NewVBox(profileRow, helpText, widget.NewSeparator())
+
+	addRuleBtn := widget.NewButtonWithIcon("Add Rule", theme.ContentAddIcon(), func() {
 		ca.mu.Lock()
 		pName := ca.settings.ActiveProfile
 		ca.mu.Unlock()
 		showRuleEditor(pName, nil, true)
 	})
-	addBtn.Importance = widget.HighImportance
+	addRuleBtn.Importance = widget.HighImportance
 
 	rulesScroll := container.NewVScroll(rulesList)
-	return container.NewBorder(profileHeader, addBtn, nil, nil, rulesScroll)
+	return container.NewBorder(profileHeader, addRuleBtn, nil, nil, rulesScroll)
 }
 
 func (ca *ctailApp) refreshAllTabs() {
@@ -1412,13 +1462,13 @@ func (t *ctailTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
 	case theme.SizeNamePadding:
-		return 2
+		return 3
 	case theme.SizeNameInnerPadding:
 		return 2
 	case theme.SizeNameLineSpacing:
 		return 0
 	case theme.SizeNameSeparatorThickness:
-		return 0
+		return 1
 	}
 	return theme.DefaultTheme().Size(name)
 }
@@ -1477,6 +1527,20 @@ func hexToColor(hex string) color.Color {
 	}
 	if len(hex) != 6 {
 		return color.White
+	}
+	r, _ := strconv.ParseUint(hex[0:2], 16, 8)
+	g, _ := strconv.ParseUint(hex[2:4], 16, 8)
+	b, _ := strconv.ParseUint(hex[4:6], 16, 8)
+	return color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 255}
+}
+
+func hexToNRGBA(hex string) color.NRGBA {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) == 3 {
+		hex = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+	}
+	if len(hex) != 6 {
+		return color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 	}
 	r, _ := strconv.ParseUint(hex[0:2], 16, 8)
 	g, _ := strconv.ParseUint(hex[2:4], 16, 8)
