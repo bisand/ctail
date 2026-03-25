@@ -16,7 +16,6 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -103,6 +102,7 @@ type logTab struct {
 
 	autoScroll bool
 	loading    bool
+	fetching   bool // prevents concurrent preloads
 
 	// UI widgets
 	list    *widget.List
@@ -188,13 +188,15 @@ func main() {
 	// Toolbar
 	titleLabel := canvas.NewText("ctail", hexToColor("#89b4fa"))
 	titleLabel.TextStyle = fyne.TextStyle{Bold: true}
-	titleLabel.TextSize = 16
+	titleLabel.TextSize = 12
 
-	openBtn := widget.NewButton("📁 Open", func() {
+	openBtn := widget.NewButton("Open", func() {
 		ca.showOpenDialog()
 	})
+	openBtn.Importance = widget.LowImportance
 
-	settingsBtn := widget.NewButton("⚙ Settings", nil)
+	settingsBtn := widget.NewButton("Settings", nil)
+	settingsBtn.Importance = widget.LowImportance
 	settingsBtn.OnTapped = func() {
 		ca.toggleSettingsPanel()
 	}
@@ -500,6 +502,138 @@ func (ca *ctailApp) refreshAllTabs() {
 	}
 }
 
+const fetchBatch = 200
+
+// checkScrollPreload detects when the list is rendering items near the
+// edges of the buffer and triggers a preload of earlier/later lines.
+func (ca *ctailApp) checkScrollPreload(tab *logTab, visibleID int) {
+	ca.mu.Lock()
+	if tab.fetching {
+		ca.mu.Unlock()
+		return
+	}
+	nLines := len(tab.lines)
+	if nLines == 0 {
+		ca.mu.Unlock()
+		return
+	}
+
+	triggerTop := nLines / 4
+	triggerBottom := nLines * 3 / 4
+	firstLineNum := tab.lines[0].Number
+	lastLineNum := tab.lines[nLines-1].Number
+	ca.mu.Unlock()
+
+	if visibleID < triggerTop && firstLineNum > 1 {
+		// Scrolling near top — fetch earlier lines
+		ca.fetchEarlierLines(tab)
+	} else if visibleID > triggerBottom && !tab.autoScroll {
+		// Scrolling near bottom — fetch later lines
+		ca.fetchLaterLines(tab, lastLineNum)
+	}
+}
+
+func (ca *ctailApp) fetchEarlierLines(tab *logTab) {
+	ca.mu.Lock()
+	if tab.fetching || len(tab.lines) == 0 {
+		ca.mu.Unlock()
+		return
+	}
+	tab.fetching = true
+	firstLineNum := tab.lines[0].Number
+	bufSize := ca.settings.BufferSize
+	if bufSize < 1000 {
+		bufSize = 10000
+	}
+	ca.mu.Unlock()
+
+	if firstLineNum <= 1 {
+		ca.mu.Lock()
+		tab.fetching = false
+		ca.mu.Unlock()
+		return
+	}
+
+	go func() {
+		fetchStart := firstLineNum - int64(fetchBatch)
+		if fetchStart < 1 {
+			fetchStart = 1
+		}
+		count := int(firstLineNum - fetchStart)
+		if count <= 0 {
+			ca.mu.Lock()
+			tab.fetching = false
+			ca.mu.Unlock()
+			return
+		}
+
+		olderLines := tab.tailer.ReadRange(fetchStart, count)
+		if len(olderLines) == 0 {
+			ca.mu.Lock()
+			tab.fetching = false
+			ca.mu.Unlock()
+			return
+		}
+
+		ca.mu.Lock()
+		// Prepend older lines, trim to buffer size
+		combined := make([]tailer.Line, 0, len(olderLines)+len(tab.lines))
+		combined = append(combined, olderLines...)
+		combined = append(combined, tab.lines...)
+		if len(combined) > bufSize {
+			combined = combined[:bufSize]
+		}
+		tab.lines = combined
+		tab.fetching = false
+		ca.mu.Unlock()
+
+		// Scroll offset adjustment: shift down by the number of prepended lines
+		// Fyne's List widget manages its own scroll, so we just refresh
+		tab.list.Refresh()
+		ca.updateStatusBar()
+	}()
+}
+
+func (ca *ctailApp) fetchLaterLines(tab *logTab, lastLineNum int64) {
+	ca.mu.Lock()
+	if tab.fetching {
+		ca.mu.Unlock()
+		return
+	}
+	tab.fetching = true
+	bufSize := ca.settings.BufferSize
+	if bufSize < 1000 {
+		bufSize = 10000
+	}
+	ca.mu.Unlock()
+
+	go func() {
+		fetchStart := lastLineNum + 1
+		newerLines := tab.tailer.ReadRange(fetchStart, fetchBatch)
+		if len(newerLines) == 0 {
+			ca.mu.Lock()
+			tab.fetching = false
+			ca.mu.Unlock()
+			return
+		}
+
+		ca.mu.Lock()
+		// Append newer lines, trim from start to buffer size
+		combined := make([]tailer.Line, 0, len(tab.lines)+len(newerLines))
+		combined = append(combined, tab.lines...)
+		combined = append(combined, newerLines...)
+		if len(combined) > bufSize {
+			combined = combined[len(combined)-bufSize:]
+		}
+		tab.lines = combined
+		tab.fetching = false
+		ca.mu.Unlock()
+
+		tab.list.Refresh()
+		ca.updateStatusBar()
+	}()
+}
+
 func (ca *ctailApp) setupMenus() {
 	fileMenu := fyne.NewMenu("File",
 		fyne.NewMenuItem("Open File...", func() {
@@ -719,12 +853,14 @@ func (ca *ctailApp) createLineTemplate() fyne.CanvasObject {
 }
 
 // getTextSize returns the font size scaled for Fyne's dp system.
+// Fyne dp units are roughly 1.5x CSS px, so we scale down to match
+// the density of the original Svelte UI.
 func (ca *ctailApp) getTextSize() float32 {
 	fs := ca.settings.FontSize
 	if fs < 8 || fs > 32 {
 		fs = 12
 	}
-	return float32(fs)
+	return float32(fs) * 0.65
 }
 
 func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.CanvasObject) {
@@ -735,13 +871,10 @@ func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.C
 	}
 	line := tab.lines[id]
 	showNums := ca.settings.ShowLineNumbers
-	fontSize := ca.settings.FontSize
 	engine := ca.engine
 	ca.mu.Unlock()
 
-	if fontSize < 8 || fontSize > 32 {
-		fontSize = 12
-	}
+	scaledSize := ca.getTextSize()
 
 	box := obj.(*fyne.Container)
 	numLabel := box.Objects[0].(*canvas.Text)
@@ -754,11 +887,11 @@ func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.C
 		numLabel.Text = ""
 		numLabel.Hide()
 	}
-	numLabel.TextSize = float32(fontSize)
+	numLabel.TextSize = scaledSize
 	numLabel.Color = color.Gray{Y: 128}
 
 	textLabel.Text = line.Text
-	textLabel.TextSize = float32(fontSize)
+	textLabel.TextSize = scaledSize
 
 	// Apply highlighting
 	result := engine.Apply(line.Text)
@@ -778,6 +911,9 @@ func (ca *ctailApp) updateLineItem(tab *logTab, id widget.ListItemID, obj fyne.C
 
 	numLabel.Refresh()
 	textLabel.Refresh()
+
+	// Trigger scroll preloading when rendering near buffer edges
+	go ca.checkScrollPreload(tab, id)
 }
 
 func (ca *ctailApp) closeTab(idx int) {
@@ -928,11 +1064,13 @@ func (t *ctailTheme) Size(name fyne.ThemeSizeName) float32 {
 		if fs < 8 || fs > 32 {
 			fs = 12
 		}
-		return float32(fs)
+		return float32(fs) * 0.65
 	case theme.SizeNamePadding:
-		return 3
+		return 2
+	case theme.SizeNameInnerPadding:
+		return 2
 	case theme.SizeNameLineSpacing:
-		return 1
+		return 0
 	}
 	return theme.DefaultTheme().Size(name)
 }
@@ -997,6 +1135,3 @@ func hexToColor(hex string) color.Color {
 	b, _ := strconv.ParseUint(hex[4:6], 16, 8)
 	return color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 255}
 }
-
-// Ensure layout import is used.
-var _ = layout.NewMaxLayout
