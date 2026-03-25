@@ -667,11 +667,16 @@ func (a *App) GetSettings() config.AppSettings {
 	return a.config.GetSettings()
 }
 
-// SaveSettings saves app settings
+// SaveSettings saves app settings.
+// The frontend settings store does not track the Tabs slice (that is
+// managed separately via SaveTabOrder), so we preserve the current
+// persisted Tabs to avoid accidentally overwriting them.
 func (a *App) SaveSettings(s config.AppSettings) error {
 	if a.config == nil {
 		return fmt.Errorf("config not initialized")
 	}
+	current := a.config.GetSettings()
+	s.Tabs = current.Tabs
 	return a.config.SaveSettings(s)
 }
 
