@@ -71,6 +71,7 @@
       // Restore scroll position immediately — no tick/await needed since
       // the container DOM is already there (we removed {#key}).
       if (newId && container) {
+        programmaticScroll = true;
         const savedScroll = scrollPositions.get(newId);
         if (currentTab && currentTab.autoScroll) {
           container.scrollTop = container.scrollHeight;
@@ -80,7 +81,9 @@
           container.scrollTop = container.scrollHeight;
         }
         lastScrollTop = container.scrollTop;
+        isAtBottom = true;
         updateVisibleRange();
+        programmaticScroll = false;
       }
       if (newId) refreshStats();
     }
@@ -146,8 +149,10 @@
     const curCount = filteredLines.length;
     if (autoScroll && container && curCount !== prevLineCount) {
       prevLineCount = curCount;
-      container.scrollTop = totalContentHeight;
+      programmaticScroll = true;
+      container.scrollTop = container.scrollHeight;
       updateVisibleRange();
+      programmaticScroll = false;
     }
   });
 
