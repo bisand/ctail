@@ -41,46 +41,36 @@ export function highlightLine(text, rules) {
   // Check for line-level rules first (highest priority wins)
   let lineStyle = null;
   let linePriority = -1;
-  const sortedRules = [...rules].filter(r => r.enabled).sort((a, b) => a.priority - b.priority);
   
-  for (const rule of sortedRules) {
-    if (rule.matchType === 'line') {
-      try {
-        const re = getCachedRegex(rule.pattern, 'i');
-        if (re.test(text)) {
-          lineStyle = {
-            color: rule.foreground || undefined,
-            backgroundColor: rule.background || undefined,
-            fontWeight: rule.bold ? 'bold' : undefined,
-            fontStyle: rule.italic ? 'italic' : undefined,
-          };
-          linePriority = rule.priority;
-        }
-      } catch (e) {
-        // skip invalid regex
+  for (const rule of rules) {
+    if (!rule.enabled || rule.matchType !== 'line') continue;
+    try {
+      const re = getCachedRegex(rule.pattern, 'i');
+      if (re.test(text)) {
+        lineStyle = {
+          color: rule.foreground || undefined,
+          backgroundColor: rule.background || undefined,
+          fontWeight: rule.bold ? 'bold' : undefined,
+          fontStyle: rule.italic ? 'italic' : undefined,
+        };
+        linePriority = rule.priority;
       }
+    } catch (e) {
+      // skip invalid regex
     }
   }
 
   // Collect match-level highlights (only those with priority >= active line rule)
-  const matchRules = sortedRules.filter(r => r.matchType === 'match');
-  if (matchRules.length === 0) {
-    if (lineStyle) {
-      return [{ text, style: lineStyle }];
-    }
-    return [{ text, style: {} }];
-  }
-
-  // Find all match positions
   let allMatches = [];
-  for (const rule of matchRules) {
+  for (const rule of rules) {
+    if (!rule.enabled || rule.matchType !== 'match') continue;
     if (lineStyle && rule.priority < linePriority) continue;
     try {
       const re = getCachedRegex(rule.pattern, 'gi');
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(text)) !== null) {
-        if (m[0].length === 0) break; // prevent infinite loop on zero-width matches
+        if (m[0].length === 0) break;
         allMatches.push({
           start: m.index,
           end: m.index + m[0].length,

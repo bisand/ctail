@@ -51,7 +51,8 @@
   let lines = $derived(currentTab ? currentTab.lines : []);
   let profileName = $derived($settings.activeProfile || 'Common Logs');
   let profile = $derived($profiles[profileName]);
-  let rules = $derived(profile ? profile.rules : []);
+  // Pre-sort rules by priority so highlightLine doesn't re-sort per line
+  let rules = $derived(profile ? [...profile.rules].sort((a, b) => a.priority - b.priority) : []);
 
   // Two-phase render: skip highlighting on tab switch for instant feel,
   // then apply it one frame later.
@@ -64,28 +65,24 @@
       if (prevTabId && container) {
         scrollPositions.set(prevTabId, container.scrollTop);
       }
-      // Clear prefetch cache for the tab we're leaving (deferred to avoid lag)
       prevTabId = newId;
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
-      // Restore scroll position for the new tab and force repaint
-      if (newId) {
-        tick().then(() => {
-          if (container) {
-            const savedScroll = scrollPositions.get(newId);
-            if (currentTab && currentTab.autoScroll) {
-              container.scrollTop = container.scrollHeight;
-            } else if (savedScroll !== undefined) {
-              container.scrollTop = savedScroll;
-            } else {
-              container.scrollTop = container.scrollHeight;
-            }
-            lastScrollTop = container.scrollTop;
-            updateVisibleRange();
-          }
-        });
-        refreshStats();
+      // Restore scroll position immediately — no tick/await needed since
+      // the container DOM is already there (we removed {#key}).
+      if (newId && container) {
+        const savedScroll = scrollPositions.get(newId);
+        if (currentTab && currentTab.autoScroll) {
+          container.scrollTop = container.scrollHeight;
+        } else if (savedScroll !== undefined) {
+          container.scrollTop = savedScroll;
+        } else {
+          container.scrollTop = container.scrollHeight;
+        }
+        lastScrollTop = container.scrollTop;
+        updateVisibleRange();
       }
+      if (newId) refreshStats();
     }
   });
   let autoScroll = $derived(currentTab ? currentTab.autoScroll : true);
