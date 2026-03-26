@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,21 +170,45 @@ func (a *App) handleFileOpen(filePath string) {
 // from a file manager). The second instance exits and its CLI args are forwarded here
 // via D-Bus (Linux) or named mutex (Windows). Runs in a goroutine to avoid blocking
 // the D-Bus/IPC callback thread.
+// normalizeFilePath converts file:// URIs to plain paths and resolves relative paths.
+func normalizeFilePath(arg, workingDir string) string {
+	path := arg
+	if strings.HasPrefix(arg, "file://") {
+		if u, err := url.Parse(arg); err == nil {
+			path = u.Path
+		}
+	}
+	if !filepath.IsAbs(path) && workingDir != "" {
+		path = filepath.Join(workingDir, path)
+	}
+	return filepath.Clean(path)
+}
+
+// onSecondInstance is called when a second ctail instance is launched (e.g. "Open With"
+// from a file manager). The second instance exits and its CLI args are forwarded here
+// via D-Bus (Linux) or named mutex (Windows). Runs in a goroutine to avoid blocking
+// the D-Bus/IPC callback thread.
 func (a *App) onSecondInstance(data options.SecondInstanceData) {
 	go func() {
+		fmt.Printf("[SingleInstance] Args: %v, WorkingDir: %s\n", data.Args, data.WorkingDirectory)
+
 		// Bring existing window to front
 		wailsRuntime.WindowUnminimise(a.ctx)
 		wailsRuntime.Show(a.ctx)
 
+		// Small delay to let the window fully activate before emitting events
+		time.Sleep(200 * time.Millisecond)
+
 		// Parse file paths from the second instance's args (skip argv[0])
-		for _, arg := range data.Args[1:] {
+		for i, arg := range data.Args {
+			if i == 0 {
+				continue // skip binary name
+			}
 			if strings.HasPrefix(arg, "-") {
 				continue
 			}
-			abs := arg
-			if !filepath.IsAbs(arg) {
-				abs = filepath.Join(data.WorkingDirectory, arg)
-			}
+			abs := normalizeFilePath(arg, data.WorkingDirectory)
+			fmt.Printf("[SingleInstance] Emitting file:open-external for: %s\n", abs)
 			wailsRuntime.EventsEmit(a.ctx, "file:open-external", abs)
 		}
 	}()
