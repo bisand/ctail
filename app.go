@@ -152,6 +152,18 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
+// handleFileOpen is called by macOS when files are opened via Finder (double-click,
+// drag-to-dock, Open With). It emits an event so the frontend can open them as tabs.
+func (a *App) handleFileOpen(filePath string) {
+	if a.ctx == nil {
+		a.mu.Lock()
+		a.pendingFiles = append(a.pendingFiles, filePath)
+		a.mu.Unlock()
+		return
+	}
+	wailsRuntime.EventsEmit(a.ctx, "file:open-external", filePath)
+}
+
 func (a *App) shutdown(ctx context.Context) {
 	// Stop the window state tracker
 	if a.stopWinTracker != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -164,6 +165,14 @@ func main() {
 		Linux: &linux.Options{
 			Icon:        appIcon,
 			ProgramName: "ctail",
+		},
+		Mac: &mac.Options{
+			About: &mac.AboutInfo{
+				Title:   "ctail",
+				Message: "Log file viewer with real-time tailing and regex highlighting",
+				Icon:    appIcon,
+			},
+			OnFileOpen: app.handleFileOpen,
 		},
 		Bind: []interface{}{
 			app,

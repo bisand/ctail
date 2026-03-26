@@ -181,6 +181,17 @@
       openRecentFile(filePath);
     });
 
+    // Files opened externally (macOS Finder, or emitted from Go)
+    EventsOn('file:open-external', async (filePath) => {
+      try {
+        const fileName = filePath.split(/[/\\]/).pop();
+        const tabId = await OpenTab(filePath);
+        tabStore.addTab(tabId, filePath, fileName);
+      } catch (e) {
+        console.warn('Failed to open external file:', filePath, e);
+      }
+    });
+
     EventsOn('menu:close-tab', () => {
       const tab = $activeTab;
       if (tab) {

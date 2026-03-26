@@ -8,5 +8,34 @@
   "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "André Biseth"
+  },
+  "info": {
+    "productName": "ctail",
+    "companyName": "bisand",
+    "copyright": "Copyright © 2024-2026 André Biseth",
+    "comments": "Log file viewer with real-time tailing and regex highlighting",
+    "fileAssociations": [
+      {
+        "ext": "log",
+        "name": "Log File",
+        "description": "Log File",
+        "iconName": "appicon",
+        "role": "Viewer"
+      },
+      {
+        "ext": "txt",
+        "name": "Text File",
+        "description": "Text File",
+        "iconName": "appicon",
+        "role": "Viewer"
+      },
+      {
+        "ext": "csv",
+        "name": "CSV File",
+        "description": "CSV File",
+        "iconName": "appicon",
+        "role": "Viewer"
+      }
+    ]
   }
 }
