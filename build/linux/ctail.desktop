@@ -1,10 +1,11 @@
 [Desktop Entry]
 Name=ctail
 Comment=Log file viewer with real-time tailing and regex highlighting
-Exec=ctail %F
+Exec=/usr/local/bin/ctail %F
 Icon=ctail
 Terminal=false
 Type=Application
+StartupNotify=true
 Categories=Development;Utility;
 Keywords=log;tail;viewer;highlighting;
 MimeType=text/plain;text/x-log;application/x-log;text/csv;
