@@ -23,11 +23,9 @@ function createTabStore() {
     getActiveTabId() {
       return currentState.activeTabId;
     },
-    addTab(id, filePath, fileName) {
-      update(state => ({
-        ...state,
-        activeTabId: id,
-        tabs: [...state.tabs, {
+    addTab(id, filePath, fileName, position) {
+      update(state => {
+        const newTab = {
           id,
           filePath,
           fileName,
@@ -42,8 +40,15 @@ function createTabStore() {
           loadingLines: false,
           status: 'loading',
           errorMessage: ''
-        }]
-      }));
+        };
+        const tabs = [...state.tabs];
+        if (position != null && position >= 0 && position <= tabs.length) {
+          tabs.splice(position, 0, newTab);
+        } else {
+          tabs.push(newTab);
+        }
+        return { ...state, activeTabId: id, tabs };
+      });
     },
     removeTab(id) {
       update(state => {

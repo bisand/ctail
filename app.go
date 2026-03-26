@@ -207,12 +207,10 @@ func (a *App) onSecondInstance(data options.SecondInstanceData) {
 		// Small delay to let the window fully activate before emitting events
 		time.Sleep(200 * time.Millisecond)
 
-		// Parse file paths from the second instance's args (skip argv[0])
-		for i, arg := range data.Args {
-			if i == 0 {
-				continue // skip binary name
-			}
-			if strings.HasPrefix(arg, "-") {
+		// Parse file paths from the second instance's args.
+		// Wails SingleInstanceLock forwards only the positional args (no binary name).
+		for _, arg := range data.Args {
+			if arg == "" || strings.HasPrefix(arg, "-") {
 				continue
 			}
 			abs := normalizeFilePath(arg, data.WorkingDirectory)
