@@ -192,6 +192,14 @@ func (a *App) onSecondInstance(data options.SecondInstanceData) {
 	go func() {
 		fmt.Printf("[SingleInstance] Args: %v, WorkingDir: %s\n", data.Args, data.WorkingDirectory)
 
+		// Debug popup so we can see what "Open With" sends
+		msg := fmt.Sprintf("Args: %v\nWorkingDir: %s", data.Args, data.WorkingDirectory)
+		wailsRuntime.MessageDialog(a.ctx, wailsRuntime.MessageDialogOptions{
+			Type:    wailsRuntime.InfoDialog,
+			Title:   "Open With — Debug",
+			Message: msg,
+		})
+
 		// Bring existing window to front
 		wailsRuntime.WindowUnminimise(a.ctx)
 		wailsRuntime.Show(a.ctx)
