@@ -69,22 +69,24 @@
       prevTotalLines = -1; // force auto-scroll effect to fire for the new tab
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
-      // Restore scroll position immediately — no tick/await needed since
-      // the container DOM is already there (we removed {#key}).
+      // Restore scroll position after Svelte flushes the DOM update
       if (newId && container) {
-        programmaticScroll = true;
-        const savedScroll = scrollPositions.get(newId);
-        if (currentTab && currentTab.autoScroll) {
-          container.scrollTop = container.scrollHeight;
-        } else if (savedScroll !== undefined) {
-          container.scrollTop = savedScroll;
-        } else {
-          container.scrollTop = container.scrollHeight;
-        }
-        lastScrollTop = container.scrollTop;
-        isAtBottom = true;
-        updateVisibleRange();
-        programmaticScroll = false;
+        tick().then(() => {
+          if (!container) return;
+          programmaticScroll = true;
+          const savedScroll = scrollPositions.get(newId);
+          if (currentTab && currentTab.autoScroll) {
+            container.scrollTop = container.scrollHeight;
+          } else if (savedScroll !== undefined) {
+            container.scrollTop = savedScroll;
+          } else {
+            container.scrollTop = container.scrollHeight;
+          }
+          lastScrollTop = container.scrollTop;
+          isAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
+          updateVisibleRange();
+          programmaticScroll = false;
+        });
       }
       if (newId) refreshStats();
     }
@@ -144,17 +146,21 @@
     return () => window.removeEventListener('ctail:find', handleMenuFind);
   });
 
-  // Auto-scroll when new lines arrive. Uses totalLines (which always increases)
-  // rather than filteredLines.length (which stays constant due to eviction).
+  // Auto-scroll when new lines arrive or when switching to a tab with follow.
+  // Uses totalLines (always increases) rather than array length (constant due to eviction).
   let prevTotalLines = -1;
   $effect(() => {
     const curTotal = totalLines;
     if (autoScroll && container && curTotal !== prevTotalLines) {
       prevTotalLines = curTotal;
-      programmaticScroll = true;
-      container.scrollTop = container.scrollHeight;
-      updateVisibleRange();
-      programmaticScroll = false;
+      tick().then(() => {
+        if (container) {
+          programmaticScroll = true;
+          container.scrollTop = container.scrollHeight;
+          updateVisibleRange();
+          programmaticScroll = false;
+        }
+      });
     }
   });
 
