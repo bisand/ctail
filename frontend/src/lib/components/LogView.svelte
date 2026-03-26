@@ -66,6 +66,7 @@
         scrollPositions.set(prevTabId, container.scrollTop);
       }
       prevTabId = newId;
+      prevLineCount = -1; // force auto-scroll effect to fire for the new tab
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
       // Restore scroll position immediately — no tick/await needed since
