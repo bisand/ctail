@@ -190,16 +190,6 @@ func normalizeFilePath(arg, workingDir string) string {
 // the D-Bus/IPC callback thread.
 func (a *App) onSecondInstance(data options.SecondInstanceData) {
 	go func() {
-		fmt.Printf("[SingleInstance] Args: %v, WorkingDir: %s\n", data.Args, data.WorkingDirectory)
-
-		// Debug popup so we can see what "Open With" sends
-		msg := fmt.Sprintf("Args: %v\nWorkingDir: %s", data.Args, data.WorkingDirectory)
-		wailsRuntime.MessageDialog(a.ctx, wailsRuntime.MessageDialogOptions{
-			Type:    wailsRuntime.InfoDialog,
-			Title:   "Open With — Debug",
-			Message: msg,
-		})
-
 		// Bring existing window to front
 		wailsRuntime.WindowUnminimise(a.ctx)
 		wailsRuntime.Show(a.ctx)
@@ -214,7 +204,7 @@ func (a *App) onSecondInstance(data options.SecondInstanceData) {
 				continue
 			}
 			abs := normalizeFilePath(arg, data.WorkingDirectory)
-			fmt.Printf("[SingleInstance] Emitting file:open-external for: %s\n", abs)
+			fmt.Printf("[SingleInstance] Opening file: %s\n", abs)
 			wailsRuntime.EventsEmit(a.ctx, "file:open-external", abs)
 		}
 	}()

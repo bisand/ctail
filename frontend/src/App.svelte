@@ -183,12 +183,8 @@
 
     // Files opened externally (macOS Finder, or emitted from Go)
     EventsOn('file:open-external', async (...args) => {
-      console.log('[file:open-external] received args:', args);
       const filePath = args[0];
-      if (!filePath || typeof filePath !== 'string') {
-        console.warn('[file:open-external] invalid filePath:', filePath);
-        return;
-      }
+      if (!filePath || typeof filePath !== 'string') return;
       try {
         const fileName = filePath.split(/[/\\]/).pop();
         const tabId = await OpenTab(filePath);
