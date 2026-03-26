@@ -167,26 +167,26 @@ func (a *App) handleFileOpen(filePath string) {
 
 // onSecondInstance is called when a second ctail instance is launched (e.g. "Open With"
 // from a file manager). The second instance exits and its CLI args are forwarded here
-// via D-Bus (Linux) or named mutex (Windows). We bring the window to front and open
-// any file paths from the args.
+// via D-Bus (Linux) or named mutex (Windows). Runs in a goroutine to avoid blocking
+// the D-Bus/IPC callback thread.
 func (a *App) onSecondInstance(data options.SecondInstanceData) {
-	// Bring existing window to front
-	wailsRuntime.WindowUnminimise(a.ctx)
-	wailsRuntime.Show(a.ctx)
+	go func() {
+		// Bring existing window to front
+		wailsRuntime.WindowUnminimise(a.ctx)
+		wailsRuntime.Show(a.ctx)
 
-	// Parse file paths from the second instance's args (skip argv[0] = binary name)
-	for _, arg := range data.Args[1:] {
-		if strings.HasPrefix(arg, "-") {
-			continue // skip flags
-		}
-		abs := arg
-		if !filepath.IsAbs(arg) {
-			abs = filepath.Join(data.WorkingDirectory, arg)
-		}
-		if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+		// Parse file paths from the second instance's args (skip argv[0])
+		for _, arg := range data.Args[1:] {
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			abs := arg
+			if !filepath.IsAbs(arg) {
+				abs = filepath.Join(data.WorkingDirectory, arg)
+			}
 			wailsRuntime.EventsEmit(a.ctx, "file:open-external", abs)
 		}
-	}
+	}()
 }
 
 func (a *App) shutdown(ctx context.Context) {

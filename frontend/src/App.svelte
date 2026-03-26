@@ -255,52 +255,34 @@
       updateAvailable = data;
     });
 
-    // Restore previously open tabs (non-blocking — tabs appear immediately)
+    // Restore saved tabs and open CLI files concurrently — fire all OpenTab
+    // calls without awaiting each one so the UI stays responsive.  Tab order
+    // is preserved by sorting before we start, and addTab is synchronous.
     try {
       const savedTabs = await GetSavedTabs();
+      const pending = await GetPendingFiles();
+
       if (savedTabs && savedTabs.length > 0) {
-        // Sort by saved position so tabs restore in the right order
         const sorted = [...savedTabs].sort((a, b) => (a.position || 0) - (b.position || 0));
         for (const tab of sorted) {
-          try {
-            const fileName = tab.filePath.split(/[/\\]/).pop();
-            const tabId = await OpenTab(tab.filePath);
-            tabStore.addTab(tabId, tab.filePath, fileName);
-            if (tab.profileId) {
-              tabStore.setProfile(tabId, tab.profileId);
-            }
-            if (tab.label) {
-              tabStore.setLabel(tabId, tab.label);
-            }
-            if (tab.color) {
-              tabStore.setColor(tabId, tab.color);
-            }
-            // Lines will arrive via tailer:ready → loadInitialLines
-          } catch (e) {
-            console.warn('Failed to restore tab:', tab.filePath, e);
-          }
+          OpenTab(tab.filePath).then(tabId => {
+            tabStore.addTab(tabId, tab.filePath, tab.filePath.split(/[/\\]/).pop());
+            if (tab.profileId) tabStore.setProfile(tabId, tab.profileId);
+            if (tab.label) tabStore.setLabel(tabId, tab.label);
+            if (tab.color) tabStore.setColor(tabId, tab.color);
+          }).catch(e => console.warn('Failed to restore tab:', tab.filePath, e));
+        }
+      }
+
+      if (pending && pending.length > 0) {
+        for (const filePath of pending) {
+          OpenTab(filePath).then(tabId => {
+            tabStore.addTab(tabId, filePath, filePath.split(/[/\\]/).pop());
+          }).catch(e => console.warn('Failed to open CLI file:', filePath, e));
         }
       }
     } catch (e) {
       console.error('Failed to restore tabs:', e);
-    }
-
-    // Open any files passed via CLI arguments (e.g. double-click in file manager)
-    try {
-      const pending = await GetPendingFiles();
-      if (pending && pending.length > 0) {
-        for (const filePath of pending) {
-          try {
-            const fileName = filePath.split(/[/\\]/).pop();
-            const tabId = await OpenTab(filePath);
-            tabStore.addTab(tabId, filePath, fileName);
-          } catch (e) {
-            console.warn('Failed to open CLI file:', filePath, e);
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Failed to open pending files:', e);
     }
 
     // Keyboard shortcuts — use capture phase so WebKit doesn't swallow

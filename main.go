@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -37,16 +38,19 @@ func main() {
 
 	// Collect file paths from positional CLI arguments (e.g. ctail file1.log file2.log)
 	// These are opened after the frontend has restored saved tabs.
+	// Only resolve to absolute paths here — don't stat/validate because the file
+	// might be on a slow network mount and we must not block before wails.Run().
 	if args := flag.Args(); len(args) > 0 {
 		var filePaths []string
 		for _, arg := range args {
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
 			abs, err := filepath.Abs(arg)
 			if err != nil {
 				continue
 			}
-			if info, err := os.Stat(abs); err == nil && !info.IsDir() {
-				filePaths = append(filePaths, abs)
-			}
+			filePaths = append(filePaths, abs)
 		}
 		app.pendingFiles = filePaths
 	}
