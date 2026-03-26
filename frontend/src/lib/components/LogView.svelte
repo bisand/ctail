@@ -532,8 +532,7 @@
     <div class="log-container" bind:this={container} onscroll={handleScroll} onwheel={handleWheel} oncontextmenu={handleContextMenu} oncopy={handleCopy}>
       {#if filteredLines.length > 0}
         <div class="virtual-spacer" style="height: {topPad}px"></div>
-        {#key currentTab?.id}
-          {#each visibleLines as line (line.number)}
+        {#each visibleLines as line (line.number)}
             <LogLine
               {line}
               rules={deferHighlight ? [] : rules}
@@ -541,7 +540,6 @@
               fontSize={$settings.fontSize}
             />
           {/each}
-        {/key}
         <div class="virtual-spacer" style="height: {bottomPad}px"></div>
       {/if}
       {#if lines.length === 0}

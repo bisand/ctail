@@ -68,11 +68,13 @@ function createTabStore() {
     },
     setActive(id) {
       update(state => {
-        const newState = { ...state, activeTabId: id };
-        newState.tabs = state.tabs.map(t =>
-          t.id === id ? { ...t, hasUpdate: false } : t
-        );
-        return newState;
+        if (state.activeTabId === id) return state;
+        const tab = state.tabs.find(t => t.id === id);
+        // Only clone the tabs array if we need to clear the update badge
+        const tabs = tab && tab.hasUpdate
+          ? state.tabs.map(t => t.id === id ? { ...t, hasUpdate: false } : t)
+          : state.tabs;
+        return { ...state, activeTabId: id, tabs };
       });
     },
     setLines(tabId, lines, totalLines) {
