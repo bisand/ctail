@@ -320,16 +320,14 @@
     window.addEventListener('resize', forceRepaint);
 
     // Keepalive: periodically nudge WebKit2GTK to repaint even when
-    // visibility/focus events don't fire.  3 seconds is infrequent enough
-    // to have zero performance impact but frequent enough to recover from
-    // compositor stalls within a few seconds of returning to the window.
+    // visibility/focus events don't fire.  Uses a sub-pixel translate that
+    // is invisible but forces the compositor to produce a new frame.
     const repaintKeepalive = setInterval(() => {
-      // Only nudge when the document is visible — no point while hidden.
       if (!document.hidden) {
         const el = document.documentElement;
-        el.style.opacity = '0.999';
+        el.style.transform = 'translateY(0.1px)';
         void el.offsetHeight;
-        setTimeout(() => { el.style.opacity = ''; }, 50);
+        setTimeout(() => { el.style.transform = ''; }, 0);
       }
     }, 3000);
 
