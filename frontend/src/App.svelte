@@ -266,23 +266,28 @@
 
       if (savedTabs && savedTabs.length > 0) {
         const sorted = [...savedTabs].sort((a, b) => (a.position || 0) - (b.position || 0));
-        const promises = sorted.map((tab, index) =>
-          OpenTab(tab.filePath).then(tabId => {
-            tabStore.addTab(tabId, tab.filePath, tab.filePath.split(/[/\\]/).pop(), index);
+        for (const tab of sorted) {
+          try {
+            const tabId = await OpenTab(tab.filePath);
+            tabStore.addTab(tabId, tab.filePath, tab.filePath.split(/[/\\]/).pop());
             if (tab.profileId) tabStore.setProfile(tabId, tab.profileId);
             if (tab.label) tabStore.setLabel(tabId, tab.label);
             if (tab.color) tabStore.setColor(tabId, tab.color);
-          }).catch(e => console.warn('Failed to restore tab:', tab.filePath, e))
-        );
-        await Promise.allSettled(promises);
+          } catch (e) {
+            console.warn('Failed to restore tab:', tab.filePath, e);
+          }
+        }
       }
 
       // CLI files always go at the end
       if (pending && pending.length > 0) {
         for (const filePath of pending) {
-          OpenTab(filePath).then(tabId => {
+          try {
+            const tabId = await OpenTab(filePath);
             tabStore.addTab(tabId, filePath, filePath.split(/[/\\]/).pop());
-          }).catch(e => console.warn('Failed to open CLI file:', filePath, e));
+          } catch (e) {
+            console.warn('Failed to open CLI file:', filePath, e);
+          }
         }
       }
     } catch (e) {
