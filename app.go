@@ -52,6 +52,7 @@ type App struct {
 	stopUpdateChecker chan struct{}
 	copilotCancel     context.CancelFunc // cancels a running device-flow poll
 	savedTabCache     []config.TabState  // cached at startup so OpenTab can restore metadata
+	pendingFiles      []string           // files from CLI args to open after frontend is ready
 }
 
 // lineThrottle batches line events per tab and flushes at most once per interval.
@@ -846,6 +847,17 @@ func (a *App) GetSavedTabs() []config.TabState {
 	}
 	a.savedTabCache = append([]config.TabState(nil), settings.Tabs...)
 	return settings.Tabs
+}
+
+// GetPendingFiles returns file paths passed via CLI arguments and clears the list.
+// The frontend calls this once after restoring saved tabs to open any files the
+// user double-clicked in the file manager or passed on the command line.
+func (a *App) GetPendingFiles() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	files := a.pendingFiles
+	a.pendingFiles = nil
+	return files
 }
 
 // SaveTabOrder updates tab positions after a drag-reorder, then persists.

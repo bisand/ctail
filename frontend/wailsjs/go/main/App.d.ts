@@ -29,6 +29,8 @@ export function GetAppVersion():Promise<string>;
 
 export function GetMemoryUsage():Promise<main.MemoryStats>;
 
+export function GetPendingFiles():Promise<Array<string>>;
+
 export function GetProfile(arg1:string):Promise<config.Profile>;
 
 export function GetRecentFiles():Promise<Array<string>>;

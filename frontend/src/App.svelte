@@ -10,7 +10,7 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, GetPendingFiles, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates } from '../wailsjs/go/main/App.js';
   import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
   import { loadAndApplyTheme } from './lib/utils/themes.js';
 
@@ -272,6 +272,24 @@
       }
     } catch (e) {
       console.error('Failed to restore tabs:', e);
+    }
+
+    // Open any files passed via CLI arguments (e.g. double-click in file manager)
+    try {
+      const pending = await GetPendingFiles();
+      if (pending && pending.length > 0) {
+        for (const filePath of pending) {
+          try {
+            const fileName = filePath.split(/[/\\]/).pop();
+            const tabId = await OpenTab(filePath);
+            tabStore.addTab(tabId, filePath, fileName);
+          } catch (e) {
+            console.warn('Failed to open CLI file:', filePath, e);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to open pending files:', e);
     }
 
     // Keyboard shortcuts — use capture phase so WebKit doesn't swallow

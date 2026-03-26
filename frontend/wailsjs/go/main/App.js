@@ -50,6 +50,10 @@ export function GetMemoryUsage() {
   return window['go']['main']['App']['GetMemoryUsage']();
 }
 
+export function GetPendingFiles() {
+  return window['go']['main']['App']['GetPendingFiles']();
+}
+
 export function GetProfile(arg1) {
   return window['go']['main']['App']['GetProfile'](arg1);
 }

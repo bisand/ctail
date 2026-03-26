@@ -34,6 +34,22 @@ func main() {
 
 	app := NewApp(version, buildNumber)
 
+	// Collect file paths from positional CLI arguments (e.g. ctail file1.log file2.log)
+	// These are opened after the frontend has restored saved tabs.
+	if args := flag.Args(); len(args) > 0 {
+		var filePaths []string
+		for _, arg := range args {
+			abs, err := filepath.Abs(arg)
+			if err != nil {
+				continue
+			}
+			if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+				filePaths = append(filePaths, abs)
+			}
+		}
+		app.pendingFiles = filePaths
+	}
+
 	// Pre-load config to populate recent files menu and window state
 	cfg, _ := config.NewManager()
 	app.preloadedConfig = cfg
