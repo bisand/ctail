@@ -298,22 +298,25 @@
     window.addEventListener('keyup', handleGlobalKeyup, true);
     window.addEventListener('ctail:open-ai', () => { showAI = true; });
 
-    // WebKit2GTK repaint recovery. The compositor can stall when the window
-    // loses focus or is obscured — DOM updates still apply but nothing is
-    // painted until something forces a reflow.  We use multiple strategies:
-    //
-    // 1. forceRepaint() — synchronous reflow via offsetHeight read + CSS nudge
-    // 2. visibility / focus listeners — flush pending lines + repaint on return
-    // 3. mousemove listener — the user proved mouse events fire even when
-    //    the compositor is frozen, so any mouse movement triggers recovery
-    // 4. Periodic keepalive — runs unconditionally so there's always a fresh
-    //    reflow queued when the compositor wakes up
+    // WebKit2GTK repaint recovery.  The compositor can stall when the
+    // window loses focus — DOM updates still apply but nothing paints.
+    // Instead of periodic CSS nudges on the root element (which cause
+    // visible flickering), we use a hidden 1×1 sentinel element and only
+    // trigger repaints on actual user interaction or window focus.
 
-    function forceRepaint() {
-      const el = document.documentElement;
-      el.style.transform = 'translateZ(0)';
-      void el.offsetHeight;
-      setTimeout(() => { el.style.transform = ''; }, 0);
+    // Create an invisible sentinel for repaint nudges — toggling a
+    // property on this element forces a micro-repaint without touching
+    // any visible content.
+    const sentinel = document.createElement('div');
+    sentinel.setAttribute('aria-hidden', 'true');
+    sentinel.style.cssText = 'position:fixed;width:1px;height:1px;top:-1px;left:-1px;opacity:0;pointer-events:none;z-index:-1;';
+    document.body.appendChild(sentinel);
+    let sentinelToggle = false;
+
+    function nudgeRepaint() {
+      sentinelToggle = !sentinelToggle;
+      sentinel.style.transform = sentinelToggle ? 'translateX(1px)' : '';
+      void sentinel.offsetHeight;
     }
 
     function flushAndRepaint() {
@@ -321,41 +324,37 @@
         if (lineFlushTimer) { clearTimeout(lineFlushTimer); lineFlushTimer = null; }
         flushPendingLines();
       }
-      forceRepaint();
+      nudgeRepaint();
     }
 
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) flushAndRepaint();
     });
     window.addEventListener('focus', flushAndRepaint);
-    window.addEventListener('resize', forceRepaint);
 
-    // Mouse movement proves the user is interacting — force repaint.
-    // Throttled to at most once per second to avoid unnecessary reflows.
-    let lastMouseRepaint = 0;
-    window.addEventListener('mousemove', () => {
+    // User interaction recovery — mousemove, mousedown, and keydown all
+    // prove the user is at the window.  Throttled so we nudge at most
+    // once per 500ms across all interaction types.
+    let lastInteractionNudge = 0;
+    function onInteraction() {
       const now = Date.now();
-      if (now - lastMouseRepaint > 1000) {
-        lastMouseRepaint = now;
-        forceRepaint();
+      if (now - lastInteractionNudge > 500) {
+        lastInteractionNudge = now;
+        nudgeRepaint();
       }
-    });
-
-    // Keepalive: runs unconditionally every 2 seconds.  When the window is
-    // hidden the nudge is cheap (no visible content to composite), and it
-    // ensures a fresh reflow is queued for when the compositor wakes up.
-    const repaintKeepalive = setInterval(() => {
-      const el = document.documentElement;
-      el.style.transform = 'translateY(0.1px)';
-      void el.offsetHeight;
-      setTimeout(() => { el.style.transform = ''; }, 0);
-    }, 2000);
+    }
+    window.addEventListener('mousemove', onInteraction);
+    window.addEventListener('mousedown', onInteraction);
+    window.addEventListener('keydown', onInteraction);
 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);
       window.removeEventListener('keyup', handleGlobalKeyup, true);
+      window.removeEventListener('mousemove', onInteraction);
+      window.removeEventListener('mousedown', onInteraction);
+      window.removeEventListener('keydown', onInteraction);
       if (lineFlushTimer) clearTimeout(lineFlushTimer);
-      clearInterval(repaintKeepalive);
+      sentinel.remove();
     };
   });
 
