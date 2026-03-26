@@ -282,54 +282,56 @@
 
     // WebKit2GTK repaint recovery. The compositor can stall when the window
     // loses focus or is obscured — DOM updates still apply but nothing is
-    // painted until something forces a reflow.  We use three strategies:
+    // painted until something forces a reflow.  We use multiple strategies:
     //
     // 1. forceRepaint() — synchronous reflow via offsetHeight read + CSS nudge
     // 2. visibility / focus listeners — flush pending lines + repaint on return
-    // 3. Periodic keepalive — a low-frequency interval that nudges the
-    //    compositor even when no visibility/focus events fire (WebKit2GTK
-    //    doesn't always emit them reliably).
+    // 3. mousemove listener — the user proved mouse events fire even when
+    //    the compositor is frozen, so any mouse movement triggers recovery
+    // 4. Periodic keepalive — runs unconditionally so there's always a fresh
+    //    reflow queued when the compositor wakes up
 
     function forceRepaint() {
       const el = document.documentElement;
-      // Toggle a CSS property and force synchronous reflow so the browser
-      // must repaint.  Using setTimeout (not RAF) because RAF itself stalls
-      // when the compositor is frozen.
       el.style.transform = 'translateZ(0)';
-      void el.offsetHeight;            // force sync reflow
+      void el.offsetHeight;
       setTimeout(() => { el.style.transform = ''; }, 0);
     }
 
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) {
-        if (pendingLines.size > 0) {
-          if (lineFlushTimer) { clearTimeout(lineFlushTimer); lineFlushTimer = null; }
-          flushPendingLines();
-        }
-        forceRepaint();
-      }
-    });
-
-    window.addEventListener('focus', () => {
+    function flushAndRepaint() {
       if (pendingLines.size > 0) {
         if (lineFlushTimer) { clearTimeout(lineFlushTimer); lineFlushTimer = null; }
         flushPendingLines();
       }
       forceRepaint();
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) flushAndRepaint();
     });
+    window.addEventListener('focus', flushAndRepaint);
     window.addEventListener('resize', forceRepaint);
 
-    // Keepalive: periodically nudge WebKit2GTK to repaint even when
-    // visibility/focus events don't fire.  Uses a sub-pixel translate that
-    // is invisible but forces the compositor to produce a new frame.
-    const repaintKeepalive = setInterval(() => {
-      if (!document.hidden) {
-        const el = document.documentElement;
-        el.style.transform = 'translateY(0.1px)';
-        void el.offsetHeight;
-        setTimeout(() => { el.style.transform = ''; }, 0);
+    // Mouse movement proves the user is interacting — force repaint.
+    // Throttled to at most once per second to avoid unnecessary reflows.
+    let lastMouseRepaint = 0;
+    window.addEventListener('mousemove', () => {
+      const now = Date.now();
+      if (now - lastMouseRepaint > 1000) {
+        lastMouseRepaint = now;
+        forceRepaint();
       }
-    }, 3000);
+    });
+
+    // Keepalive: runs unconditionally every 2 seconds.  When the window is
+    // hidden the nudge is cheap (no visible content to composite), and it
+    // ensures a fresh reflow is queued for when the compositor wakes up.
+    const repaintKeepalive = setInterval(() => {
+      const el = document.documentElement;
+      el.style.transform = 'translateY(0.1px)';
+      void el.offsetHeight;
+      setTimeout(() => { el.style.transform = ''; }, 0);
+    }, 2000);
 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);
