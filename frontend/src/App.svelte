@@ -280,20 +280,28 @@
     window.addEventListener('keyup', handleGlobalKeyup, true);
     window.addEventListener('ctail:open-ai', () => { showAI = true; });
 
-    // WebKit repaint recovery: when the page regains visibility (e.g. after
-    // monitor switch, VPN reconnection, or compositor stall), flush any
-    // pending line events and nudge the renderer to repaint.
+    // WebKit2GTK repaint recovery. The compositor can stall when the window
+    // loses focus or is obscured — DOM updates still apply but nothing is
+    // painted until something forces a reflow.  We use three strategies:
+    //
+    // 1. forceRepaint() — synchronous reflow via offsetHeight read + CSS nudge
+    // 2. visibility / focus listeners — flush pending lines + repaint on return
+    // 3. Periodic keepalive — a low-frequency interval that nudges the
+    //    compositor even when no visibility/focus events fire (WebKit2GTK
+    //    doesn't always emit them reliably).
+
     function forceRepaint() {
       const el = document.documentElement;
+      // Toggle a CSS property and force synchronous reflow so the browser
+      // must repaint.  Using setTimeout (not RAF) because RAF itself stalls
+      // when the compositor is frozen.
       el.style.transform = 'translateZ(0)';
-      requestAnimationFrame(() => {
-        el.style.transform = '';
-      });
+      void el.offsetHeight;            // force sync reflow
+      setTimeout(() => { el.style.transform = ''; }, 0);
     }
 
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
-        // Flush any events that accumulated while backgrounded
         if (pendingLines.size > 0) {
           if (lineFlushTimer) { clearTimeout(lineFlushTimer); lineFlushTimer = null; }
           flushPendingLines();
@@ -311,10 +319,25 @@
     });
     window.addEventListener('resize', forceRepaint);
 
+    // Keepalive: periodically nudge WebKit2GTK to repaint even when
+    // visibility/focus events don't fire.  3 seconds is infrequent enough
+    // to have zero performance impact but frequent enough to recover from
+    // compositor stalls within a few seconds of returning to the window.
+    const repaintKeepalive = setInterval(() => {
+      // Only nudge when the document is visible — no point while hidden.
+      if (!document.hidden) {
+        const el = document.documentElement;
+        el.style.opacity = '0.999';
+        void el.offsetHeight;
+        setTimeout(() => { el.style.opacity = ''; }, 50);
+      }
+    }, 3000);
+
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);
       window.removeEventListener('keyup', handleGlobalKeyup, true);
       if (lineFlushTimer) clearTimeout(lineFlushTimer);
+      clearInterval(repaintKeepalive);
     };
   });
 
