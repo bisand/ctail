@@ -66,7 +66,7 @@
         scrollPositions.set(prevTabId, container.scrollTop);
       }
       prevTabId = newId;
-      prevLineCount = -1; // force auto-scroll effect to fire for the new tab
+      prevTotalLines = -1; // force auto-scroll effect to fire for the new tab
       deferHighlight = true;
       requestAnimationFrame(() => { deferHighlight = false; });
       // Restore scroll position immediately — no tick/await needed since
@@ -144,12 +144,13 @@
     return () => window.removeEventListener('ctail:find', handleMenuFind);
   });
 
-  // Track previous line count to only auto-scroll when lines change
-  let prevLineCount = 0;
+  // Auto-scroll when new lines arrive. Uses totalLines (which always increases)
+  // rather than filteredLines.length (which stays constant due to eviction).
+  let prevTotalLines = -1;
   $effect(() => {
-    const curCount = filteredLines.length;
-    if (autoScroll && container && curCount !== prevLineCount) {
-      prevLineCount = curCount;
+    const curTotal = totalLines;
+    if (autoScroll && container && curTotal !== prevTotalLines) {
+      prevTotalLines = curTotal;
       programmaticScroll = true;
       container.scrollTop = container.scrollHeight;
       updateVisibleRange();
