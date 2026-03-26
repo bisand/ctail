@@ -262,23 +262,27 @@
     });
 
     // Restore saved tabs concurrently, then open CLI files last.
-    // Saved tabs fire in parallel for speed but we wait for all of them
-    // before opening CLI files so those always appear as the last tab(s).
+    // We fire all OpenTab calls in parallel for speed, but collect results
+    // and add tabs to the store in the original sorted order so position is preserved.
     try {
       const savedTabs = await GetSavedTabs();
       const pending = await GetPendingFiles();
 
       if (savedTabs && savedTabs.length > 0) {
         const sorted = [...savedTabs].sort((a, b) => (a.position || 0) - (b.position || 0));
-        const promises = sorted.map(tab =>
-          OpenTab(tab.filePath).then(tabId => {
+        const results = await Promise.allSettled(
+          sorted.map(tab => OpenTab(tab.filePath).then(tabId => ({ tabId, tab })))
+        );
+        // Add tabs in sorted order (not resolution order)
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            const { tabId, tab } = result.value;
             tabStore.addTab(tabId, tab.filePath, tab.filePath.split(/[/\\]/).pop());
             if (tab.profileId) tabStore.setProfile(tabId, tab.profileId);
             if (tab.label) tabStore.setLabel(tabId, tab.label);
             if (tab.color) tabStore.setColor(tabId, tab.color);
-          }).catch(e => console.warn('Failed to restore tab:', tab.filePath, e))
-        );
-        await Promise.allSettled(promises);
+          }
+        }
       }
 
       if (pending && pending.length > 0) {
