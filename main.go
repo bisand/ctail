@@ -162,6 +162,10 @@ func main() {
 		OnStartup:        app.startup,
 		OnDomReady:       app.restoreWindowState,
 		OnShutdown:       app.shutdown,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "ctail-e7a1b2c3-4d5e-6f7a-8b9c-0d1e2f3a4b5c",
+			OnSecondInstanceLaunch: app.onSecondInstance,
+		},
 		Linux: &linux.Options{
 			Icon:        appIcon,
 			ProgramName: "ctail",
