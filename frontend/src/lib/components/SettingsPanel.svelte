@@ -355,8 +355,9 @@
           <option value="light">Light</option>
         </select>
       </label>
+      {#if navigator.platform?.toLowerCase().includes('linux')}
       <label>
-        <span>Display Backend <small>(Linux, requires restart)</small></span>
+        <span>Display Backend <small>(requires restart)</small></span>
         <select value={$settings.displayBackend || 'auto'}
           onchange={(e) => updateSetting('displayBackend', e.target.value)}>
           <option value="auto">Auto (prefer X11)</option>
@@ -364,6 +365,7 @@
           <option value="wayland">Wayland</option>
         </select>
       </label>
+      {/if}
       <label class="toggle-label">
         <input type="checkbox" checked={!$settings.disableUpdateCheck}
           onchange={(e) => updateSetting('disableUpdateCheck', !e.target.checked)} />
