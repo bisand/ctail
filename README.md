@@ -21,21 +21,23 @@
 ## Features
 
 - **Multi-tab interface** — Open multiple log files simultaneously with keyboard navigation (Ctrl+Tab / Ctrl+Shift+Tab)
-- **Tab drag-and-drop** — Reorder tabs by dragging them to new positions
-- **Tab toggle** — Quick Ctrl+Tab toggles between the two most recent tabs
+- **Tab management** — Drag-and-drop reordering, rename tabs, color-code tabs, quick toggle between recent tabs
 - **Real-time tailing** — Follow mode streams new lines as they're written, with automatic enable/disable on scroll
+- **File rotation detection** — Automatically detects log file rotation (inode changes) and reloads the new file
 - **Regex-based highlighting** — Rules with foreground/background colors, bold/italic, line-level or match-level matching
-- **Sliding window buffer** — Memory-bounded scrolling through large files; only a configurable window of lines (default 500) is kept in memory
+- **Sliding window buffer** — Memory-bounded scrolling through large files; configurable buffer size (default 10,000 lines)
 - **Profile system** — Multiple highlighting profiles with visual rule preview and drag-and-drop reordering
 - **AI assistant** — Ask AI about your logs or auto-generate highlighting rule profiles. Supports [GitHub Copilot, GitHub Models, OpenAI, and any OpenAI-compatible server](docs/ai-assistant.md) (Ollama, LM Studio, etc.)
 - **Non-blocking I/O** — Files on slow or unreachable network mounts (NFS, CIFS/SMB, SSHFS) won't freeze the UI; all file operations run in the background with timeouts
 - **Session persistence** — Window position/size, open tabs, active profile, and all settings survive restarts
 - **Recent files** — Quick access to recently opened files from the File menu
 - **Native menu bar** — File, Edit, View, Tools, and Help menus with standard keyboard accelerators
-- **Context menus** — Right-click tabs for close/close others, right-click logs for copy/select/AI assist
-- **Search** — Ctrl+F to filter lines within the buffer
-- **Check for updates** — Manual update check from the Help menu
+- **Rich context menus** — Right-click tabs for close, rename, color, refresh, change file path, copy path, reveal in file manager; right-click logs for copy/select/AI assist
+- **VS Code-style search** — Ctrl+F opens an inline search bar with case-sensitive, whole-word, and regex toggles, match counter with ↑↓ navigation, and a filter mode that hides non-matching lines
+- **Check for updates** — Automatic and manual update checks from the Help menu
 - **Themes** — 21 built-in color themes (Catppuccin, Nord, Tokyo Night, Gruvbox, Dracula, One Dark, Solarized, Everforest, Ayu, Kanagawa, Matrix, Rosé Pine, Monokai, and more), each with dark and light modes. Supports [custom themes](docs/custom-themes.md) via JSON files.
+- **Display & GPU settings** — Configurable display backend (auto-detect, X11, Wayland) and GPU rendering mode on Linux
+- **Background optimization** — Event pausing when the app is hidden and lightweight activity signals for inactive tabs keep the UI responsive
 - **Cross-platform** — Linux, Windows, and macOS
 
 ## Quick Start
@@ -83,12 +85,12 @@ Build `.deb` or `.rpm` packages with proper dependencies (`libgtk-3-0`, `libwebk
 
 ```bash
 # Requires nfpm: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-make package-deb    # → build/ctail_0.4.0_amd64.deb
-make package-rpm    # → build/ctail-0.4.0-1.x86_64.rpm
+make package-deb    # → build/ctail_<version>_amd64.deb
+make package-rpm    # → build/ctail-<version>-1.x86_64.rpm
 
 # Install
-sudo dpkg -i build/ctail_0.4.0_amd64.deb   # Debian/Ubuntu
-sudo rpm -i build/ctail-0.4.0-1.x86_64.rpm  # Fedora/RHEL
+sudo dpkg -i build/ctail_*_amd64.deb     # Debian/Ubuntu
+sudo rpm -i build/ctail-*-1.x86_64.rpm   # Fedora/RHEL
 ```
 
 ## Architecture
@@ -192,7 +194,9 @@ See the [User Manual](docs/user-manual.md) for details on all settings and confi
 | Ctrl+Shift+A | AI Assistant |
 | Ctrl+C | Copy |
 | Ctrl+A | Select all |
-| Ctrl+F | Search / filter |
+| Ctrl+F | Search (with toggles for case, word, regex) |
+| Enter | Next search match |
+| Shift+Enter | Previous search match |
 | Ctrl+, | Settings |
 | Escape | Close search |
 
@@ -200,12 +204,18 @@ See the [User Manual](docs/user-manual.md) for details on all settings and confi
 
 ### Multi-monitor maximize on Wayland (Linux)
 
-On Wayland with multiple monitors of different resolutions, the maximize button may use the wrong monitor's dimensions. This is an [upstream bug in GTK/WebKit2GTK](https://github.com/wailsapp/wails/issues/2431) affecting all Wails v2 apps.
+On Wayland with multiple monitors of different resolutions, the maximize button may use the wrong monitor's dimensions. This is an [upstream limitation in GTK/WebKit2GTK](https://github.com/wailsapp/wails/issues/2431) affecting all Wails v2 apps. ctail includes a workaround that detects and corrects wrong maximize dimensions, but it may not work in all configurations.
 
-**Workaround:** Use the `--x11` flag to force the X11 backend:
-```bash
-ctail --x11
-```
+### Command-Line Flags (Linux)
+
+| Flag | Description |
+|------|-------------|
+| `--x11` | Force X11 backend |
+| `--wayland` | Force native Wayland backend |
+| `--software-render` | Disable GPU compositing (fixes rendering corruption on some hardware) |
+| `--disable-dmabuf` | Disable DMA-BUF renderer only (lighter GPU fix) |
+
+These can also be configured persistently in **Settings → Display Backend** and **Settings → GPU Rendering**.
 
 ## License
 

@@ -9,6 +9,7 @@
 - [Recent Files](#recent-files)
 - [Tabs](#tabs)
 - [Following & Scrolling](#following--scrolling)
+- [Search](#search)
 - [Highlighting Rules](#highlighting-rules)
 - [Rule Profiles](#rule-profiles)
 - [AI Assistant](#ai-assistant)
@@ -34,10 +35,12 @@ On first launch, ctail creates a default configuration with the "Common Logs" hi
 
 | Flag | Description |
 |------|-------------|
-| `--x11` | Force the X11 backend (Linux only). Fixes multi-monitor maximize issues on Wayland. |
+| `--x11` | Force the X11 backend (Linux only). |
 | `--wayland` | Force the native Wayland backend (Linux only). |
+| `--software-render` | Disable GPU compositing entirely (Linux only). Fixes rendering corruption on some hardware. |
+| `--disable-dmabuf` | Disable DMA-BUF renderer only (Linux only). A lighter alternative to `--software-render`. |
 
-When no flag is given, the system's default display backend is used.
+When no display flag is given, GTK auto-detects the native display backend. Display backend and GPU rendering can also be configured persistently in Settings (requires restart).
 
 ## Opening Files
 
@@ -59,10 +62,13 @@ Each open file gets its own tab in the tab bar at the top of the window.
 - **Switch tabs** by clicking on them or pressing **Ctrl+Tab** (next) / **Ctrl+Shift+Tab** (previous).
 - **Toggle between tabs** — A quick Ctrl+Tab press (release, then press again) toggles between the two most recently active tabs.
 - **Reorder tabs** — Drag and drop tabs to rearrange them.
+- **Rename tabs** — Double-click a tab or use the right-click context menu to give it a custom label.
+- **Color-code tabs** — Right-click a tab and choose **Set color** to assign one of 9 colors (red, orange, yellow, green, cyan, blue, purple, pink) for visual organization.
 - **Close a tab** by clicking the × button or pressing **Ctrl+W**.
-- **Right-click context menu** — Right-click a tab for Close, Close Others, and Close All options.
+- **Right-click context menu** — Right-click a tab for Close, Close Others, Close to the Right, Refresh, Change file path, Copy file path, and Reveal in file manager.
 - **Warning indicator** — Tabs show a ⚠ icon when the file is unreachable (e.g., network outage). The indicator clears automatically when the file becomes accessible again.
 - **Update badge** — Inactive tabs show an update dot when new lines arrive.
+- **File rotation** — ctail automatically detects log file rotation (when the file is replaced with a new file at the same path) and seamlessly switches to the new file.
 - **Tab persistence** — Open tabs are saved automatically. If the application is closed (or force-killed), tabs are restored on next launch. This can be toggled in Settings.
 
 ## Following & Scrolling
@@ -77,7 +83,7 @@ When a tab is in Follow mode, new lines are automatically appended and the view 
 
 ### Scroll Buffer
 
-ctail uses a sliding window buffer to keep memory usage low. Only a configurable number of lines (default 500) are held in memory at any time.
+ctail uses a sliding window buffer to keep memory usage low. A configurable number of lines (default 10,000) are held in memory at any time.
 
 - **Scrolling up** loads earlier lines from the file when you reach the upper portion of the buffer.
 - **Scrolling down** loads later lines when you reach the lower portion.
@@ -87,6 +93,40 @@ ctail uses a sliding window buffer to keep memory usage low. Only a configurable
 ### Horizontal Scrolling
 
 Long lines extend beyond the viewport. Scroll horizontally to read them, or enable **Word Wrap** in Settings.
+
+## Search
+
+Press **Ctrl+F** to open the inline search bar at the top of the log view. The search bar provides VS Code-style functionality with several powerful options.
+
+### Search Toggles
+
+| Toggle | Label | Description |
+|--------|-------|-------------|
+| **Aa** | Case sensitive | Match exact letter casing |
+| **ab** | Whole word | Only match complete words (adds `\b` word boundaries) |
+| **.\*** | Regex | Treat the query as a regular expression |
+
+### Match Navigation
+
+The search bar shows a match counter (e.g., "3 of 42") indicating which match is currently highlighted and how many total matches exist.
+
+- **Enter** or **↓ button** — Jump to the next match
+- **Shift+Enter** or **↑ button** — Jump to the previous match
+- Navigation wraps around at the beginning and end of the file
+
+### Filter Mode
+
+Click the **≡ filter** button to switch between two modes:
+
+- **Search mode** (default) — All lines are shown; matching text is highlighted with a yellow background
+- **Filter mode** — Only lines containing a match are displayed; non-matching lines are hidden
+
+### Behavior
+
+- Opening search with text selected pre-fills the search query
+- The search input auto-focuses when opened
+- Press **Escape** or the **× button** to close the search bar and clear the query
+- Search highlighting is applied on top of any highlighting rules
 
 ## Highlighting Rules
 
@@ -184,13 +224,31 @@ Open the Settings panel (gear icon or **View → Toggle Settings**) to configure
 | Setting | Description | Default |
 |---------|-------------|---------|
 | **Poll Interval** | How often to check files for changes (ms) | 500 |
-| **Scroll Buffer** | Lines kept in memory while scrolling (100–5,000) | 500 |
+| **Scroll Buffer** | Lines kept in memory while scrolling (100–10,000) | 10,000 |
+| **Scroll Speed** | Scroll acceleration multiplier (1–10) | 1 |
+| **Smooth Scroll** | Smooth deceleration at scroll edges | Off |
 | **Font Size** | Log text font size (10–24) | 14 |
 | **Show Line Numbers** | Display line numbers in the gutter | Off |
 | **Word Wrap** | Wrap long lines instead of horizontal scrolling | Off |
 | **Restore Tabs** | Reopen previously open files on startup | On |
-| **Theme** | Color theme (21 built-in themes) | Catppuccin |
+| **Theme** | Color theme (21 built-in themes + custom) | Catppuccin |
 | **Theme Mode** | Dark or Light variant of the selected theme | Dark |
+
+### Linux-Only Settings
+
+These settings are only shown on Linux and require an application restart to take effect.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Display Backend** | Display server: Auto-detect, X11, or Wayland | Auto-detect |
+| **GPU Rendering** | Auto (GPU accelerated) or Software rendering | Auto |
+
+### Update Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Check for updates automatically** | Periodically check GitHub for newer releases | On |
+| **Update check interval** | How often to check (hourly, 6h, 12h, daily, 3 days, weekly) | 24 hours |
 
 ### Window State
 
@@ -253,7 +311,9 @@ ctail includes a native menu bar:
 | **Ctrl+,** | Settings |
 | **Ctrl+C** | Copy |
 | **Ctrl+A** | Select all |
-| **Ctrl+F** | Search / filter |
+| **Ctrl+F** | Search (with case, word, regex toggles) |
+| **Enter** | Next search match (when search bar is open) |
+| **Shift+Enter** | Previous search match (when search bar is open) |
 | **Escape** | Close search |
 
 ## Context Menus
@@ -264,9 +324,15 @@ Right-click any tab for quick actions:
 
 | Item | Description |
 |------|-------------|
+| **Rename** | Give the tab a custom label (also available via double-click) |
+| **Set color** | Assign a color to the tab for visual organization |
 | **Close** | Close the clicked tab (Ctrl+W) |
 | **Close Others** | Close all tabs except the clicked one |
 | **Close to the Right** | Close all tabs to the right of the clicked one |
+| **Refresh** | Reload the file content from disk |
+| **Change file path…** | Open a file picker to change which file this tab displays |
+| **Copy file path** | Copy the full file path to the clipboard |
+| **Reveal in file manager** | Open the file's location in the system file explorer |
 
 Destructive actions (Close Others, Close to the Right) ask for confirmation before proceeding.
 
@@ -282,7 +348,7 @@ Right-click in the log area for:
 
 ## Check for Updates
 
-Use **Help → Check for Updates** to check GitHub for a newer release. If an update is available, a notification is shown with a link to the release page. ctail also checks for updates automatically on startup (with a brief delay to avoid slowing down launch).
+Use **Help → Check for Updates** to check GitHub for a newer release. If an update is available, a notification is shown with a link to the release page. ctail also checks for updates automatically at a configurable interval (default: every 24 hours). Automatic update checks can be disabled in Settings.
 
 ## Linux Installation
 
@@ -292,10 +358,10 @@ Pre-built packages include all dependencies:
 
 ```bash
 # Debian/Ubuntu (24.04+)
-sudo dpkg -i ctail_0.4.0_amd64.deb
+sudo dpkg -i ctail_*_amd64.deb
 
 # Fedora/RHEL
-sudo rpm -i ctail-0.4.0-1.x86_64.rpm
+sudo rpm -i ctail-*-1.x86_64.rpm
 ```
 
 The packages depend on `libgtk-3-0` and `libwebkit2gtk-4.1-0`, which are installed automatically.
@@ -329,9 +395,10 @@ make package-deb    # builds .deb
 make package-rpm    # builds .rpm
 ```
 
-By default on Linux, ctail uses the X11 backend for compatibility with multi-monitor setups. To use native Wayland instead:
+By default on Linux, ctail auto-detects the display backend (Wayland or X11). You can override this in Settings or via command-line flags:
 ```bash
-ctail --wayland
+ctail --x11       # Force X11 backend
+ctail --wayland   # Force native Wayland backend
 ```
 
 ## Configuration Files
@@ -390,10 +457,16 @@ Tabs are saved on every open and close operation, so they should survive crashes
 
 ### Window maximizes to wrong size on multi-monitor (Linux)
 
-This is an [upstream GTK/WebKit2GTK bug](https://github.com/wailsapp/wails/issues/2431). Use the `--x11` flag to force the X11 backend as a workaround:
-```bash
-ctail --x11
-```
+This is an [upstream GTK/WebKit2GTK limitation](https://github.com/wailsapp/wails/issues/2431) on Wayland with multiple monitors of different resolutions. ctail includes a workaround that detects and corrects wrong maximize dimensions, but it may not work in all configurations.
+
+### Rendering corruption or flickering (Linux)
+
+If you experience rendering issues (transparent windows, flickering, content bleeding outside the window), try switching to software rendering:
+
+1. **Via Settings:** Settings → GPU Rendering → Software rendering (requires restart)
+2. **Via command-line:** `ctail --software-render`
+
+If the issue persists, also try `ctail --disable-dmabuf` as a lighter alternative.
 
 ### AI assistant not working
 
