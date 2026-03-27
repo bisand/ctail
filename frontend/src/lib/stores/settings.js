@@ -12,6 +12,7 @@ export const settings = writable({
   wordWrap: false,
   activeProfile: 'Common Logs',
   displayBackend: 'auto',
+  gpuPolicy: 'auto',
 });
 
 export const settingsPanelOpen = writable(false);

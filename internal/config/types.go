@@ -60,7 +60,8 @@ type AppSettings struct {
 	RecentFiles   []string      `json:"recentFiles"`
 	Window        WindowState   `json:"window"`
 	DisplayBackend string       `json:"displayBackend"` // "auto", "x11", or "wayland"
-	DisableDmabuf  bool         `json:"disableDmabuf"`  // set WEBKIT_DISABLE_DMABUF_RENDERER=1 to fix GPU compositing issues
+	DisableDmabuf  bool         `json:"disableDmabuf"`  // legacy: set WEBKIT_DISABLE_DMABUF_RENDERER=1
+	GpuPolicy      string       `json:"gpuPolicy"`      // "auto", "disable-dmabuf", or "software"
 	DisableUpdateCheck       bool `json:"disableUpdateCheck"`
 	UpdateCheckIntervalHours int  `json:"updateCheckIntervalHours"`
 	// AI assistant settings

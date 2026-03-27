@@ -370,6 +370,15 @@
           onchange={(e) => updateSetting('disableDmabuf', e.target.checked)} />
         <span>Disable DMA-BUF renderer <small>(requires restart — fixes blank/corrupt window on some GPUs)</small></span>
       </label>
+      <label>
+        <span>GPU Rendering <small>(requires restart)</small></span>
+        <select value={$settings.gpuPolicy || 'auto'}
+          onchange={(e) => updateSetting('gpuPolicy', e.target.value)}>
+          <option value="auto">Auto (GPU accelerated)</option>
+          <option value="disable-dmabuf">Disable DMA-BUF</option>
+          <option value="software">Software rendering (recommended for multi-monitor)</option>
+        </select>
+      </label>
       {/if}
       <label class="toggle-label">
         <input type="checkbox" checked={!$settings.disableUpdateCheck}

@@ -1,4 +1,5 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
+import { settings } from './settings.js';
 
 // Immutable helper: replace a tab by id, producing new state/array/object refs
 // so Svelte 5 $derived() detects the change via Object.is().
@@ -93,12 +94,15 @@ function createTabStore() {
         if (!tab || newLines.length === 0) return state;
         const changes = { totalLines: tab.totalLines + newLines.length };
 
+        const combined = [...tab.lines, ...newLines];
         if (tab.autoScroll) {
-          const combined = [...tab.lines, ...newLines];
-          // Evict the same number of lines from the start to keep memory bounded
+          // Follow mode: evict old lines from the top to keep memory bounded
           changes.lines = combined.length > tab.lines.length
             ? combined.slice(newLines.length)
             : combined;
+        } else {
+          // Not following: append lines but never evict from top
+          changes.lines = combined;
         }
 
         if (state.activeTabId !== tabId) changes.hasUpdate = true;
@@ -146,7 +150,17 @@ function createTabStore() {
       });
     },
     setAutoScroll(tabId, value) {
-      update(state => replaceTab(state, tabId, { autoScroll: value }));
+      update(state => {
+        const changes = { autoScroll: value };
+        if (value) {
+          // Re-enabling follow: trim buffer back to bounded size
+          const tab = state.tabs.find(t => t.id === tabId);
+          if (tab && tab.lines.length > get(settings).bufferSize) {
+            changes.lines = tab.lines.slice(tab.lines.length - get(settings).bufferSize);
+          }
+        }
+        return replaceTab(state, tabId, changes);
+      });
     },
     moveTab(fromIndex, toIndex) {
       update(state => {

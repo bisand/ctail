@@ -33,6 +33,7 @@ func main() {
 	useX11 := flag.Bool("x11", false, "Force X11 backend (fixes multi-monitor maximize on Wayland)")
 	useWayland := flag.Bool("wayland", false, "Force native Wayland backend")
 	disableDmabuf := flag.Bool("disable-dmabuf", false, "Set WEBKIT_DISABLE_DMABUF_RENDERER=1 (fixes blank/corrupt window on some GPUs)")
+	softwareRender := flag.Bool("software-render", false, "Disable GPU compositing entirely (fixes rendering corruption on multi-monitor)")
 	flag.Parse()
 
 	app := NewApp(version, buildNumber)
@@ -62,7 +63,7 @@ func main() {
 
 	if runtime.GOOS == "linux" {
 		setDisplayBackend(*useX11, *useWayland, cfg)
-		setWebKitEnv(*disableDmabuf, cfg)
+		setWebKitEnv(*disableDmabuf, *softwareRender, cfg)
 	}
 
 	// Read saved window geometry for initial size
@@ -261,18 +262,50 @@ func extractDisplayNum(display string) string {
 	return d
 }
 
-// setWebKitEnv configures WebKit2GTK environment variables. CLI flag takes
-// priority, then the persisted config setting.  Setting
-// WEBKIT_DISABLE_DMABUF_RENDERER=1 works around GPU compositing corruption
-// (blank/transparent window, flickering) seen on some hardware — especially
-// when monitors are hot-plugged or the display topology changes.
+// setWebKitEnv configures WebKit2GTK environment variables.  CLI flags take
+// priority, then the persisted gpuPolicy setting, then the legacy disableDmabuf
+// bool.
+//
+// Policies:
+//   - "auto"           — no env vars (default, GPU-accelerated rendering)
+//   - "disable-dmabuf" — WEBKIT_DISABLE_DMABUF_RENDERER=1
+//   - "software"       — WEBKIT_DISABLE_DMABUF_RENDERER=1 +
+//                         WEBKIT_DISABLE_COMPOSITING_MODE=1
+//
+// The "software" policy forces WebKit2GTK into a pure-software rendering path,
+// which avoids the GPU compositor corruption seen on multi-monitor setups and
+// when display topology changes (monitor hotplug, VPN reconnect).
 // See https://github.com/wailsapp/wails/issues/4985
-func setWebKitEnv(cliDisableDmabuf bool, cfg *config.Manager) {
+//     https://bugs.archlinux.org/task/79783
+func setWebKitEnv(cliDisableDmabuf, cliSoftwareRender bool, cfg *config.Manager) {
+	// CLI flags override everything
+	if cliSoftwareRender {
+		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+		os.Setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+		return
+	}
 	if cliDisableDmabuf {
 		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 		return
 	}
-	if cfg != nil && cfg.GetSettings().DisableDmabuf {
+
+	if cfg == nil {
+		return
+	}
+
+	s := cfg.GetSettings()
+
+	// Use gpuPolicy if set, otherwise fall back to legacy disableDmabuf bool
+	policy := s.GpuPolicy
+	if policy == "" && s.DisableDmabuf {
+		policy = "disable-dmabuf"
+	}
+
+	switch policy {
+	case "software":
+		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+		os.Setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+	case "disable-dmabuf":
 		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 	}
 }

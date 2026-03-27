@@ -85,6 +85,7 @@ export namespace config {
 	    window: WindowState;
 	    displayBackend: string;
 	    disableDmabuf: boolean;
+	    gpuPolicy: string;
 	    disableUpdateCheck: boolean;
 	    updateCheckIntervalHours: number;
 	    aiProvider: string;
@@ -115,6 +116,7 @@ export namespace config {
 	        this.window = this.convertValues(source["window"], WindowState);
 	        this.displayBackend = source["displayBackend"];
 	        this.disableDmabuf = source["disableDmabuf"];
+	        this.gpuPolicy = source["gpuPolicy"];
 	        this.disableUpdateCheck = source["disableUpdateCheck"];
 	        this.updateCheckIntervalHours = source["updateCheckIntervalHours"];
 	        this.aiProvider = source["aiProvider"];
