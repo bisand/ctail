@@ -360,23 +360,17 @@
         <span>Display Backend <small>(requires restart)</small></span>
         <select value={$settings.displayBackend || 'auto'}
           onchange={(e) => updateSetting('displayBackend', e.target.value)}>
-          <option value="auto">Auto (prefer X11)</option>
+          <option value="auto">Auto-detect</option>
           <option value="x11">X11</option>
           <option value="wayland">Wayland</option>
         </select>
-      </label>
-      <label class="toggle-label">
-        <input type="checkbox" checked={$settings.disableDmabuf || false}
-          onchange={(e) => updateSetting('disableDmabuf', e.target.checked)} />
-        <span>Disable DMA-BUF renderer <small>(requires restart — fixes blank/corrupt window on some GPUs)</small></span>
       </label>
       <label>
         <span>GPU Rendering <small>(requires restart)</small></span>
         <select value={$settings.gpuPolicy || 'auto'}
           onchange={(e) => updateSetting('gpuPolicy', e.target.value)}>
           <option value="auto">Auto (GPU accelerated)</option>
-          <option value="disable-dmabuf">Disable DMA-BUF</option>
-          <option value="software">Software rendering (recommended for multi-monitor)</option>
+          <option value="software">Software rendering</option>
         </select>
       </label>
       {/if}

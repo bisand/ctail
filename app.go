@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -55,11 +56,15 @@ type App struct {
 	copilotCancel     context.CancelFunc // cancels a running device-flow poll
 	savedTabCache     []config.TabState  // cached at startup so OpenTab can restore metadata
 	pendingFiles      []string           // files from CLI args to open after frontend is ready
+	eventsPaused      int32              // atomic: 1 = frontend hidden, skip event emission
+	activeTabID       atomic.Value       // stores string — active tab ID for skipping inactive tab events
 }
 
 // lineThrottle batches line events per tab and flushes at most once per interval.
 // This prevents event flooding from overwhelming the Wails IPC bridge and WebKit
 // renderer, especially after VPN reconnections when all tabs reread simultaneously.
+const maxThrottlePending = 5000 // cap to prevent unbounded memory growth
+
 type lineThrottle struct {
 	mu       sync.Mutex
 	pending  []tailer.Line
@@ -79,6 +84,10 @@ func (lt *lineThrottle) add(lines []tailer.Line) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	lt.pending = append(lt.pending, lines...)
+	// Cap the pending buffer — keep the most recent lines
+	if len(lt.pending) > maxThrottlePending {
+		lt.pending = lt.pending[len(lt.pending)-maxThrottlePending:]
+	}
 	if lt.timer == nil {
 		lt.timer = time.AfterFunc(lt.interval, lt.doFlush)
 	}
@@ -103,6 +112,34 @@ func (lt *lineThrottle) stop() {
 		lt.timer = nil
 	}
 	lt.pending = nil
+}
+
+// SetEventsPaused is called by the frontend when the window visibility changes.
+// When paused (hidden), the Go side skips EventsEmit calls to prevent IPC backlog.
+func (a *App) SetEventsPaused(paused bool) {
+	if paused {
+		atomic.StoreInt32(&a.eventsPaused, 1)
+	} else {
+		atomic.StoreInt32(&a.eventsPaused, 0)
+	}
+}
+
+func (a *App) isEventsPaused() bool {
+	return atomic.LoadInt32(&a.eventsPaused) == 1
+}
+
+// SetActiveTab is called by the frontend when the user switches tabs.
+// Inactive tabs receive lightweight activity notifications instead of full line data.
+func (a *App) SetActiveTab(tabID string) {
+	a.activeTabID.Store(tabID)
+}
+
+func (a *App) getActiveTabID() string {
+	v := a.activeTabID.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
 }
 
 // UpdateCheckResult is returned by ManualCheckForUpdates for the frontend dialog
@@ -401,15 +438,95 @@ func (a *App) restoreWindowState(ctx context.Context) {
 		return
 	}
 	ws := a.config.GetSettings().Window
+
+	// Get current screen bounds to validate saved dimensions
+	var screenW, screenH int
+	if screens, err := wailsRuntime.ScreenGetAll(a.ctx); err == nil {
+		for _, s := range screens {
+			if s.IsCurrent {
+				screenW = s.Size.Width
+				screenH = s.Size.Height
+				break
+			}
+		}
+		// Fallback to primary if no current screen found
+		if screenW == 0 {
+			for _, s := range screens {
+				if s.IsPrimary {
+					screenW = s.Size.Width
+					screenH = s.Size.Height
+					break
+				}
+			}
+		}
+	}
+
 	if ws.Width > 0 && ws.Height > 0 {
-		wailsRuntime.WindowSetSize(a.ctx, ws.Width, ws.Height)
+		w, h := ws.Width, ws.Height
+		// Clamp to current screen bounds if available
+		if screenW > 0 && w > screenW {
+			w = screenW
+		}
+		if screenH > 0 && h > screenH {
+			h = screenH
+		}
+		wailsRuntime.WindowSetSize(a.ctx, w, h)
 	}
 	if ws.X != 0 || ws.Y != 0 {
 		wailsRuntime.WindowSetPosition(a.ctx, ws.X, ws.Y)
 	}
 	if ws.Maximised {
 		wailsRuntime.WindowMaximise(a.ctx)
+		// On Wayland, maximize may use the wrong monitor's dimensions.
+		// Verify and correct after a short delay to let the compositor respond.
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			a.fixMaximizeSize()
+		}()
 	}
+}
+
+// fixMaximizeSize corrects the window size after maximize on Wayland, where the
+// compositor may use the smallest monitor's dimensions instead of the current one.
+func (a *App) fixMaximizeSize() {
+	if a.ctx == nil {
+		return
+	}
+	screens, err := wailsRuntime.ScreenGetAll(a.ctx)
+	if err != nil || len(screens) <= 1 {
+		return // single monitor or API unavailable — nothing to fix
+	}
+
+	var current wailsRuntime.Screen
+	found := false
+	for _, s := range screens {
+		if s.IsCurrent {
+			current = s
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+
+	w, h := wailsRuntime.WindowGetSize(a.ctx)
+	// If the maximized window is significantly smaller than the current screen,
+	// unmaximize and manually resize to fill the screen.
+	if w > 0 && h > 0 && (w < current.Size.Width*8/10 || h < current.Size.Height*8/10) {
+		wailsRuntime.WindowUnmaximise(a.ctx)
+		wailsRuntime.WindowSetSize(a.ctx, current.Size.Width, current.Size.Height)
+		wailsRuntime.WindowMaximise(a.ctx)
+	}
+}
+
+// FixMaximize can be called by the frontend after a user-triggered maximize
+// to correct wrong screen dimensions on Wayland multi-monitor setups.
+func (a *App) FixMaximize() {
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		a.fixMaximizeSize()
+	}()
 }
 
 // OpenFileDialog opens a native file dialog and returns the selected path.
@@ -496,7 +613,17 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	// Per-tab line event throttle: batch lines and emit at most once per 100ms
 	// to prevent IPC/rendering flooding after VPN reconnections.
 	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
+		if a.isEventsPaused() {
+			return
+		}
+		if a.getActiveTabID() != id {
+			// Inactive tab: send lightweight notification (no line data)
+			go wailsRuntime.EventsEmit(a.ctx, "tailer:activity", map[string]interface{}{
+				"tabId": id,
+			})
+			return
+		}
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
 			"tabId": id,
 			"lines": lines,
 		})
@@ -546,26 +673,26 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	})
 
 	t.OnTruncated(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
 			"tabId": id,
 		})
 	})
 
 	t.OnError(func(err error) {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:error", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:error", map[string]interface{}{
 			"tabId":   id,
 			"message": err.Error(),
 		})
 	})
 
 	t.OnReady(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
 			"tabId": id,
 		})
 	})
 
 	t.OnReconnecting(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
 			"tabId": id,
 		})
 	})
@@ -642,7 +769,16 @@ func (a *App) RefreshTab(tabID string) error {
 	t := tailer.New(filePath, pollInterval, settings.BufferSize)
 
 	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
+		if a.isEventsPaused() {
+			return
+		}
+		if a.getActiveTabID() != tabID {
+			go wailsRuntime.EventsEmit(a.ctx, "tailer:activity", map[string]interface{}{
+				"tabId": tabID,
+			})
+			return
+		}
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
 			"tabId": tabID,
 			"lines": lines,
 		})
@@ -652,23 +788,23 @@ func (a *App) RefreshTab(tabID string) error {
 		throttle.add(lines)
 	})
 	t.OnTruncated(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
 			"tabId": tabID,
 		})
 	})
 	t.OnError(func(err error) {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:error", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:error", map[string]interface{}{
 			"tabId":   tabID,
 			"message": err.Error(),
 		})
 	})
 	t.OnReady(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
 			"tabId": tabID,
 		})
 	})
 	t.OnReconnecting(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
 			"tabId": tabID,
 		})
 	})
@@ -887,7 +1023,16 @@ func (a *App) ChangeTabFilePath(tabID string) (string, error) {
 	t := tailer.New(newPath, pollInterval, settings.BufferSize)
 
 	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
+		if a.isEventsPaused() {
+			return
+		}
+		if a.getActiveTabID() != tabID {
+			go wailsRuntime.EventsEmit(a.ctx, "tailer:activity", map[string]interface{}{
+				"tabId": tabID,
+			})
+			return
+		}
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
 			"tabId": tabID,
 			"lines": lines,
 		})
@@ -897,23 +1042,23 @@ func (a *App) ChangeTabFilePath(tabID string) (string, error) {
 		throttle.add(lines)
 	})
 	t.OnTruncated(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
 			"tabId": tabID,
 		})
 	})
 	t.OnError(func(err error) {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:error", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:error", map[string]interface{}{
 			"tabId":   tabID,
 			"message": err.Error(),
 		})
 	})
 	t.OnReady(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
 			"tabId": tabID,
 		})
 	})
 	t.OnReconnecting(func() {
-		wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
 			"tabId": tabID,
 		})
 	})

@@ -66,6 +66,8 @@ func main() {
 		setWebKitEnv(*disableDmabuf, *softwareRender, cfg)
 	}
 
+	gpuPolicy := resolveGpuPolicy(*softwareRender, cfg)
+
 	// Read saved window geometry for initial size
 	savedWindow := cfg.GetSettings().Window
 	initialWidth := 1200
@@ -174,8 +176,9 @@ func main() {
 			OnSecondInstanceLaunch: app.onSecondInstance,
 		},
 		Linux: &linux.Options{
-			Icon:        appIcon,
-			ProgramName: "ctail",
+			Icon:             appIcon,
+			ProgramName:      "ctail",
+			WebviewGpuPolicy: gpuPolicy,
 		},
 		Mac: &mac.Options{
 			About: &mac.AboutInfo{
@@ -219,11 +222,8 @@ func setDisplayBackend(forceX11, forceWayland bool, cfg *config.Manager) {
 	case "wayland":
 		os.Setenv("GDK_BACKEND", "wayland")
 	default:
-		// Auto: prefer X11 if available, fall back to wayland
-		if isX11Available() {
-			os.Setenv("GDK_BACKEND", "x11")
-		}
-		// If X11 not available, don't set GDK_BACKEND — GTK picks wayland automatically
+		// Auto: let GTK choose the native display backend.
+		// Don't force anything — GTK auto-detects Wayland or X11 correctly.
 	}
 }
 
@@ -307,5 +307,33 @@ func setWebKitEnv(cliDisableDmabuf, cliSoftwareRender bool, cfg *config.Manager)
 		os.Setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
 	case "disable-dmabuf":
 		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+	}
+}
+
+// resolveGpuPolicy maps CLI flags and config settings to a Wails
+// WebviewGpuPolicy value.  Default is "on-demand" (GPU accelerated).
+func resolveGpuPolicy(cliSoftwareRender bool, cfg *config.Manager) linux.WebviewGpuPolicy {
+	if runtime.GOOS != "linux" {
+		return linux.WebviewGpuPolicyOnDemand
+	}
+
+	policy := ""
+	if cfg != nil {
+		s := cfg.GetSettings()
+		policy = s.GpuPolicy
+		if policy == "" && s.DisableDmabuf {
+			policy = "software"
+		}
+	}
+	if cliSoftwareRender {
+		policy = "software"
+	}
+
+	switch policy {
+	case "software", "disable-dmabuf":
+		return linux.WebviewGpuPolicyNever
+	default:
+		// "auto" or unset → GPU accelerated
+		return linux.WebviewGpuPolicyOnDemand
 	}
 }

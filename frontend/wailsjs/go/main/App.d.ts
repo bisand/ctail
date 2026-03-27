@@ -23,6 +23,8 @@ export function DeleteCustomTheme(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
 
+export function FixMaximize():Promise<void>;
+
 export function GenerateRulesProfile(arg1:string,arg2:string):Promise<config.Profile>;
 
 export function GetAppVersion():Promise<string>;
@@ -76,6 +78,10 @@ export function SaveProfile(arg1:config.Profile):Promise<void>;
 export function SaveSettings(arg1:config.AppSettings):Promise<void>;
 
 export function SaveTabOrder(arg1:Array<config.TabState>):Promise<void>;
+
+export function SetActiveTab(arg1:string):Promise<void>;
+
+export function SetEventsPaused(arg1:boolean):Promise<void>;
 
 export function SetTabColor(arg1:string,arg2:string):Promise<void>;
 

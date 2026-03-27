@@ -386,7 +386,7 @@ func (t *Tailer) pollLoop() {
 				case <-pollDone:
 				case <-stopCh:
 					return
-				case <-time.After(15 * time.Second):
+				case <-time.After(5 * time.Second):
 					// Poll timed out (likely stale mount) — report error and move on.
 					// The blocked goroutine will eventually return when the OS times out.
 					t.mu.Lock()

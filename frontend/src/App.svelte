@@ -10,8 +10,8 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, GetPendingFiles, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates } from '../wailsjs/go/main/App.js';
-  import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
+  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, GetPendingFiles, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates, SetEventsPaused, SetActiveTab, FixMaximize } from '../wailsjs/go/main/App.js';
+  import { EventsOn, BrowserOpenURL, ScreenGetAll } from '../wailsjs/runtime/runtime.js';
   import { loadAndApplyTheme } from './lib/utils/themes.js';
 
   const INITIAL_TAIL = 1000;
@@ -44,6 +44,20 @@
     const ids = new Set($tabs.map(t => t.id));
     if (previousTabId && !ids.has(previousTabId)) {
       previousTabId = null;
+    }
+  });
+
+  // Notify Go when the active tab changes so it only sends full line data
+  // for the active tab (inactive tabs get lightweight activity notifications).
+  // Also reload lines from Go if the tab had pending updates while inactive.
+  let lastNotifiedTabId = null;
+  $effect(() => {
+    const tab = $activeTab;
+    if (!tab || tab.id === lastNotifiedTabId) return;
+    lastNotifiedTabId = tab.id;
+    SetActiveTab(tab.id).catch(() => {});
+    if (tab.hasUpdate) {
+      loadInitialLines(tab.id);
     }
   });
 
@@ -105,6 +119,7 @@
     const pendingLines = new Map();
     let lineFlushTimer = null;
     const FLUSH_INTERVAL_MS = 100;
+    const MAX_PENDING_PER_TAB = 5000;
 
     function flushPendingLines() {
       lineFlushTimer = null;
@@ -114,22 +129,27 @@
       pendingLines.clear();
     }
 
+    // Notify Go backend when window visibility changes so it can skip
+    // EventsEmit calls while the frontend can't process them.
+    document.addEventListener('visibilitychange', () => {
+      SetEventsPaused(document.hidden).catch(() => {});
+      if (!document.hidden) {
+        // Window regained focus — flush any pending lines
+        if (lineFlushTimer) {
+          clearTimeout(lineFlushTimer);
+        }
+        flushPendingLines();
+      }
+    });
+
     EventsOn('tailer:lines', (data) => {
       if (data.tabId && data.lines) {
-        // When backgrounded, discard events for inactive tabs and cap
-        // the pending buffer to avoid unbounded memory growth.
-        if (document.hidden) {
-          // Only keep lines for the active tab, and cap at 2000
-          const activeId = tabStore.getActiveTabId();
-          if (data.tabId !== activeId) return;
-          const existing = pendingLines.get(data.tabId) || [];
-          existing.push(...data.lines);
-          if (existing.length > 2000) existing.splice(0, existing.length - 2000);
-          pendingLines.set(data.tabId, existing);
-          return;
-        }
         const existing = pendingLines.get(data.tabId) || [];
         existing.push(...data.lines);
+        // Always cap the pending buffer to prevent unbounded growth
+        if (existing.length > MAX_PENDING_PER_TAB) {
+          existing.splice(0, existing.length - MAX_PENDING_PER_TAB);
+        }
         pendingLines.set(data.tabId, existing);
         if (!lineFlushTimer) {
           lineFlushTimer = setTimeout(flushPendingLines, FLUSH_INTERVAL_MS);
@@ -163,6 +183,13 @@
     EventsOn('tailer:reconnecting', (data) => {
       if (data.tabId) {
         tabStore.setStatus(data.tabId, 'loading');
+      }
+    });
+
+    // Lightweight notification from inactive tabs — just set the update badge
+    EventsOn('tailer:activity', (data) => {
+      if (data.tabId) {
+        tabStore.markHasUpdate(data.tabId);
       }
     });
 
@@ -366,6 +393,8 @@
 
     // Detect screen configuration changes via resize event (window
     // managers often reposition/resize windows when monitors change).
+    // Also detect maximize and correct wrong dimensions on Wayland.
+    let maximizeFixTimer = null;
     function onWindowResize() {
       const dpr = window.devicePixelRatio;
       const sw = window.screen.width;
@@ -376,6 +405,19 @@
         lastScreenH = sh;
         scheduleCompositingReset();
       }
+
+      // On Wayland multi-monitor, maximize may use the wrong screen's dimensions.
+      // Detect when the window fills the viewport (likely maximize) and ask Go to verify.
+      if (maximizeFixTimer) clearTimeout(maximizeFixTimer);
+      maximizeFixTimer = setTimeout(() => {
+        maximizeFixTimer = null;
+        const iw = window.innerWidth;
+        const ih = window.innerHeight;
+        // If window fills most of the screen, it was likely just maximized
+        if (iw >= sw * 0.9 && ih >= sh * 0.85) {
+          FixMaximize().catch(() => {});
+        }
+      }, 300);
     }
     window.addEventListener('resize', onWindowResize);
 

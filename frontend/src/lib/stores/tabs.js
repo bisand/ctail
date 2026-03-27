@@ -101,8 +101,12 @@ function createTabStore() {
             ? combined.slice(newLines.length)
             : combined;
         } else {
-          // Not following: append lines but never evict from top
-          changes.lines = combined;
+          // Not following: append lines but never evict from top.
+          // Hard cap at 3x bufferSize to prevent unbounded memory growth.
+          const hardCap = get(settings).bufferSize * 3;
+          changes.lines = combined.length > hardCap
+            ? combined.slice(combined.length - hardCap)
+            : combined;
         }
 
         if (state.activeTabId !== tabId) changes.hasUpdate = true;
@@ -111,6 +115,13 @@ function createTabStore() {
     },
     clearLines(tabId) {
       update(state => replaceTab(state, tabId, { lines: [] }));
+    },
+    markHasUpdate(tabId) {
+      update(state => {
+        const tab = state.tabs.find(t => t.id === tabId);
+        if (!tab || tab.hasUpdate || state.activeTabId === tabId) return state;
+        return replaceTab(state, tabId, { hasUpdate: true });
+      });
     },
     setProfile(tabId, profileName) {
       update(state => replaceTab(state, tabId, { profile: profileName }));

@@ -38,6 +38,12 @@
   let isAtBottom = true;
   let searchQuery = $state('');
   let searchVisible = $state(false);
+  let searchMode = $state('search'); // 'search' or 'filter'
+  let searchCaseSensitive = $state(false);
+  let searchWholeWord = $state(false);
+  let searchRegex = $state(false);
+  let searchInputEl = $state(null);
+  let currentMatchIdx = $state(-1);
 
   const FETCH_BATCH = 1000;
   let swapping = false;
@@ -108,9 +114,71 @@
   let fontSize = $derived($settings.fontSize || 14);
   let lineHeight = $derived(fontSize * 1.5);
 
-  let filteredLines = $derived(searchQuery
-    ? lines.filter(l => l.text.toLowerCase().includes(searchQuery.toLowerCase()))
-    : lines);
+  // Build a RegExp + test function from the current search options
+  let searchRe = $derived.by(() => {
+    if (!searchQuery) return null;
+    try {
+      let pattern = searchQuery;
+      if (!searchRegex) pattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (searchWholeWord) pattern = `\\b${pattern}\\b`;
+      const flags = searchCaseSensitive ? 'g' : 'gi';
+      return new RegExp(pattern, flags);
+    } catch {
+      return null;
+    }
+  });
+
+  let searchTester = $derived.by(() => {
+    if (!searchRe) return null;
+    const re = searchRe;
+    return (text) => { re.lastIndex = 0; return re.test(text); };
+  });
+
+  // In filter mode, hide non-matching lines. In search mode, show all lines.
+  let filteredLines = $derived.by(() => {
+    if (!searchQuery || searchMode !== 'filter' || !searchTester) return lines;
+    return lines.filter(l => searchTester(l.text));
+  });
+
+  // Indices (into filteredLines) of lines that match the search query
+  let searchMatchIndices = $derived.by(() => {
+    if (!searchQuery || searchMode !== 'search' || !searchTester) return [];
+    const indices = [];
+    for (let i = 0; i < filteredLines.length; i++) {
+      if (searchTester(filteredLines[i].text)) indices.push(i);
+    }
+    return indices;
+  });
+
+  // Line number of the current match (for highlighting in LogLine)
+  let currentMatchLineNumber = $derived(
+    searchMatchIndices.length > 0 && currentMatchIdx >= 0 && currentMatchIdx < searchMatchIndices.length
+      ? filteredLines[searchMatchIndices[currentMatchIdx]]?.number ?? -1
+      : -1
+  );
+
+  // Reset match index when query or matches change
+  let prevQuery = '';
+  let prevMatchCount = 0;
+  $effect(() => {
+    const q = searchQuery;
+    const count = searchMatchIndices.length;
+    if (q !== prevQuery) {
+      prevQuery = q;
+      currentMatchIdx = count > 0 ? 0 : -1;
+      prevMatchCount = count;
+    } else if (count !== prevMatchCount) {
+      prevMatchCount = count;
+      if (currentMatchIdx >= count) currentMatchIdx = count > 0 ? count - 1 : -1;
+    }
+  });
+
+  // Auto-focus search input when search becomes visible
+  $effect(() => {
+    if (searchVisible && searchInputEl) {
+      tick().then(() => { searchInputEl?.focus(); searchInputEl?.select(); });
+    }
+  });
 
   // Compute which slice of filteredLines to render
   function updateVisibleRange() {
@@ -140,7 +208,7 @@
 
   onMount(() => {
     function handleMenuFind() {
-      searchVisible = true;
+      openSearch();
     }
     window.addEventListener('ctail:find', handleMenuFind);
     return () => window.removeEventListener('ctail:find', handleMenuFind);
@@ -369,16 +437,64 @@
     }
   }
 
+  function openSearch() {
+    const sel = getSelectedText().split('\n')[0]?.trim() || '';
+    searchVisible = true;
+    if (sel) searchQuery = sel;
+  }
+
+  function closeSearch() {
+    searchVisible = false;
+    searchQuery = '';
+    currentMatchIdx = -1;
+  }
+
+  function scrollToMatchIndex(idx) {
+    if (idx < 0 || idx >= searchMatchIndices.length) return;
+    currentMatchIdx = idx;
+    const lineIdx = searchMatchIndices[idx];
+    if (container && lineIdx >= 0) {
+      programmaticScroll = true;
+      container.scrollTop = lineIdx * lineHeight;
+      updateVisibleRange();
+      programmaticScroll = false;
+    }
+  }
+
+  function searchNext() {
+    if (searchMatchIndices.length === 0) return;
+    scrollToMatchIndex(currentMatchIdx < searchMatchIndices.length - 1 ? currentMatchIdx + 1 : 0);
+  }
+
+  function searchPrev() {
+    if (searchMatchIndices.length === 0) return;
+    scrollToMatchIndex(currentMatchIdx > 0 ? currentMatchIdx - 1 : searchMatchIndices.length - 1);
+  }
+
+  function handleSearchKeydown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) searchPrev(); else searchNext();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSearch();
+    }
+  }
+
   async function handleKeydown(e) {
     if (e.ctrlKey && e.key === 'f') {
       e.preventDefault();
-      searchVisible = !searchVisible;
-      if (!searchVisible) searchQuery = '';
+      if (searchVisible) {
+        searchInputEl?.focus();
+        searchInputEl?.select();
+      } else {
+        openSearch();
+      }
       return;
     }
     if (e.key === 'Escape' && searchVisible) {
-      searchVisible = false;
-      searchQuery = '';
+      closeSearch();
       return;
     }
 
@@ -495,9 +611,7 @@
   }
 
   function ctxSearch() {
-    const text = getSelectedText();
-    searchVisible = true;
-    if (text) searchQuery = text;
+    openSearch();
     closeContextMenu();
   }
 
@@ -507,8 +621,7 @@
   }
 
   function ctxClearSearch() {
-    searchQuery = '';
-    searchVisible = false;
+    closeSearch();
     closeContextMenu();
   }
 
@@ -522,19 +635,35 @@
 
 <div class="log-view" data-wordwrap={$settings.wordWrap}>
   {#if searchVisible}
-    <div class="search-bar">
-      <input
-        type="text"
-        placeholder="Search..."
-        bind:value={searchQuery}
-        class="search-input"
-      />
-      <span class="search-count">
-        {#if searchQuery}
-          {filteredLines.length} / {lines.length} lines
-        {/if}
-      </span>
-      <button class="search-close" onclick={() => { searchVisible = false; searchQuery = ''; }}>×</button>
+    <div class="search-bar" role="search">
+      <div class="search-input-row">
+        <input
+          type="text"
+          placeholder="Find"
+          bind:value={searchQuery}
+          bind:this={searchInputEl}
+          onkeydown={handleSearchKeydown}
+          class="search-input"
+        />
+        <button class="search-toggle" class:active={searchCaseSensitive} title="Match Case"
+          onclick={() => { searchCaseSensitive = !searchCaseSensitive; }}>Aa</button>
+        <button class="search-toggle" class:active={searchWholeWord} title="Match Whole Word"
+          onclick={() => { searchWholeWord = !searchWholeWord; }}><b>ab</b></button>
+        <button class="search-toggle" class:active={searchRegex} title="Use Regular Expression"
+          onclick={() => { searchRegex = !searchRegex; }}>.*</button>
+        <span class="search-count">
+          {#if searchQuery && searchMode === 'search'}
+            {searchMatchIndices.length > 0 ? `${currentMatchIdx + 1} of ${searchMatchIndices.length}` : 'No results'}
+          {:else if searchQuery && searchMode === 'filter'}
+            {filteredLines.length} / {lines.length}
+          {/if}
+        </span>
+        <button class="search-nav" title="Previous Match (Shift+Enter)" onclick={searchPrev} disabled={searchMatchIndices.length === 0 || searchMode !== 'search'}>↑</button>
+        <button class="search-nav" title="Next Match (Enter)" onclick={searchNext} disabled={searchMatchIndices.length === 0 || searchMode !== 'search'}>↓</button>
+        <button class="search-toggle" class:active={searchMode === 'filter'} title="Filter lines (hide non-matching)"
+          onclick={() => { searchMode = searchMode === 'filter' ? 'search' : 'filter'; }}>≡</button>
+        <button class="search-close" title="Close (Escape)" onclick={closeSearch}>×</button>
+      </div>
     </div>
   {/if}
 
@@ -548,6 +677,8 @@
               rules={deferHighlight ? [] : rules}
               showLineNumber={$settings.showLineNumbers}
               fontSize={$settings.fontSize}
+              searchRe={searchMode === 'search' ? searchRe : null}
+              isCurrentMatch={line.number === currentMatchLineNumber}
             />
           {/each}
         <div class="virtual-spacer" style="height: {bottomPad}px"></div>
@@ -807,15 +938,84 @@
   .search-bar {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
+    padding: 4px 8px;
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+
+  .search-input-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
   }
 
   .search-input {
     flex: 1;
-    max-width: 300px;
+    max-width: 240px;
+    padding: 3px 6px;
+    font-size: 13px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    outline: none;
+  }
+
+  .search-input:focus {
+    border-color: var(--accent);
+  }
+
+  .search-toggle {
+    font-size: 12px;
+    padding: 2px 5px;
+    min-width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .search-toggle:hover {
+    background: var(--bg-hover);
+  }
+
+  .search-toggle.active {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    border-color: var(--accent);
+  }
+
+  .search-nav {
+    font-size: 14px;
+    padding: 2px 4px;
+    min-width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  .search-nav:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .search-nav:disabled {
+    opacity: 0.3;
+    cursor: default;
   }
 
   .search-count {

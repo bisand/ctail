@@ -38,6 +38,10 @@ export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
 
+export function FixMaximize() {
+  return window['go']['main']['App']['FixMaximize']();
+}
+
 export function GenerateRulesProfile(arg1, arg2) {
   return window['go']['main']['App']['GenerateRulesProfile'](arg1, arg2);
 }
@@ -144,6 +148,14 @@ export function SaveSettings(arg1) {
 
 export function SaveTabOrder(arg1) {
   return window['go']['main']['App']['SaveTabOrder'](arg1);
+}
+
+export function SetActiveTab(arg1) {
+  return window['go']['main']['App']['SetActiveTab'](arg1);
+}
+
+export function SetEventsPaused(arg1) {
+  return window['go']['main']['App']['SetEventsPaused'](arg1);
 }
 
 export function SetTabColor(arg1, arg2) {
