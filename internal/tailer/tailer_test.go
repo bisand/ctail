@@ -132,6 +132,71 @@ func TestTailerTruncation(t *testing.T) {
 	}
 }
 
+func TestTailerFileReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	// Create file with initial content
+	if err := os.WriteFile(path, []byte("old line 1\nold line 2\nold line 3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	truncated := make(chan struct{}, 1)
+	var mu sync.Mutex
+	var newLines []Line
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.OnTruncated(func() {
+		select {
+		case truncated <- struct{}{}:
+		default:
+		}
+	})
+	tail.OnLines(func(lines []Line) {
+		mu.Lock()
+		newLines = append(newLines, lines...)
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Simulate log rotation: rename old file, create new one with MORE content
+	// than the old file (this is the case the old code missed)
+	rotatedPath := path + ".1"
+	if err := os.Rename(path, rotatedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("new line 1\nnew line 2\nnew line 3\nnew line 4\nnew line 5\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for truncation callback (file replacement detected via inode change)
+	select {
+	case <-truncated:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for file replacement detection")
+	}
+
+	// Wait for new content to be read
+	time.Sleep(200 * time.Millisecond)
+
+	lines := tail.GetLines()
+	if len(lines) != 5 {
+		t.Errorf("expected 5 lines after file replacement, got %d", len(lines))
+		for _, l := range lines {
+			t.Logf("  line %d: %q", l.Number, l.Text)
+		}
+	}
+	if len(lines) > 0 && lines[0].Text != "new line 1" {
+		t.Errorf("expected first line to be 'new line 1', got %q", lines[0].Text)
+	}
+}
+
 func TestTailerSlidingWindow(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.log")

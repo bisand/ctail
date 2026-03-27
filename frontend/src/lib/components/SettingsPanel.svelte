@@ -365,6 +365,11 @@
           <option value="wayland">Wayland</option>
         </select>
       </label>
+      <label class="toggle-label">
+        <input type="checkbox" checked={$settings.disableDmabuf || false}
+          onchange={(e) => updateSetting('disableDmabuf', e.target.checked)} />
+        <span>Disable DMA-BUF renderer <small>(requires restart — fixes blank/corrupt window on some GPUs)</small></span>
+      </label>
       {/if}
       <label class="toggle-label">
         <input type="checkbox" checked={!$settings.disableUpdateCheck}

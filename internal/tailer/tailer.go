@@ -26,7 +26,8 @@ type Tailer struct {
 	lineNum     int64
 	offset      int64
 	fileSize    int64
-	lineOffsets []int64 // byte offset of each line start (0-indexed: lineOffsets[0] = line 1)
+	lineOffsets []int64    // byte offset of each line start (0-indexed: lineOffsets[0] = line 1)
+	fileIdent   os.FileInfo // identity of the file being tailed (for detecting replacement via inode change)
 	running     bool
 	inError     bool      // true when the last poll attempt failed
 	lastReady   time.Time // last time onReady was fired (prevents flicker cycling)
@@ -303,6 +304,7 @@ func (t *Tailer) initialRead() error {
 	// Commit state under lock — short critical section, no I/O or callbacks.
 	t.mu.Lock()
 	t.fileSize = fileSize
+	t.fileIdent = info
 	t.lineOffsets = offsets
 	t.lines = allLines
 	t.lineNum = num
@@ -436,7 +438,18 @@ func (t *Tailer) poll() {
 	t.inError = false
 	prevSize := t.fileSize
 	prevOffset := t.offset
+	prevIdent := t.fileIdent
 	t.mu.Unlock()
+
+	// Detect file replacement (different inode) — the old file was renamed
+	// and a new one created at the same path.  Treat as truncation even if
+	// the new file is already larger than the old one.
+	replaced := prevIdent != nil && !os.SameFile(prevIdent, info)
+	if replaced {
+		t.mu.Lock()
+		t.fileIdent = info
+		t.mu.Unlock()
+	}
 
 	// File is accessible again after an error — do a full re-read since our
 	// offset/lineNum state may be completely stale after a network drop.
@@ -453,7 +466,7 @@ func (t *Tailer) poll() {
 			}
 			return
 		}
-		t.handleFullReread(rf, currentSize)
+		t.handleFullReread(rf, currentSize, info)
 		rf.Close()
 
 		// Notify frontend that the tab is ready again.
@@ -472,8 +485,8 @@ func (t *Tailer) poll() {
 		return
 	}
 
-	// No new data
-	if currentSize == prevOffset {
+	// No new data and file not replaced
+	if currentSize == prevOffset && !replaced {
 		return
 	}
 
@@ -491,8 +504,8 @@ func (t *Tailer) poll() {
 	}
 	defer f.Close()
 
-	// Detect truncation
-	if currentSize < prevSize {
+	// Detect truncation (size shrank) or file replacement (different inode)
+	if currentSize < prevSize || replaced {
 		t.handleTruncation(f, currentSize)
 		return
 	}
@@ -550,12 +563,13 @@ func (t *Tailer) handleTruncation(f *os.File, currentSize int64) {
 // state may be stale because the file changed while the mount was unreachable.
 // Does NOT fire onLines — the caller fires onReady which triggers the frontend
 // to fetch lines via loadInitialLines with proper windowed pagination.
-func (t *Tailer) handleFullReread(f *os.File, currentSize int64) {
+func (t *Tailer) handleFullReread(f *os.File, currentSize int64, info os.FileInfo) {
 	t.mu.Lock()
 	t.lines = t.lines[:0]
 	t.lineNum = 0
 	t.offset = 0
 	t.fileSize = currentSize
+	t.fileIdent = info
 	t.lineOffsets = t.lineOffsets[:0]
 	t.mu.Unlock()
 

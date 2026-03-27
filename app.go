@@ -613,6 +613,79 @@ func (a *App) CloseTab(tabID string) {
 	a.persistTabs()
 }
 
+// RefreshTab stops the current tailer and creates a fresh one for the same file,
+// forcing a full re-read. This is the manual workaround for file rotation issues
+// or any state where the tailer has lost sync with the file content.
+func (a *App) RefreshTab(tabID string) error {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	if !ok {
+		a.mu.RUnlock()
+		return fmt.Errorf("tab not found: %s", tabID)
+	}
+	filePath := tab.FilePath
+	a.mu.RUnlock()
+
+	// Stop old tailer
+	if tab.tailer != nil {
+		tab.throttle.stop()
+		tab.tailer.Stop()
+	}
+
+	// Create new tailer
+	settings := a.config.GetSettings()
+	pollInterval := time.Duration(settings.PollIntervalMs) * time.Millisecond
+	if pollInterval < 100*time.Millisecond {
+		pollInterval = 100 * time.Millisecond
+	}
+
+	t := tailer.New(filePath, pollInterval, settings.BufferSize)
+
+	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:lines", map[string]interface{}{
+			"tabId": tabID,
+			"lines": lines,
+		})
+	})
+
+	t.OnLines(func(lines []tailer.Line) {
+		throttle.add(lines)
+	})
+	t.OnTruncated(func() {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
+			"tabId": tabID,
+		})
+	})
+	t.OnError(func(err error) {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:error", map[string]interface{}{
+			"tabId":   tabID,
+			"message": err.Error(),
+		})
+	})
+	t.OnReady(func() {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
+			"tabId": tabID,
+		})
+	})
+	t.OnReconnecting(func() {
+		wailsRuntime.EventsEmit(a.ctx, "tailer:reconnecting", map[string]interface{}{
+			"tabId": tabID,
+		})
+	})
+
+	// Clear frontend lines first
+	wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
+		"tabId": tabID,
+	})
+
+	a.mu.Lock()
+	tab.tailer = t
+	tab.throttle = throttle
+	a.mu.Unlock()
+
+	return t.Start()
+}
+
 // GetTabLines returns the current buffered lines for a tab
 func (a *App) GetTabLines(tabID string) []tailer.Line {
 	a.mu.RLock()

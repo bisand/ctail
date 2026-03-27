@@ -118,6 +118,10 @@ export function RefreshRecentMenu() {
   return window['go']['main']['App']['RefreshRecentMenu']();
 }
 
+export function RefreshTab(arg1) {
+  return window['go']['main']['App']['RefreshTab'](arg1);
+}
+
 export function RenameProfile(arg1, arg2) {
   return window['go']['main']['App']['RenameProfile'](arg1, arg2);
 }

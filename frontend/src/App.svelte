@@ -321,6 +321,18 @@
       void sentinel.offsetHeight;
     }
 
+    // Heavy repaint for compositor surface corruption (e.g. monitor
+    // hotplug). Briefly forces the body off-screen and back, which makes
+    // WebKit2GTK tear down and recreate its GPU compositing surface.
+    function forceCompositingReset() {
+      const root = document.documentElement;
+      root.style.display = 'none';
+      void root.offsetHeight;
+      root.style.display = '';
+      void root.offsetHeight;
+      nudgeRepaint();
+    }
+
     function flushAndRepaint() {
       if (pendingLines.size > 0) {
         if (lineFlushTimer) { clearTimeout(lineFlushTimer); lineFlushTimer = null; }
@@ -333,6 +345,54 @@
       if (!document.hidden) flushAndRepaint();
     });
     window.addEventListener('focus', flushAndRepaint);
+
+    // Monitor hotplug / screen change detection.  When monitors are
+    // added or removed, WebKit2GTK's compositor surface can become
+    // corrupted (transparent background, content bleeding outside the
+    // window).  We detect this via resize events and devicePixelRatio
+    // changes, then force a full compositing reset.
+    let lastDPR = window.devicePixelRatio;
+    let lastScreenW = window.screen.width;
+    let lastScreenH = window.screen.height;
+    let resetDebounce = null;
+
+    function scheduleCompositingReset() {
+      if (resetDebounce) clearTimeout(resetDebounce);
+      resetDebounce = setTimeout(() => {
+        resetDebounce = null;
+        forceCompositingReset();
+      }, 300);
+    }
+
+    // Detect screen configuration changes via resize event (window
+    // managers often reposition/resize windows when monitors change).
+    function onWindowResize() {
+      const dpr = window.devicePixelRatio;
+      const sw = window.screen.width;
+      const sh = window.screen.height;
+      if (dpr !== lastDPR || sw !== lastScreenW || sh !== lastScreenH) {
+        lastDPR = dpr;
+        lastScreenW = sw;
+        lastScreenH = sh;
+        scheduleCompositingReset();
+      }
+    }
+    window.addEventListener('resize', onWindowResize);
+
+    // Also poll for DPR/screen geometry changes that may not trigger
+    // a resize event (e.g. monitor plugged in without affecting the
+    // current window).
+    const screenPollId = setInterval(() => {
+      const dpr = window.devicePixelRatio;
+      const sw = window.screen.width;
+      const sh = window.screen.height;
+      if (dpr !== lastDPR || sw !== lastScreenW || sh !== lastScreenH) {
+        lastDPR = dpr;
+        lastScreenW = sw;
+        lastScreenH = sh;
+        scheduleCompositingReset();
+      }
+    }, 2000);
 
     // User interaction recovery — mousemove, mousedown, and keydown all
     // prove the user is at the window.  Throttled so we nudge at most
@@ -352,10 +412,13 @@
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);
       window.removeEventListener('keyup', handleGlobalKeyup, true);
+      window.removeEventListener('resize', onWindowResize);
       window.removeEventListener('mousemove', onInteraction);
       window.removeEventListener('mousedown', onInteraction);
       window.removeEventListener('keydown', onInteraction);
       if (lineFlushTimer) clearTimeout(lineFlushTimer);
+      if (resetDebounce) clearTimeout(resetDebounce);
+      clearInterval(screenPollId);
       sentinel.remove();
     };
   });

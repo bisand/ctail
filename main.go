@@ -32,6 +32,7 @@ var version = "0.0.0-dev"
 func main() {
 	useX11 := flag.Bool("x11", false, "Force X11 backend (fixes multi-monitor maximize on Wayland)")
 	useWayland := flag.Bool("wayland", false, "Force native Wayland backend")
+	disableDmabuf := flag.Bool("disable-dmabuf", false, "Set WEBKIT_DISABLE_DMABUF_RENDERER=1 (fixes blank/corrupt window on some GPUs)")
 	flag.Parse()
 
 	app := NewApp(version, buildNumber)
@@ -61,6 +62,7 @@ func main() {
 
 	if runtime.GOOS == "linux" {
 		setDisplayBackend(*useX11, *useWayland, cfg)
+		setWebKitEnv(*disableDmabuf, cfg)
 	}
 
 	// Read saved window geometry for initial size
@@ -257,4 +259,20 @@ func extractDisplayNum(display string) string {
 		}
 	}
 	return d
+}
+
+// setWebKitEnv configures WebKit2GTK environment variables. CLI flag takes
+// priority, then the persisted config setting.  Setting
+// WEBKIT_DISABLE_DMABUF_RENDERER=1 works around GPU compositing corruption
+// (blank/transparent window, flickering) seen on some hardware — especially
+// when monitors are hot-plugged or the display topology changes.
+// See https://github.com/wailsapp/wails/issues/4985
+func setWebKitEnv(cliDisableDmabuf bool, cfg *config.Manager) {
+	if cliDisableDmabuf {
+		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+		return
+	}
+	if cfg != nil && cfg.GetSettings().DisableDmabuf {
+		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+	}
 }

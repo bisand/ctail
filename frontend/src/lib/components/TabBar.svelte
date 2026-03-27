@@ -1,6 +1,6 @@
 <script>
   import { tabs, activeTabId, tabStore } from '../stores/tabs.js';
-  import { CloseTab, RevealInFileManager, SetTabLabel, SetTabColor, SaveTabOrder, ChangeTabFilePath } from '../../../wailsjs/go/main/App.js';
+  import { CloseTab, RevealInFileManager, SetTabLabel, SetTabColor, SaveTabOrder, ChangeTabFilePath, RefreshTab } from '../../../wailsjs/go/main/App.js';
 
   let { onAddTab } = $props();
 
@@ -116,6 +116,13 @@
   function ctxCopyPath() {
     if (ctxTab) {
       navigator.clipboard.writeText(ctxTab.filePath);
+    }
+    closeCtxMenu();
+  }
+
+  function ctxRefresh() {
+    if (ctxMenu.tabId) {
+      RefreshTab(ctxMenu.tabId).catch(e => console.error('Refresh failed:', e));
     }
     closeCtxMenu();
   }
@@ -273,6 +280,9 @@
         Close to the right
       </button>
       <div class="ctx-separator"></div>
+      <button class="ctx-item" onclick={ctxRefresh}>
+        Refresh
+      </button>
       <button class="ctx-item" onclick={ctxChangeFile}>
         Change file path…
       </button>

@@ -84,6 +84,7 @@ export namespace config {
 	    recentFiles: string[];
 	    window: WindowState;
 	    displayBackend: string;
+	    disableDmabuf: boolean;
 	    disableUpdateCheck: boolean;
 	    updateCheckIntervalHours: number;
 	    aiProvider: string;
@@ -113,6 +114,7 @@ export namespace config {
 	        this.recentFiles = source["recentFiles"];
 	        this.window = this.convertValues(source["window"], WindowState);
 	        this.displayBackend = source["displayBackend"];
+	        this.disableDmabuf = source["disableDmabuf"];
 	        this.disableUpdateCheck = source["disableUpdateCheck"];
 	        this.updateCheckIntervalHours = source["updateCheckIntervalHours"];
 	        this.aiProvider = source["aiProvider"];
