@@ -853,3 +853,371 @@ func itoa(n int) string {
 	}
 	return s
 }
+
+// --- Resilience tests ---
+
+// TestTailerLastDataAtTracking verifies that lastDataAt is set on initial read
+// and updated when new lines are appended.
+func TestTailerLastDataAtTracking(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	// Wait for initial read
+	time.Sleep(200 * time.Millisecond)
+
+	tail.mu.RLock()
+	initialDataAt := tail.lastDataAt
+	tail.mu.RUnlock()
+
+	if initialDataAt.IsZero() {
+		t.Fatal("lastDataAt should be set after initial read")
+	}
+
+	// Append new lines
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("line 2\n")
+	f.Close()
+
+	// Wait for poll to pick up new data
+	time.Sleep(300 * time.Millisecond)
+
+	tail.mu.RLock()
+	updatedDataAt := tail.lastDataAt
+	tail.mu.RUnlock()
+
+	if !updatedDataAt.After(initialDataAt) {
+		t.Errorf("lastDataAt should advance after new lines: initial=%v, updated=%v", initialDataAt, updatedDataAt)
+	}
+}
+
+// TestTailerLastDataAtOnTruncation verifies that lastDataAt is updated
+// when the file is truncated.
+func TestTailerLastDataAtOnTruncation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte("line 1\nline 2\nline 3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	tail.mu.RLock()
+	beforeTruncate := tail.lastDataAt
+	tail.mu.RUnlock()
+
+	// Truncate and write new content
+	time.Sleep(10 * time.Millisecond) // ensure clock ticks
+	if err := os.WriteFile(path, []byte("new\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	tail.mu.RLock()
+	afterTruncate := tail.lastDataAt
+	tail.mu.RUnlock()
+
+	if !afterTruncate.After(beforeTruncate) {
+		t.Errorf("lastDataAt should advance after truncation: before=%v, after=%v", beforeTruncate, afterTruncate)
+	}
+}
+
+// TestTailerStalenessWatchdog verifies that the watchdog detects when the
+// tailer's offset is out of sync with the actual file size and triggers
+// an auto-restart.
+func TestTailerStalenessWatchdog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	reconnectCount := 0
+	readyCount := 0
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.staleThreshold = 1 * time.Millisecond // very short for testing
+
+	tail.OnReconnecting(func() {
+		mu.Lock()
+		reconnectCount++
+		mu.Unlock()
+	})
+	tail.OnReady(func() {
+		mu.Lock()
+		readyCount++
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	// Wait for initial read
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	rc := readyCount
+	mu.Unlock()
+	if rc < 1 {
+		t.Fatal("expected initial onReady")
+	}
+
+	// Now simulate a stale state: set lastDataAt far in the past and
+	// corrupt the offset so it doesn't match the file size.
+	// The watchdog should detect this mismatch and trigger Restart.
+	tail.mu.Lock()
+	tail.lastDataAt = time.Now().Add(-1 * time.Hour)
+	tail.offset = 999999 // doesn't match actual file size (7 bytes)
+	tail.mu.Unlock()
+
+	// Wait for the watchdog to trigger (needs 2 consecutive stale checks)
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	rc2 := reconnectCount
+	mu.Unlock()
+
+	if rc2 < 1 {
+		t.Errorf("expected onReconnecting from staleness watchdog, got count=%d", rc2)
+	}
+}
+
+// TestTailerStalenessWatchdogNoFalsePositive verifies that the watchdog
+// does NOT trigger when the file size matches our offset (healthy state).
+func TestTailerStalenessWatchdogNoFalsePositive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	reconnectCount := 0
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.staleThreshold = 1 * time.Millisecond // very short for testing
+
+	tail.OnReconnecting(func() {
+		mu.Lock()
+		reconnectCount++
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	// Wait for initial read and several poll cycles
+	time.Sleep(500 * time.Millisecond)
+
+	// The file hasn't changed and offset should match — no reconnect expected
+	mu.Lock()
+	rc := reconnectCount
+	mu.Unlock()
+
+	if rc != 0 {
+		t.Errorf("watchdog should NOT trigger when offset matches file size, got reconnectCount=%d", rc)
+	}
+}
+
+// TestTailerStalenessRecovery verifies that after the watchdog triggers a
+// restart, the tailer resumes reading new lines normally.
+func TestTailerStalenessRecovery(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var allLines []Line
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.staleThreshold = 1 * time.Millisecond
+
+	tail.OnLines(func(lines []Line) {
+		mu.Lock()
+		allLines = append(allLines, lines...)
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Force a stale state
+	tail.mu.Lock()
+	tail.lastDataAt = time.Now().Add(-1 * time.Hour)
+	tail.offset = 999999
+	tail.mu.Unlock()
+
+	// Wait for watchdog to restart
+	time.Sleep(500 * time.Millisecond)
+
+	// Clear collected lines from restart re-read
+	mu.Lock()
+	allLines = nil
+	mu.Unlock()
+
+	// Write new data — after restart the tailer should pick it up
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("line 2\n")
+	f.Close()
+
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	count := len(allLines)
+	mu.Unlock()
+
+	if count == 0 {
+		t.Error("expected new lines to be delivered after staleness recovery")
+	}
+}
+
+// TestTailerPollPanicRecovery verifies that if a callback panics, the poll
+// loop survives and continues polling.
+func TestTailerPollPanicRecovery(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var errors []string
+	callCount := 0
+
+	tail := New(path, 50*time.Millisecond, 1000)
+
+	// OnLines will panic on first call, then work normally
+	tail.OnLines(func(lines []Line) {
+		mu.Lock()
+		callCount++
+		c := callCount
+		mu.Unlock()
+		if c == 1 {
+			panic("test panic in OnLines callback")
+		}
+	})
+
+	tail.OnError(func(err error) {
+		mu.Lock()
+		errors = append(errors, err.Error())
+		mu.Unlock()
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	// Wait for initial read
+	time.Sleep(200 * time.Millisecond)
+
+	// Write new data to trigger OnLines (which will panic on first call)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("line 2\n")
+	f.Close()
+
+	// Wait for the panic to happen and be recovered
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	panicErrors := 0
+	for _, e := range errors {
+		if len(e) > 5 && e[:5] == "poll " {
+			panicErrors++
+		}
+	}
+	mu.Unlock()
+
+	if panicErrors == 0 {
+		t.Error("expected a panic recovery error to be reported")
+	}
+
+	// Write more data — the poll loop should still be alive
+	f2, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f2.WriteString("line 3\n")
+	f2.Close()
+
+	time.Sleep(300 * time.Millisecond)
+
+	// The tailer should still be running and have picked up new data
+	lines := tail.GetLines()
+	if len(lines) == 0 {
+		t.Error("tailer should still be running after panic recovery")
+	}
+
+	mu.Lock()
+	finalCallCount := callCount
+	mu.Unlock()
+
+	if finalCallCount < 2 {
+		t.Errorf("OnLines should have been called multiple times after recovery, got %d", finalCallCount)
+	}
+}
+
+// TestTailerRestartResetsLastDataAt verifies that Restart() resets the
+// watchdog timer so it doesn't immediately trigger again.
+func TestTailerRestartResetsLastDataAt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte("line 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	tail.Restart()
+	time.Sleep(100 * time.Millisecond)
+
+	tail.mu.RLock()
+	lastData := tail.lastDataAt
+	tail.mu.RUnlock()
+
+	// lastDataAt should have been reset to ~now by Restart
+	if time.Since(lastData) > 2*time.Second {
+		t.Errorf("Restart should reset lastDataAt, but it's %v old", time.Since(lastData))
+	}
+}

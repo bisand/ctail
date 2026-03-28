@@ -98,6 +98,10 @@ export function GetTheme(arg1) {
   return window['go']['main']['App']['GetTheme'](arg1);
 }
 
+export function HasClosedTabs() {
+  return window['go']['main']['App']['HasClosedTabs']();
+}
+
 export function ListProfiles() {
   return window['go']['main']['App']['ListProfiles']();
 }
@@ -128,6 +132,10 @@ export function RefreshTab(arg1) {
 
 export function RenameProfile(arg1, arg2) {
   return window['go']['main']['App']['RenameProfile'](arg1, arg2);
+}
+
+export function ReopenTab() {
+  return window['go']['main']['App']['ReopenTab']();
 }
 
 export function RevealInFileManager(arg1) {

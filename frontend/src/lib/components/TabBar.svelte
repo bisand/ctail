@@ -1,8 +1,8 @@
 <script>
   import { tabs, activeTabId, tabStore } from '../stores/tabs.js';
-  import { CloseTab, RevealInFileManager, SetTabLabel, SetTabColor, SaveTabOrder, ChangeTabFilePath, RefreshTab } from '../../../wailsjs/go/main/App.js';
+  import { CloseTab, ReopenTab, GetTabs, RevealInFileManager, SetTabLabel, SetTabColor, SaveTabOrder, ChangeTabFilePath, RefreshTab } from '../../../wailsjs/go/main/App.js';
 
-  let { onAddTab } = $props();
+  let { onAddTab, onReopenTab } = $props();
 
   const TAB_COLORS = [
     '', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'
@@ -113,6 +113,11 @@
     closeCtxMenu();
   }
 
+  function ctxReopenClosed() {
+    closeCtxMenu();
+    if (onReopenTab) onReopenTab();
+  }
+
   function ctxCopyPath() {
     if (ctxTab) {
       navigator.clipboard.writeText(ctxTab.filePath);
@@ -202,6 +207,24 @@
       console.error('Failed to change file:', e);
     }
   }
+  // Tooltip hover state
+  let tooltipTab = $state(null);
+  let tooltipPos = $state({ x: 0, y: 0 });
+  let tooltipTimer = null;
+
+  function showTooltip(e, tab) {
+    clearTimeout(tooltipTimer);
+    const rect = e.currentTarget.getBoundingClientRect();
+    tooltipTimer = setTimeout(() => {
+      tooltipPos = { x: rect.left, y: rect.bottom + 4 };
+      tooltipTab = tab;
+    }, 400);
+  }
+
+  function hideTooltip() {
+    clearTimeout(tooltipTimer);
+    tooltipTab = null;
+  }
 </script>
 
 <svelte:window onclick={(e) => { closeCtxMenu(); closeColorPicker(); }} />
@@ -228,7 +251,8 @@
         ondragend={handleDragEnd}
         oncontextmenu={(e) => handleTabContext(e, tab, i)}
         ondblclick={() => { renameTabId = tab.id; renameValue = tab.label || tab.fileName; }}
-        title={tab.status === 'error' ? `${tab.filePath}\n⚠ ${tab.errorMessage}` : tab.filePath}
+        onmouseenter={(e) => showTooltip(e, tab)}
+        onmouseleave={hideTooltip}
       >
         {#if tab.color}
           <span class="tab-color" style="background: {tab.color}"></span>
@@ -279,6 +303,9 @@
       <button class="ctx-item" onclick={ctxCloseToRight} disabled={ctxMenu.tabIndex >= $tabs.length - 1}>
         Close to the right
       </button>
+      <button class="ctx-item" onclick={ctxReopenClosed}>
+        Reopen closed tab <span class="ctx-key">Ctrl+Shift+T</span>
+      </button>
       <div class="ctx-separator"></div>
       <button class="ctx-item" onclick={ctxRefresh}>
         Refresh
@@ -308,6 +335,25 @@
           {#if !c}✕{/if}
         </button>
       {/each}
+    </div>
+  {/if}
+
+  {#if tooltipTab}
+    <div class="tab-tooltip" style="left: {tooltipPos.x}px; top: {tooltipPos.y}px">
+      <div class="tab-tooltip-content">
+        {#if tooltipTab.color}
+          <span class="tab-tooltip-color" style="background: {tooltipTab.color}"></span>
+        {/if}
+        <div class="tab-tooltip-text">
+          {#if tooltipTab.label}
+            <span class="tab-tooltip-label">{tooltipTab.label}</span>
+          {/if}
+          <span class="tab-tooltip-path">{tooltipTab.filePath}</span>
+          {#if tooltipTab.status === 'error'}
+            <span class="tab-tooltip-error">⚠ {tooltipTab.errorMessage}</span>
+          {/if}
+        </div>
+      </div>
     </div>
   {/if}
 </div>
@@ -546,5 +592,58 @@
 
   .color-swatch.active {
     border-color: var(--accent);
+  }
+
+  .tab-tooltip {
+    position: fixed;
+    z-index: 1100;
+    pointer-events: none;
+    animation: tooltip-fade 0.15s ease-out;
+  }
+
+  @keyframes tooltip-fade {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .tab-tooltip-content {
+    display: flex;
+    align-items: stretch;
+    background: rgba(30, 30, 46, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+    max-width: 400px;
+    backdrop-filter: blur(8px);
+  }
+
+  .tab-tooltip-color {
+    width: 4px;
+    flex-shrink: 0;
+  }
+
+  .tab-tooltip-text {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 10px;
+    gap: 2px;
+  }
+
+  .tab-tooltip-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #cdd6f4;
+  }
+
+  .tab-tooltip-path {
+    font-size: 11px;
+    color: #a6adc8;
+    word-break: break-all;
+  }
+
+  .tab-tooltip-error {
+    font-size: 11px;
+    color: var(--error, #ef4444);
   }
 </style>

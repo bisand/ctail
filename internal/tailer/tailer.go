@@ -21,17 +21,19 @@ type Tailer struct {
 	pollInterval time.Duration
 	bufferSize   int
 
-	mu          sync.RWMutex
-	lines       []Line
-	lineNum     int64
-	offset      int64
-	fileSize    int64
-	lineOffsets []int64    // byte offset of each line start (0-indexed: lineOffsets[0] = line 1)
-	fileIdent   os.FileInfo // identity of the file being tailed (for detecting replacement via inode change)
-	running     bool
-	inError     bool      // true when the last poll attempt failed
-	lastReady   time.Time // last time onReady was fired (prevents flicker cycling)
-	stopCh      chan struct{}
+	mu             sync.RWMutex
+	lines          []Line
+	lineNum        int64
+	offset         int64
+	fileSize       int64
+	lineOffsets    []int64    // byte offset of each line start (0-indexed: lineOffsets[0] = line 1)
+	fileIdent      os.FileInfo // identity of the file being tailed (for detecting replacement via inode change)
+	running        bool
+	inError        bool      // true when the last poll attempt failed
+	lastReady      time.Time // last time onReady was fired (prevents flicker cycling)
+	lastDataAt     time.Time // last time new data was read (for staleness detection)
+	staleThreshold time.Duration // how long without data before watchdog triggers (default 30s)
+	stopCh         chan struct{}
 
 	onLines        func([]Line)
 	onTruncated    func()
@@ -49,12 +51,13 @@ func New(filePath string, pollInterval time.Duration, bufferSize int) *Tailer {
 		pollInterval = 50 * time.Millisecond
 	}
 	return &Tailer{
-		filePath:     filePath,
-		pollInterval: pollInterval,
-		bufferSize:   bufferSize,
-		lines:        make([]Line, 0, bufferSize),
-		lineOffsets:  make([]int64, 0, 1024),
-		stopCh:       make(chan struct{}),
+		filePath:       filePath,
+		pollInterval:   pollInterval,
+		bufferSize:     bufferSize,
+		staleThreshold: 30 * time.Second,
+		lines:          make([]Line, 0, bufferSize),
+		lineOffsets:    make([]int64, 0, 1024),
+		stopCh:         make(chan struct{}),
 	}
 }
 
@@ -152,6 +155,7 @@ func (t *Tailer) Restart() {
 	// Keep inError=true so the first successful poll fires onReady,
 	// which tells the frontend to re-fetch lines.
 	t.stopCh = make(chan struct{})
+	t.lastDataAt = time.Now() // reset watchdog
 	t.mu.Unlock()
 
 	// Start the new loop — skips initialRead since we already have buffered data
@@ -309,6 +313,7 @@ func (t *Tailer) initialRead() error {
 	t.lines = allLines
 	t.lineNum = num
 	t.offset = fileSize
+	t.lastDataAt = time.Now()
 	t.mu.Unlock()
 
 	// No onLines callback — onReady (fired by startLoop) tells the frontend
@@ -334,6 +339,14 @@ func (t *Tailer) pollLoop() {
 	// polling to reduce wasted I/O and event noise on unreachable mounts.
 	const maxBackoff = 10 * time.Second
 	var consecutiveErrors int
+
+	// Staleness watchdog: if the file is readable and larger than our offset
+	// but we haven't read new data recently, force a full re-read.
+	// This catches stale offsets after network reconnections.
+	t.mu.RLock()
+	staleThreshold := t.staleThreshold
+	t.mu.RUnlock()
+	var staleChecks int
 
 	// After this many consecutive poll timeouts, auto-restart to break free
 	// of goroutines stuck on stale GVFS/SMB mounts.
@@ -362,6 +375,36 @@ func (t *Tailer) pollLoop() {
 				consecutiveErrors = 0
 				consecutiveTimeouts = 0
 				ticker.Reset(interval)
+
+				// Staleness watchdog: detect when our offset is behind the
+				// actual file size but poll() isn't reading new data.
+				// This catches stale state after network reconnections.
+				t.mu.RLock()
+				offset := t.offset
+				lastData := t.lastDataAt
+				t.mu.RUnlock()
+
+				if !lastData.IsZero() && time.Since(lastData) > staleThreshold {
+					if info, err := os.Stat(t.filePath); err == nil && info.Size() != offset {
+						staleChecks++
+						if staleChecks >= 2 {
+							staleChecks = 0
+							// Force a full re-read — our offset is out of sync
+							if t.onReconnecting != nil {
+								t.onReconnecting()
+							}
+							t.mu.Lock()
+							t.inError = true
+							t.mu.Unlock()
+							go t.Restart()
+							return
+						}
+					} else {
+						staleChecks = 0
+					}
+				} else {
+					staleChecks = 0
+				}
 			}
 
 			// Skip this tick if a previous poll is still running
@@ -375,11 +418,25 @@ func (t *Tailer) pollLoop() {
 
 			go func() {
 				defer func() { <-pollActive }()
+				defer func() {
+					if r := recover(); r != nil {
+						if t.onError != nil {
+							t.onError(fmt.Errorf("poll panic recovered: %v", r))
+						}
+					}
+				}()
 
 				pollDone := make(chan struct{})
 				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							if t.onError != nil {
+								t.onError(fmt.Errorf("poll panic recovered: %v", r))
+							}
+						}
+						close(pollDone)
+					}()
 					t.poll()
-					close(pollDone)
 				}()
 
 				select {
@@ -520,6 +577,7 @@ func (t *Tailer) poll() {
 		}
 		t.fileSize = currentSize
 		t.offset = currentSize
+		t.lastDataAt = time.Now()
 		t.mu.Unlock()
 
 		if t.onLines != nil {
@@ -535,6 +593,7 @@ func (t *Tailer) handleTruncation(f *os.File, currentSize int64) {
 	t.offset = 0
 	t.fileSize = currentSize
 	t.lineOffsets = t.lineOffsets[:0]
+	t.lastDataAt = time.Now()
 	t.mu.Unlock()
 
 	if t.onTruncated != nil {
@@ -571,6 +630,7 @@ func (t *Tailer) handleFullReread(f *os.File, currentSize int64, info os.FileInf
 	t.fileSize = currentSize
 	t.fileIdent = info
 	t.lineOffsets = t.lineOffsets[:0]
+	t.lastDataAt = time.Now()
 	t.mu.Unlock()
 
 	if t.onTruncated != nil {

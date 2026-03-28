@@ -113,6 +113,9 @@ func main() {
 	fileMenu.AddText("Close Tab", keys.CmdOrCtrl("w"), func(_ *menu.CallbackData) {
 		wailsRuntime.EventsEmit(app.ctx, "menu:close-tab")
 	})
+	fileMenu.AddText("Reopen Closed Tab", keys.Combo("t", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
+		wailsRuntime.EventsEmit(app.ctx, "menu:reopen-tab")
+	})
 	fileMenu.AddSeparator()
 	fileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
 		wailsRuntime.Quit(app.ctx)

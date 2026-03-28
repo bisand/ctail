@@ -53,6 +53,8 @@ export function GetTabs():Promise<Array<main.TabInfo>>;
 
 export function GetTheme(arg1:string):Promise<config.Theme>;
 
+export function HasClosedTabs():Promise<boolean>;
+
 export function ListProfiles():Promise<Array<string>>;
 
 export function ListThemes():Promise<Array<config.Theme>>;
@@ -68,6 +70,8 @@ export function RefreshRecentMenu():Promise<void>;
 export function RefreshTab(arg1:string):Promise<void>;
 
 export function RenameProfile(arg1:string,arg2:string):Promise<void>;
+
+export function ReopenTab():Promise<string>;
 
 export function RevealInFileManager(arg1:string):Promise<void>;
 

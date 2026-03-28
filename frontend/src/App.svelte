@@ -10,7 +10,7 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, GetPendingFiles, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates, SetEventsPaused, SetActiveTab, FixMaximize } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, CloseTab, ReopenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, GetPendingFiles, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates, SetEventsPaused, SetActiveTab, FixMaximize } from '../wailsjs/go/main/App.js';
   import { EventsOn, BrowserOpenURL, ScreenGetAll } from '../wailsjs/runtime/runtime.js';
   import { loadAndApplyTheme } from './lib/utils/themes.js';
 
@@ -224,8 +224,13 @@
     EventsOn('menu:close-tab', () => {
       const tab = $activeTab;
       if (tab) {
+        CloseTab(tab.id);
         tabStore.removeTab(tab.id);
       }
+    });
+
+    EventsOn('menu:reopen-tab', () => {
+      reopenClosedTab();
     });
 
     EventsOn('menu:toggle-settings', () => {
@@ -465,6 +470,34 @@
     };
   });
 
+  async function reopenClosedTab() {
+    try {
+      const id = await ReopenTab();
+      if (id) {
+        // ReopenTab returns the file path as the second element when called from Go.
+        // We need to get tab info to add it to the store. The Go side already created
+        // the tab; we need the filePath to derive the fileName.
+        // Since OpenTab already ran, the tailer:ready event will fire and loadInitialLines.
+        // But we need to register the tab in the frontend store first.
+        // ReopenTab → OpenTab → returns id. We need the filePath.
+        // Let's use GetTabs to find the new tab's info.
+        const { GetTabs } = await import('../wailsjs/go/main/App.js');
+        const allTabs = await GetTabs();
+        const tab = allTabs.find(t => t.id === id);
+        if (tab) {
+          const fileName = tab.filePath.split(/[/\\]/).pop();
+          tabStore.addTab(id, tab.filePath, fileName);
+          if (tab.label) tabStore.setLabel(id, tab.label);
+          if (tab.color) tabStore.setColor(id, tab.color);
+          if (tab.profile) tabStore.setProfile(id, tab.profile);
+          tabStore.setActive(id);
+        }
+      }
+    } catch (e) {
+      console.warn('No closed tab to reopen:', e);
+    }
+  }
+
   function handleGlobalKeyup(e) {
     if ((e.key === 'Control' || !e.ctrlKey) && isCycling) {
       isCycling = false;
@@ -484,9 +517,13 @@
       e.preventDefault();
       const tab = $activeTab;
       if (tab) {
-        const { CloseTab } = import('../wailsjs/go/main/App.js');
+        CloseTab(tab.id);
         tabStore.removeTab(tab.id);
       }
+    }
+    if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')) {
+      e.preventDefault();
+      reopenClosedTab();
     }
     if (e.ctrlKey && e.key === 'Tab') {
       e.preventDefault();
@@ -581,7 +618,7 @@
     </div>
   {/if}
   <Toolbar onOpenFile={openFile} />
-  <TabBar onAddTab={openFile} />
+  <TabBar onAddTab={openFile} onReopenTab={reopenClosedTab} />
   <div class="main-area">
     <LogView />
     {#if $settingsPanelOpen}

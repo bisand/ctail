@@ -55,6 +55,7 @@ type App struct {
 	stopUpdateChecker chan struct{}
 	copilotCancel     context.CancelFunc // cancels a running device-flow poll
 	savedTabCache     []config.TabState  // cached at startup so OpenTab can restore metadata
+	closedTabs        []config.TabState  // LIFO stack of recently closed tabs for reopen
 	pendingFiles      []string           // files from CLI args to open after frontend is ready
 	eventsPaused      int32              // atomic: 1 = frontend hidden, skip event emission
 	activeTabID       atomic.Value       // stores string — active tab ID for skipping inactive tab events
@@ -723,11 +724,24 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	return id, nil
 }
 
-// CloseTab stops tailing and removes the tab (non-blocking)
+// CloseTab stops tailing and removes the tab (non-blocking).
+// The tab metadata is pushed onto the closed-tabs stack so it can be reopened.
 func (a *App) CloseTab(tabID string) {
 	a.mu.Lock()
 	tab, ok := a.tabs[tabID]
 	if ok {
+		// Save metadata for reopen before deleting
+		a.closedTabs = append(a.closedTabs, config.TabState{
+			FilePath:  tab.FilePath,
+			ProfileID: tab.Profile,
+			Label:     tab.Label,
+			Color:     tab.Color,
+			Position:  tab.Position,
+		})
+		// Cap the stack at 20 entries
+		if len(a.closedTabs) > 20 {
+			a.closedTabs = a.closedTabs[len(a.closedTabs)-20:]
+		}
 		delete(a.tabs, tabID)
 	}
 	a.mu.Unlock()
@@ -738,6 +752,39 @@ func (a *App) CloseTab(tabID string) {
 	}
 
 	a.persistTabs()
+}
+
+// ReopenTab pops the most recently closed tab from the stack and opens it,
+// restoring its label, color, and profile.
+func (a *App) ReopenTab() (string, error) {
+	a.mu.Lock()
+	if len(a.closedTabs) == 0 {
+		a.mu.Unlock()
+		return "", fmt.Errorf("no closed tabs to reopen")
+	}
+	// Pop from the stack
+	last := a.closedTabs[len(a.closedTabs)-1]
+	a.closedTabs = a.closedTabs[:len(a.closedTabs)-1]
+
+	// Temporarily inject into savedTabCache so OpenTab restores metadata
+	a.savedTabCache = append(a.savedTabCache, last)
+	a.mu.Unlock()
+
+	id, err := a.OpenTab(last.FilePath)
+	if err != nil {
+		return "", err
+	}
+
+	// OpenTab may have focused an existing tab instead of creating a new one.
+	// Either way the metadata is already applied via savedTabCache.
+	return id, nil
+}
+
+// HasClosedTabs returns true if there are tabs that can be reopened.
+func (a *App) HasClosedTabs() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return len(a.closedTabs) > 0
 }
 
 // RefreshTab stops the current tailer and creates a fresh one for the same file,
