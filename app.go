@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -911,6 +912,36 @@ func (a *App) GetTabFileSize(tabID string) int64 {
 		return 0
 	}
 	return tab.tailer.GetFileSize()
+}
+
+// SearchTab searches the entire file associated with a tab for lines matching
+// the given pattern. Returns matching line numbers and total match count.
+func (a *App) SearchTab(tabID, pattern string, caseSensitive, wholeWord, isRegex bool) tailer.SearchResult {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	a.mu.RUnlock()
+	if !ok || pattern == "" {
+		return tailer.SearchResult{}
+	}
+
+	// Build regex from parameters (mirrors frontend logic)
+	p := pattern
+	if !isRegex {
+		p = regexp.QuoteMeta(p)
+	}
+	if wholeWord {
+		p = `\b` + p + `\b`
+	}
+	flags := ""
+	if !caseSensitive {
+		flags = "(?i)"
+	}
+	re, err := regexp.Compile(flags + p)
+	if err != nil {
+		return tailer.SearchResult{}
+	}
+
+	return tab.tailer.SearchLines(re)
 }
 
 // MemoryStats holds memory usage information

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -243,6 +244,64 @@ func (t *Tailer) ReadRange(startLine int64, count int) []Line {
 		return r.lines
 	case <-time.After(5 * time.Second):
 		return nil
+	}
+}
+
+// SearchResult holds the result of a full-file search.
+type SearchResult struct {
+	MatchLineNumbers []int64 `json:"matchLineNumbers"`
+	TotalMatches     int     `json:"totalMatches"`
+	TotalLines       int64   `json:"totalLines"`
+}
+
+// SearchLines scans the entire file for lines matching the compiled regex,
+// returning all matching line numbers. Uses a timeout to handle unreachable mounts.
+func (t *Tailer) SearchLines(re *regexp.Regexp) SearchResult {
+	if re == nil {
+		return SearchResult{}
+	}
+
+	t.mu.RLock()
+	filePath := t.filePath
+	t.mu.RUnlock()
+
+	type result struct {
+		matches    []int64
+		totalLines int64
+	}
+
+	ch := make(chan result, 1)
+	go func() {
+		f, err := os.Open(filePath)
+		if err != nil {
+			ch <- result{nil, 0}
+			return
+		}
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+		var matches []int64
+		var lineNo int64
+		for scanner.Scan() {
+			lineNo++
+			if re.MatchString(scanner.Text()) {
+				matches = append(matches, lineNo)
+			}
+		}
+		ch <- result{matches, lineNo}
+	}()
+
+	select {
+	case r := <-ch:
+		return SearchResult{
+			MatchLineNumbers: r.matches,
+			TotalMatches:     len(r.matches),
+			TotalLines:       r.totalLines,
+		}
+	case <-time.After(10 * time.Second):
+		return SearchResult{}
 	}
 }
 

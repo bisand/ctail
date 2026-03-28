@@ -83,6 +83,8 @@ export function SaveSettings(arg1:config.AppSettings):Promise<void>;
 
 export function SaveTabOrder(arg1:Array<config.TabState>):Promise<void>;
 
+export function SearchTab(arg1:string,arg2:string,arg3:boolean,arg4:boolean,arg5:boolean):Promise<tailer.SearchResult>;
+
 export function SetActiveTab(arg1:string):Promise<void>;
 
 export function SetEventsPaused(arg1:boolean):Promise<void>;

@@ -158,6 +158,10 @@ export function SaveTabOrder(arg1) {
   return window['go']['main']['App']['SaveTabOrder'](arg1);
 }
 
+export function SearchTab(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SearchTab'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function SetActiveTab(arg1) {
   return window['go']['main']['App']['SetActiveTab'](arg1);
 }

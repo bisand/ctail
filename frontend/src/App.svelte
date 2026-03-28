@@ -10,7 +10,7 @@
   import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
-  import { OpenFileDialog, OpenTab, CloseTab, ReopenTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, GetPendingFiles, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates, SetEventsPaused, SetActiveTab, FixMaximize } from '../wailsjs/go/main/App.js';
+  import { OpenFileDialog, OpenTab, CloseTab, ReopenTab, RefreshTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, GetPendingFiles, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates, SetEventsPaused, SetActiveTab, FixMaximize } from '../wailsjs/go/main/App.js';
   import { EventsOn, BrowserOpenURL, ScreenGetAll } from '../wailsjs/runtime/runtime.js';
   import { loadAndApplyTheme } from './lib/utils/themes.js';
 
@@ -524,6 +524,11 @@
     if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')) {
       e.preventDefault();
       reopenClosedTab();
+    }
+    if (e.ctrlKey && (e.key === 'r' || e.key === 'R') && !e.shiftKey) {
+      e.preventDefault();
+      const tab = $activeTab;
+      if (tab) RefreshTab(tab.id).catch(e => console.error('Refresh failed:', e));
     }
     if (e.ctrlKey && e.key === 'Tab') {
       e.preventDefault();

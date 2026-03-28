@@ -4,7 +4,7 @@
   import { activeTab, tabStore } from '../stores/tabs.js';
   import { settings } from '../stores/settings.js';
   import { profiles } from '../stores/rules.js';
-  import { GetTabLineRange, GetTabTotalLines, GetTabFileSize, GetMemoryUsage } from '../../../wailsjs/go/main/App.js';
+  import { GetTabLineRange, GetTabTotalLines, GetTabFileSize, GetMemoryUsage, SearchTab } from '../../../wailsjs/go/main/App.js';
 
   // --- File size & memory stats (polled periodically) ---
   let fileSize = $state(0);
@@ -44,6 +44,11 @@
   let searchRegex = $state(false);
   let searchInputEl = $state(null);
   let currentMatchIdx = $state(-1);
+
+  // Backend full-file search results
+  let fileSearchResult = $state(null); // { matchLineNumbers: [], totalMatches: 0, totalLines: 0 }
+  let fileSearchPending = $state(false);
+  let fileSearchTimer = null;
 
   const FETCH_BATCH = 1000;
   let swapping = false;
@@ -152,25 +157,49 @@
 
   // Line number of the current match (for highlighting in LogLine)
   let currentMatchLineNumber = $derived(
-    searchMatchIndices.length > 0 && currentMatchIdx >= 0 && currentMatchIdx < searchMatchIndices.length
-      ? filteredLines[searchMatchIndices[currentMatchIdx]]?.number ?? -1
+    fileSearchResult?.matchLineNumbers?.length > 0 && currentMatchIdx >= 0 && currentMatchIdx < fileSearchResult.matchLineNumbers.length
+      ? fileSearchResult.matchLineNumbers[currentMatchIdx]
       : -1
   );
 
-  // Reset match index when query or matches change
-  let prevQuery = '';
-  let prevMatchCount = 0;
+  // Trigger backend full-file search (debounced) when query/options change.
+  // Only resets currentMatchIdx when the search parameters actually change.
+  let prevSearchKey = '';
   $effect(() => {
+    // Track reactive dependencies
     const q = searchQuery;
-    const count = searchMatchIndices.length;
-    if (q !== prevQuery) {
-      prevQuery = q;
-      currentMatchIdx = count > 0 ? 0 : -1;
-      prevMatchCount = count;
-    } else if (count !== prevMatchCount) {
-      prevMatchCount = count;
-      if (currentMatchIdx >= count) currentMatchIdx = count > 0 ? count - 1 : -1;
+    const cs = searchCaseSensitive;
+    const ww = searchWholeWord;
+    const rx = searchRegex;
+    const mode = searchMode;
+    const tabId = currentTab?.id;
+
+    const searchKey = `${tabId}|${q}|${cs}|${ww}|${rx}|${mode}`;
+    const paramsChanged = searchKey !== prevSearchKey;
+    prevSearchKey = searchKey;
+
+    clearTimeout(fileSearchTimer);
+    if (!q || mode !== 'search' || !tabId) {
+      fileSearchResult = null;
+      fileSearchPending = false;
+      currentMatchIdx = -1;
+      return;
     }
+    if (!paramsChanged) return; // same search, don't re-run
+    fileSearchPending = true;
+    fileSearchTimer = setTimeout(async () => {
+      try {
+        const result = await SearchTab(tabId, q, cs, ww, rx);
+        fileSearchResult = result;
+        // Only reset index when search params changed
+        currentMatchIdx = result.totalMatches > 0 ? 0 : -1;
+      } catch (e) {
+        console.error('Backend search failed:', e);
+        fileSearchResult = null;
+        currentMatchIdx = -1;
+      }
+      fileSearchPending = false;
+    }, 300);
   });
 
   // Auto-focus search input when search becomes visible
@@ -447,28 +476,72 @@
     searchVisible = false;
     searchQuery = '';
     currentMatchIdx = -1;
+    fileSearchResult = null;
+    fileSearchPending = false;
+    clearTimeout(fileSearchTimer);
   }
 
-  function scrollToMatchIndex(idx) {
-    if (idx < 0 || idx >= searchMatchIndices.length) return;
+  // Navigate to a match by its index in the backend results.
+  // If the target line is already loaded, scroll to it locally.
+  // Otherwise, load a window of lines around the target from the backend.
+  async function scrollToMatchIndex(idx) {
+    const matches = fileSearchResult?.matchLineNumbers;
+    if (!matches || idx < 0 || idx >= matches.length) return;
     currentMatchIdx = idx;
-    const lineIdx = searchMatchIndices[idx];
-    if (container && lineIdx >= 0) {
-      programmaticScroll = true;
-      container.scrollTop = lineIdx * lineHeight;
-      updateVisibleRange();
-      programmaticScroll = false;
+    const targetLineNo = matches[idx]; // 1-based line number
+
+    // Check if the line is already in the loaded window
+    const localIdx = filteredLines.findIndex(l => l.number === targetLineNo);
+    if (localIdx >= 0) {
+      // Line is loaded — scroll to it
+      if (container) {
+        programmaticScroll = true;
+        const targetTop = localIdx * lineHeight;
+        const halfView = container.clientHeight / 2;
+        container.scrollTop = Math.max(0, targetTop - halfView + lineHeight / 2);
+        updateVisibleRange();
+        programmaticScroll = false;
+      }
+      return;
+    }
+
+    // Line not in current window — load a range centered on the target
+    const tabId = currentTab?.id;
+    if (!tabId) return;
+    const half = Math.floor(FETCH_BATCH / 2);
+    const startLine = Math.max(1, targetLineNo - half);
+    try {
+      const newLines = await GetTabLineRange(tabId, startLine, FETCH_BATCH);
+      const total = await GetTabTotalLines(tabId);
+      if (newLines && newLines.length > 0) {
+        tabStore.setLines(tabId, newLines, total);
+        // After store update, scroll to the target line in the new window
+        await tick();
+        const newLocalIdx = newLines.findIndex(l => l.number === targetLineNo);
+        if (newLocalIdx >= 0 && container) {
+          programmaticScroll = true;
+          const targetTop = newLocalIdx * lineHeight;
+          const halfView = container.clientHeight / 2;
+          container.scrollTop = Math.max(0, targetTop - halfView + lineHeight / 2);
+          updateVisibleRange();
+          programmaticScroll = false;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load lines for search match:', e);
     }
   }
 
   function searchNext() {
-    if (searchMatchIndices.length === 0) return;
-    scrollToMatchIndex(currentMatchIdx < searchMatchIndices.length - 1 ? currentMatchIdx + 1 : 0);
+    const total = fileSearchResult?.totalMatches ?? 0;
+    if (total === 0) return;
+    scrollToMatchIndex(currentMatchIdx < total - 1 ? currentMatchIdx + 1 : 0);
   }
 
   function searchPrev() {
-    if (searchMatchIndices.length === 0) return;
-    scrollToMatchIndex(currentMatchIdx > 0 ? currentMatchIdx - 1 : searchMatchIndices.length - 1);
+    const total = fileSearchResult?.totalMatches ?? 0;
+    if (total === 0) return;
+    scrollToMatchIndex(currentMatchIdx > 0 ? currentMatchIdx - 1 : total - 1);
   }
 
   function handleSearchKeydown(e) {
@@ -491,6 +564,12 @@
       } else {
         openSearch();
       }
+      return;
+    }
+    if (e.key === 'F3') {
+      e.preventDefault();
+      if (!searchVisible) { openSearch(); return; }
+      if (e.shiftKey) searchPrev(); else searchNext();
       return;
     }
     if (e.key === 'Escape' && searchVisible) {
@@ -653,13 +732,19 @@
           onclick={() => { searchRegex = !searchRegex; }}>.*</button>
         <span class="search-count">
           {#if searchQuery && searchMode === 'search'}
-            {searchMatchIndices.length > 0 ? `${currentMatchIdx + 1} of ${searchMatchIndices.length}` : 'No results'}
+            {#if fileSearchPending}
+              Searching…
+            {:else if fileSearchResult && fileSearchResult.totalMatches > 0}
+              {currentMatchIdx + 1} of {fileSearchResult.totalMatches}
+            {:else if fileSearchResult}
+              No results
+            {/if}
           {:else if searchQuery && searchMode === 'filter'}
             {filteredLines.length} / {lines.length}
           {/if}
         </span>
-        <button class="search-nav" title="Previous Match (Shift+Enter)" onclick={searchPrev} disabled={searchMatchIndices.length === 0 || searchMode !== 'search'}>↑</button>
-        <button class="search-nav" title="Next Match (Enter)" onclick={searchNext} disabled={searchMatchIndices.length === 0 || searchMode !== 'search'}>↓</button>
+        <button class="search-nav" title="Previous Match (Shift+Enter)" onclick={searchPrev} disabled={!fileSearchResult || fileSearchResult.totalMatches === 0 || searchMode !== 'search'}>↑</button>
+        <button class="search-nav" title="Next Match (Enter)" onclick={searchNext} disabled={!fileSearchResult || fileSearchResult.totalMatches === 0 || searchMode !== 'search'}>↓</button>
         <button class="search-toggle" class:active={searchMode === 'filter'} title="Filter lines (hide non-matching)"
           onclick={() => { searchMode = searchMode === 'filter' ? 'search' : 'filter'; }}>≡</button>
         <button class="search-close" title="Close (Escape)" onclick={closeSearch}>×</button>
@@ -679,6 +764,7 @@
               fontSize={$settings.fontSize}
               searchRe={searchMode === 'search' ? searchRe : null}
               isCurrentMatch={line.number === currentMatchLineNumber}
+              searchHighlightColor={$settings.searchHighlightColor || ''}
             />
           {/each}
         <div class="virtual-spacer" style="height: {bottomPad}px"></div>

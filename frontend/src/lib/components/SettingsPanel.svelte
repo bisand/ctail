@@ -318,6 +318,16 @@
           onchange={e => updateSetting('showLineNumbers', e.target.checked)} />
         <span>Show Line Numbers</span>
       </label>
+      <label>
+        <span>Search Highlight Color</span>
+        <div class="color-input-row">
+          <input type="color"
+            value={$settings.searchHighlightColor || '#ffd54f'}
+            onchange={e => updateSetting('searchHighlightColor', e.target.value)} />
+          <button class="reset-btn" title="Reset to theme default"
+            onclick={() => updateSetting('searchHighlightColor', '')}>Reset</button>
+        </div>
+      </label>
       <label class="toggle-label">
         <input type="checkbox" checked={$settings.wordWrap}
           onchange={e => updateSetting('wordWrap', e.target.checked)} />
@@ -697,6 +707,36 @@
     font-size: 11px;
     color: var(--text-muted);
     text-align: right;
+  }
+
+  .color-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .color-input-row input[type="color"] {
+    width: 36px;
+    height: 28px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    cursor: pointer;
+  }
+
+  .reset-btn {
+    font-size: 11px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .reset-btn:hover {
+    background: var(--bg-hover);
   }
 
   .toggle-label {

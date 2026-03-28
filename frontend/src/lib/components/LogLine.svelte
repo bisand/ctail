@@ -31,22 +31,28 @@
 <script>
   import { highlightLine } from '../utils/highlight.js';
 
-  let { line, rules = [], showLineNumber = false, fontSize = 14, searchRe = null, isCurrentMatch = false } = $props();
+  let { line, rules = [], showLineNumber = false, fontSize = 14, searchRe = null, isCurrentMatch = false, searchHighlightColor = '' } = $props();
 
   let segments = $derived(highlightLine(line.text, rules));
   let searchSegments = $derived(
     searchRe ? segments.flatMap(seg => splitOnSearch(seg, searchRe)) : segments
   );
+
+  // For highlighted segments, strip backgroundColor so the search highlight shows through
+  function highlightStyle(style) {
+    const { backgroundColor, ...rest } = style;
+    return styleString(rest);
+  }
 </script>
 
-<div class="log-line" class:search-current={isCurrentMatch} style="font-size: {fontSize}px">
+<div class="log-line" class:search-current={isCurrentMatch} style="font-size: {fontSize}px{searchHighlightColor ? `; --search-hl: ${searchHighlightColor}` : ''}">
   {#if showLineNumber}
     <span class="line-number">{line.number}</span>
   {/if}
   <span class="line-content">
     {#each searchSegments as seg}
       {#if seg.highlight}
-        <mark class="search-highlight" style={styleString(seg.style)}>{seg.text}</mark>
+        <mark class="search-highlight" style={highlightStyle(seg.style)}>{seg.text}</mark>
       {:else}
         <span style={styleString(seg.style)}>{seg.text}</span>
       {/if}
@@ -75,13 +81,14 @@
   }
 
   .search-highlight {
-    background: var(--search-highlight, rgba(255, 213, 79, 0.35));
+    background: var(--search-hl, var(--search-highlight, rgba(255, 213, 79, 0.35)));
     color: inherit;
     border-radius: 2px;
   }
 
   .search-current .search-highlight {
-    background: var(--search-highlight-active, rgba(255, 152, 0, 0.55));
+    background: var(--search-hl, var(--search-highlight-active, rgba(255, 152, 0, 0.55)));
+    filter: brightness(1.3);
   }
 
   .line-number {

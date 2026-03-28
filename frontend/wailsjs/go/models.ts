@@ -378,6 +378,22 @@ export namespace tailer {
 	        this.text = source["text"];
 	    }
 	}
+	export class SearchResult {
+	    matchLineNumbers: number[];
+	    totalMatches: number;
+	    totalLines: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.matchLineNumbers = source["matchLineNumbers"];
+	        this.totalMatches = source["totalMatches"];
+	        this.totalLines = source["totalLines"];
+	    }
+	}
 
 }
 
