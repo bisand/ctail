@@ -62,6 +62,7 @@ type AppSettings struct {
 	DisplayBackend string       `json:"displayBackend"` // "auto", "x11", or "wayland"
 	DisableDmabuf  bool         `json:"disableDmabuf"`  // legacy: set WEBKIT_DISABLE_DMABUF_RENDERER=1
 	GpuPolicy      string       `json:"gpuPolicy"`      // "auto", "disable-dmabuf", or "software"
+	ReadTimeoutSec           int  `json:"readTimeoutSec"` // I/O timeout for file reads on slow/remote mounts (default 30s)
 	DisableUpdateCheck       bool `json:"disableUpdateCheck"`
 	UpdateCheckIntervalHours int  `json:"updateCheckIntervalHours"`
 	// AI assistant settings
@@ -93,6 +94,7 @@ func DefaultSettings() AppSettings {
 			Height: 800,
 		},
 		DisplayBackend: "auto",
+		ReadTimeoutSec:          30,
 		DisableUpdateCheck:       false,
 		UpdateCheckIntervalHours: 24,
 	}

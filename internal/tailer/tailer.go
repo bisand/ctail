@@ -34,6 +34,7 @@ type Tailer struct {
 	lastReady      time.Time // last time onReady was fired (prevents flicker cycling)
 	lastDataAt     time.Time // last time new data was read (for staleness detection)
 	staleThreshold time.Duration // how long without data before watchdog triggers (default 30s)
+	readTimeout    time.Duration // I/O timeout for file reads (default 30s)
 	stopCh         chan struct{}
 
 	onLines        func([]Line)
@@ -56,6 +57,7 @@ func New(filePath string, pollInterval time.Duration, bufferSize int) *Tailer {
 		pollInterval:   pollInterval,
 		bufferSize:     bufferSize,
 		staleThreshold: 30 * time.Second,
+		readTimeout:    30 * time.Second,
 		lines:          make([]Line, 0, bufferSize),
 		lineOffsets:    make([]int64, 0, 1024),
 		stopCh:         make(chan struct{}),
@@ -105,6 +107,11 @@ func (t *Tailer) startLoop() {
 		initDone <- t.initialRead()
 	}()
 
+	// Capture timeout under lock (user-configurable for slow mounts)
+	t.mu.RLock()
+	readTimeout := t.readTimeout
+	t.mu.RUnlock()
+
 	select {
 	case err := <-initDone:
 		if err != nil {
@@ -120,7 +127,7 @@ func (t *Tailer) startLoop() {
 		}
 	case <-stopCh:
 		return
-	case <-time.After(10 * time.Second):
+	case <-time.After(readTimeout):
 		if t.onError != nil {
 			t.onError(fmt.Errorf("timeout reading %s (file may be on an unreachable mount)", t.filePath))
 		}
@@ -239,10 +246,14 @@ func (t *Tailer) ReadRange(startLine int64, count int) []Line {
 		ch <- result{lines}
 	}()
 
+	t.mu.RLock()
+	readTimeout := t.readTimeout
+	t.mu.RUnlock()
+
 	select {
 	case r := <-ch:
 		return r.lines
-	case <-time.After(5 * time.Second):
+	case <-time.After(readTimeout):
 		return nil
 	}
 }
@@ -293,6 +304,10 @@ func (t *Tailer) SearchLines(re *regexp.Regexp) SearchResult {
 		ch <- result{matches, lineNo}
 	}()
 
+	t.mu.RLock()
+	readTimeout := t.readTimeout
+	t.mu.RUnlock()
+
 	select {
 	case r := <-ch:
 		return SearchResult{
@@ -300,7 +315,7 @@ func (t *Tailer) SearchLines(re *regexp.Regexp) SearchResult {
 			TotalMatches:     len(r.matches),
 			TotalLines:       r.totalLines,
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(readTimeout):
 		return SearchResult{}
 	}
 }
@@ -310,6 +325,17 @@ func (t *Tailer) SetPollInterval(d time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pollInterval = d
+}
+
+// SetReadTimeout updates the I/O timeout for file reads.
+// This controls how long the tailer waits for file operations on slow/remote mounts.
+func (t *Tailer) SetReadTimeout(d time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if d < 5*time.Second {
+		d = 5 * time.Second
+	}
+	t.readTimeout = d
 }
 
 func (t *Tailer) initialRead() error {
@@ -485,6 +511,10 @@ func (t *Tailer) pollLoop() {
 					}
 				}()
 
+				t.mu.RLock()
+				timeout := t.readTimeout
+				t.mu.RUnlock()
+
 				pollDone := make(chan struct{})
 				go func() {
 					defer func() {
@@ -502,7 +532,7 @@ func (t *Tailer) pollLoop() {
 				case <-pollDone:
 				case <-stopCh:
 					return
-				case <-time.After(5 * time.Second):
+				case <-time.After(timeout):
 					// Poll timed out (likely stale mount) — report error and move on.
 					// The blocked goroutine will eventually return when the OS times out.
 					t.mu.Lock()

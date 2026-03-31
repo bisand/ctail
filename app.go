@@ -611,6 +611,9 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	}
 
 	t := tailer.New(filePath, pollInterval, settings.BufferSize)
+	if settings.ReadTimeoutSec > 0 {
+		t.SetReadTimeout(time.Duration(settings.ReadTimeoutSec) * time.Second)
+	}
 
 	// Per-tab line event throttle: batch lines and emit at most once per 100ms
 	// to prevent IPC/rendering flooding after VPN reconnections.
@@ -815,6 +818,9 @@ func (a *App) RefreshTab(tabID string) error {
 	}
 
 	t := tailer.New(filePath, pollInterval, settings.BufferSize)
+	if settings.ReadTimeoutSec > 0 {
+		t.SetReadTimeout(time.Duration(settings.ReadTimeoutSec) * time.Second)
+	}
 
 	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
 		if a.isEventsPaused() {
@@ -1099,6 +1105,9 @@ func (a *App) ChangeTabFilePath(tabID string) (string, error) {
 	}
 
 	t := tailer.New(newPath, pollInterval, settings.BufferSize)
+	if settings.ReadTimeoutSec > 0 {
+		t.SetReadTimeout(time.Duration(settings.ReadTimeoutSec) * time.Second)
+	}
 
 	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
 		if a.isEventsPaused() {

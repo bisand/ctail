@@ -296,6 +296,12 @@
           onchange={e => updateSetting('pollIntervalMs', parseInt(e.target.value))} />
       </label>
       <label>
+        <span>Read Timeout (seconds)</span>
+        <input type="number" min="5" max="120" step="5"
+          value={$settings.readTimeoutSec || 30}
+          onchange={e => updateSetting('readTimeoutSec', parseInt(e.target.value))} />
+      </label>
+      <label>
         <span>Scroll Speed</span>
         <input type="range" min="1" max="10" step="1"
           value={$settings.scrollSpeed || 1}

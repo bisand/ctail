@@ -116,6 +116,11 @@ func (m *Manager) saveSettingsLocked(s AppSettings) error {
 	if s.BufferSize < 1000 {
 		s.BufferSize = 1000
 	}
+	if s.ReadTimeoutSec < 5 {
+		s.ReadTimeoutSec = 5
+	} else if s.ReadTimeoutSec > 120 {
+		s.ReadTimeoutSec = 120
+	}
 	m.settings = s
 	return m.writeJSON(filepath.Join(m.configDir, "settings.json"), s)
 }
@@ -203,6 +208,9 @@ func (m *Manager) loadSettings() {
 		}
 		if s.ScrollSpeed == 0 {
 			s.ScrollSpeed = 1
+		}
+		if s.ReadTimeoutSec == 0 {
+			s.ReadTimeoutSec = 30
 		}
 		m.settings = s
 	}

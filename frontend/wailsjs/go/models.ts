@@ -86,6 +86,7 @@ export namespace config {
 	    displayBackend: string;
 	    disableDmabuf: boolean;
 	    gpuPolicy: string;
+	    readTimeoutSec: number;
 	    disableUpdateCheck: boolean;
 	    updateCheckIntervalHours: number;
 	    aiProvider: string;
@@ -117,6 +118,7 @@ export namespace config {
 	        this.displayBackend = source["displayBackend"];
 	        this.disableDmabuf = source["disableDmabuf"];
 	        this.gpuPolicy = source["gpuPolicy"];
+	        this.readTimeoutSec = source["readTimeoutSec"];
 	        this.disableUpdateCheck = source["disableUpdateCheck"];
 	        this.updateCheckIntervalHours = source["updateCheckIntervalHours"];
 	        this.aiProvider = source["aiProvider"];

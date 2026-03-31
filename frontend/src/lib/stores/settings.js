@@ -3,6 +3,7 @@ import { writable } from 'svelte/store';
 export const settings = writable({
   pollIntervalMs: 500,
   bufferSize: 10000,
+  readTimeoutSec: 30,
   scrollSpeed: 1,
   smoothScroll: false,
   theme: 'catppuccin',
