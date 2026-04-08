@@ -37,11 +37,19 @@ type Tailer struct {
 	readTimeout    time.Duration // I/O timeout for file reads (default 30s)
 	stopCh         chan struct{}
 
+	// Tail-first fields for large file support
+	tailFirstThreshold int64         // file size above which tail-first mode is used (default 1MB)
+	tailSeekBack       int64         // bytes to seek back from end in tail-first mode (default 512KB)
+	indexingComplete   bool          // true when background indexing has finished
+	indexedBytes       int64         // bytes indexed so far (for progress reporting)
+	indexStopCh        chan struct{} // signal to cancel background indexing
+
 	onLines        func([]Line)
 	onTruncated    func()
 	onError        func(error)
-	onReady        func() // called once after successful initial read
-	onReconnecting func() // called when auto-restart is triggered
+	onReady        func()        // called once after successful initial read
+	onReconnecting func()        // called when auto-restart is triggered
+	onIndexed      func(int64)  // called when background indexing completes (large files only)
 }
 
 // New creates a new Tailer
@@ -53,14 +61,17 @@ func New(filePath string, pollInterval time.Duration, bufferSize int) *Tailer {
 		pollInterval = 50 * time.Millisecond
 	}
 	return &Tailer{
-		filePath:       filePath,
-		pollInterval:   pollInterval,
-		bufferSize:     bufferSize,
-		staleThreshold: 30 * time.Second,
-		readTimeout:    30 * time.Second,
-		lines:          make([]Line, 0, bufferSize),
-		lineOffsets:    make([]int64, 0, 1024),
-		stopCh:         make(chan struct{}),
+		filePath:           filePath,
+		pollInterval:       pollInterval,
+		bufferSize:         bufferSize,
+		staleThreshold:     30 * time.Second,
+		readTimeout:        30 * time.Second,
+		tailFirstThreshold: 1 * 1024 * 1024,   // 1MB
+		tailSeekBack:       512 * 1024,          // 512KB
+		indexingComplete:   true,                 // true until a tail-first read makes it false
+		lines:              make([]Line, 0, bufferSize),
+		lineOffsets:        make([]int64, 0, 1024),
+		stopCh:             make(chan struct{}),
 	}
 }
 
@@ -78,6 +89,11 @@ func (t *Tailer) OnReady(fn func()) { t.onReady = fn }
 
 // OnReconnecting sets the callback for when the tailer auto-restarts after timeouts
 func (t *Tailer) OnReconnecting(fn func()) { t.onReconnecting = fn }
+
+// OnIndexed sets the callback fired when background indexing completes for large files.
+// The argument is the final total line count. Not called for small files (indexing is
+// synchronous for those and complete before OnReady fires).
+func (t *Tailer) OnIndexed(fn func(int64)) { t.onIndexed = fn }
 
 // Start begins tailing the file (non-blocking — initial read happens in background)
 func (t *Tailer) Start() error {
@@ -107,10 +123,46 @@ func (t *Tailer) startLoop() {
 		initDone <- t.initialRead()
 	}()
 
-	// Capture timeout under lock (user-configurable for slow mounts)
+	// Adaptive timeout: for large files (especially on SMB), scale the timeout
+	// with file size assuming at least 256KB/s throughput. Capped at 5 minutes.
+	// For tail-first reads this is generous since we only read the tail portion.
+	//
+	// IMPORTANT: os.Stat on GVFS/SMB mounts can block for many seconds, so we
+	// run it in a goroutine with its own timeout. If Stat hangs we fall back to
+	// a conservative 5-minute cap so the initialRead timeout still fires.
 	t.mu.RLock()
 	readTimeout := t.readTimeout
 	t.mu.RUnlock()
+
+	adaptiveTimeout := readTimeout
+	statDone := make(chan int64, 1)
+	go func() {
+		if info, err := os.Stat(t.filePath); err == nil {
+			statDone <- info.Size()
+		} else {
+			statDone <- 0
+		}
+	}()
+	select {
+	case size := <-statDone:
+		if size > 0 {
+			sizeBasedTimeout := time.Duration(size/(256*1024)+1) * time.Second
+			if sizeBasedTimeout > adaptiveTimeout {
+				adaptiveTimeout = sizeBasedTimeout
+			}
+			const maxTimeout = 5 * time.Minute
+			if adaptiveTimeout > maxTimeout {
+				adaptiveTimeout = maxTimeout
+			}
+		}
+	case <-time.After(3 * time.Second):
+		// Stat timed out (likely slow GVFS/SMB mount) — use a generous cap
+		// so the initialRead timeout still fires rather than never.
+		const conservativeTimeout = 5 * time.Minute
+		if adaptiveTimeout < conservativeTimeout {
+			adaptiveTimeout = conservativeTimeout
+		}
+	}
 
 	select {
 	case err := <-initDone:
@@ -127,7 +179,7 @@ func (t *Tailer) startLoop() {
 		}
 	case <-stopCh:
 		return
-	case <-time.After(readTimeout):
+	case <-time.After(adaptiveTimeout):
 		if t.onError != nil {
 			t.onError(fmt.Errorf("timeout reading %s (file may be on an unreachable mount)", t.filePath))
 		}
@@ -146,6 +198,15 @@ func (t *Tailer) Stop() {
 	}
 	t.running = false
 	close(t.stopCh)
+	// Cancel background indexing if running
+	if t.indexStopCh != nil {
+		select {
+		case <-t.indexStopCh:
+			// Already closed
+		default:
+			close(t.indexStopCh)
+		}
+	}
 }
 
 // Restart stops the current polling loop and starts a fresh one.
@@ -159,6 +220,14 @@ func (t *Tailer) Restart() {
 	}
 	// Signal the old loop to stop
 	close(t.stopCh)
+	// Cancel background indexing if running
+	if t.indexStopCh != nil {
+		select {
+		case <-t.indexStopCh:
+		default:
+			close(t.indexStopCh)
+		}
+	}
 	// Create a fresh stop channel for the new loop.
 	// Keep inError=true so the first successful poll fires onReady,
 	// which tells the frontend to re-fetch lines.
@@ -195,6 +264,7 @@ func (t *Tailer) GetFileSize() int64 {
 
 // ReadRange reads lines from the file starting at startLine (1-based), returning up to count lines.
 // Uses a timeout to avoid blocking on unreachable mounts.
+// Returns nil if the requested range is not yet indexed (background indexing in progress).
 func (t *Tailer) ReadRange(startLine int64, count int) []Line {
 	if startLine < 1 || count < 1 {
 		return nil
@@ -203,6 +273,7 @@ func (t *Tailer) ReadRange(startLine int64, count int) []Line {
 	t.mu.RLock()
 	totalLines := t.lineNum
 	offsets := t.lineOffsets
+	indexComplete := t.indexingComplete
 	t.mu.RUnlock()
 
 	if startLine > totalLines {
@@ -211,6 +282,12 @@ func (t *Tailer) ReadRange(startLine int64, count int) []Line {
 
 	idx := int(startLine - 1)
 	if idx >= len(offsets) {
+		// Requested line is beyond the indexed range.
+		// During background indexing after a tail-first read, this is expected
+		// for lines in the early portion of the file.
+		if !indexComplete {
+			return nil
+		}
 		return nil
 	}
 
@@ -338,6 +415,35 @@ func (t *Tailer) SetReadTimeout(d time.Duration) {
 	t.readTimeout = d
 }
 
+// SetTailFirstThreshold sets the file size above which tail-first mode is used.
+// Files larger than this will seek near the end for fast initial display,
+// then index the rest in the background. Set to 0 to disable tail-first mode.
+func (t *Tailer) SetTailFirstThreshold(bytes int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.tailFirstThreshold = bytes
+}
+
+// IsIndexingComplete returns true when the full line-offset index is built.
+// During background indexing after a tail-first read, ReadRange for early
+// portions of the file may return nil until indexing completes.
+func (t *Tailer) IsIndexingComplete() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.indexingComplete
+}
+
+// GetIndexProgress returns (indexedBytes, totalBytes) for the background indexer.
+// If indexing is complete or was never needed, both values equal the file size.
+func (t *Tailer) GetIndexProgress() (int64, int64) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.indexingComplete {
+		return t.fileSize, t.fileSize
+	}
+	return t.indexedBytes, t.fileSize
+}
+
 func (t *Tailer) initialRead() error {
 	f, err := os.Open(t.filePath)
 	if err != nil {
@@ -352,6 +458,21 @@ func (t *Tailer) initialRead() error {
 
 	fileSize := info.Size()
 
+	t.mu.RLock()
+	threshold := t.tailFirstThreshold
+	t.mu.RUnlock()
+
+	// Large files: tail-first for fast initial display
+	if threshold > 0 && fileSize > threshold {
+		return t.initialReadTail(f, info, fileSize)
+	}
+
+	return t.initialReadFull(f, info, fileSize)
+}
+
+// initialReadFull reads the entire file, building a complete line-offset index.
+// Used for small files that fit comfortably within the read timeout.
+func (t *Tailer) initialReadFull(f *os.File, info os.FileInfo, fileSize int64) error {
 	// Build line offset index and read all lines (keep last N in buffer).
 	// All I/O happens outside the lock to avoid blocking concurrent readers.
 	reader := bufio.NewReader(f)
@@ -399,11 +520,171 @@ func (t *Tailer) initialRead() error {
 	t.lineNum = num
 	t.offset = fileSize
 	t.lastDataAt = time.Now()
+	t.indexingComplete = true
+	t.indexedBytes = fileSize
 	t.mu.Unlock()
 
 	// No onLines callback — onReady (fired by startLoop) tells the frontend
 	// to fetch the windowed view via loadInitialLines / ReadRange RPCs.
 	return nil
+}
+
+// initialReadTail reads only the tail of a large file for fast initial display,
+// then starts background indexing to build the full line-offset index.
+func (t *Tailer) initialReadTail(f *os.File, info os.FileInfo, fileSize int64) error {
+	t.mu.RLock()
+	seekBack := t.tailSeekBack
+	t.mu.RUnlock()
+
+	seekPos := fileSize - seekBack
+	if seekPos < 0 {
+		seekPos = 0
+	}
+
+	if _, err := f.Seek(seekPos, io.SeekStart); err != nil {
+		return err
+	}
+
+	reader := bufio.NewReader(f)
+
+	// If we didn't seek to the beginning, skip the partial first line
+	if seekPos > 0 {
+		partial, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			return err
+		}
+		seekPos += int64(len(partial))
+	}
+
+	// Read lines from seekPos to end of file
+	var tailLines []Line
+	var tailOffsets []int64
+	var num int64
+	bytePos := seekPos
+
+	for {
+		tailOffsets = append(tailOffsets, bytePos)
+		lineBytes, err := reader.ReadBytes('\n')
+		if len(lineBytes) > 0 {
+			num++
+			text := string(lineBytes)
+			if len(text) > 0 && text[len(text)-1] == '\n' {
+				text = text[:len(text)-1]
+			}
+			if len(text) > 0 && text[len(text)-1] == '\r' {
+				text = text[:len(text)-1]
+			}
+			tailLines = append(tailLines, Line{Number: num, Text: text})
+			bytePos += int64(len(lineBytes))
+			if len(tailLines) > t.bufferSize*2 {
+				tailLines = tailLines[len(tailLines)-t.bufferSize:]
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if len(tailLines) > t.bufferSize {
+		tailLines = tailLines[len(tailLines)-t.bufferSize:]
+	}
+
+	// Commit state — line numbers are temporary (will be corrected by background indexer)
+	indexStopCh := make(chan struct{})
+	t.mu.Lock()
+	t.fileSize = fileSize
+	t.fileIdent = info
+	t.lineOffsets = tailOffsets
+	t.lines = tailLines
+	t.lineNum = num
+	t.offset = fileSize
+	t.lastDataAt = time.Now()
+	t.indexingComplete = false
+	t.indexedBytes = 0
+	t.indexStopCh = indexStopCh
+	t.mu.Unlock()
+
+	// Start background indexing to build the full line-offset index
+	go t.backgroundIndex(indexStopCh, fileSize)
+
+	return nil
+}
+
+// backgroundIndex reads the file from the beginning in chunks, building the
+// complete line-offset index. Once done, it corrects the line numbers assigned
+// during the tail-first read. Cancellable via indexStopCh.
+func (t *Tailer) backgroundIndex(stopCh chan struct{}, targetSize int64) {
+	f, err := os.Open(t.filePath)
+	if err != nil {
+		// Indexing failed — mark complete so we don't block ReadRange forever.
+		// The partial index from the tail read is still usable.
+		t.mu.Lock()
+		t.indexingComplete = true
+		t.indexedBytes = t.fileSize
+		finalLineNum := t.lineNum
+		t.mu.Unlock()
+		// Notify with the line count we have (from tail read) so the UI clears the spinner.
+		if t.onIndexed != nil {
+			t.onIndexed(finalLineNum)
+		}
+		return
+	}
+	defer f.Close()
+
+	const chunkSize = 256 * 1024 // 256KB chunks
+	reader := bufio.NewReaderSize(f, chunkSize)
+	var offsets []int64
+	var lineCount int64
+	var bytePos int64
+
+	for bytePos < targetSize {
+		// Check for cancellation between chunks
+		select {
+		case <-stopCh:
+			return
+		default:
+		}
+
+		offsets = append(offsets, bytePos)
+		lineBytes, err := reader.ReadBytes('\n')
+		if len(lineBytes) > 0 {
+			lineCount++
+			bytePos += int64(len(lineBytes))
+		}
+
+		// Periodically update progress (every ~1000 lines)
+		if lineCount%1000 == 0 {
+			t.mu.Lock()
+			t.indexedBytes = bytePos
+			t.mu.Unlock()
+		}
+
+		if err != nil {
+			break
+		}
+	}
+
+	// Compute the line-number offset: the tail-first read assigned line numbers
+	// starting from 1, but the real first line in the tail portion starts at
+	// (lineCount - tailLineCount + 1) where tailLineCount is the count from the tail read.
+	t.mu.Lock()
+	tailLineCount := t.lineNum
+	lineNumOffset := lineCount - tailLineCount
+
+	// Correct the line numbers on buffered lines
+	for i := range t.lines {
+		t.lines[i].Number += lineNumOffset
+	}
+
+	t.lineOffsets = offsets
+	t.lineNum = lineCount
+	t.indexedBytes = targetSize
+	t.indexingComplete = true
+	t.mu.Unlock()
+
+	if t.onIndexed != nil {
+		t.onIndexed(lineCount)
+	}
 }
 
 func (t *Tailer) pollLoop() {
@@ -709,9 +990,32 @@ func (t *Tailer) handleTruncation(f *os.File, currentSize int64) {
 // handleFullReread resets internal state and re-reads the file from scratch.
 // Used on recovery from errors (e.g. VPN reconnection) where the offset/lineNum
 // state may be stale because the file changed while the mount was unreachable.
+// For large files, uses tail-first approach to avoid blocking on slow mounts.
 // Does NOT fire onLines — the caller fires onReady which triggers the frontend
 // to fetch lines via loadInitialLines with proper windowed pagination.
 func (t *Tailer) handleFullReread(f *os.File, currentSize int64, info os.FileInfo) {
+	// Cancel any in-progress background indexing from a previous tail-first read
+	t.mu.Lock()
+	if t.indexStopCh != nil {
+		select {
+		case <-t.indexStopCh:
+		default:
+			close(t.indexStopCh)
+		}
+	}
+	t.mu.Unlock()
+
+	t.mu.RLock()
+	threshold := t.tailFirstThreshold
+	seekBack := t.tailSeekBack
+	t.mu.RUnlock()
+
+	// Large files: tail-first for fast recovery
+	if threshold > 0 && currentSize > threshold {
+		t.handleFullRereadTail(f, currentSize, info, seekBack)
+		return
+	}
+
 	t.mu.Lock()
 	t.lines = t.lines[:0]
 	t.lineNum = 0
@@ -734,9 +1038,87 @@ func (t *Tailer) handleFullReread(f *os.File, currentSize int64, info os.FileInf
 			t.lines = t.lines[len(t.lines)-t.bufferSize:]
 		}
 		t.offset = currentSize
+		t.indexingComplete = true
+		t.indexedBytes = currentSize
 		t.mu.Unlock()
 		// No onLines callback — onReady will tell the frontend to re-fetch.
 	}
+}
+
+// handleFullRereadTail performs a tail-first re-read for large files during error recovery.
+func (t *Tailer) handleFullRereadTail(f *os.File, currentSize int64, info os.FileInfo, seekBack int64) {
+	seekPos := currentSize - seekBack
+	if seekPos < 0 {
+		seekPos = 0
+	}
+
+	if _, err := f.Seek(seekPos, io.SeekStart); err != nil {
+		return
+	}
+
+	reader := bufio.NewReader(f)
+
+	// Skip partial first line if not at start
+	if seekPos > 0 {
+		partial, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			return
+		}
+		seekPos += int64(len(partial))
+	}
+
+	var tailLines []Line
+	var tailOffsets []int64
+	var num int64
+	bytePos := seekPos
+
+	for {
+		tailOffsets = append(tailOffsets, bytePos)
+		lineBytes, err := reader.ReadBytes('\n')
+		if len(lineBytes) > 0 {
+			num++
+			text := string(lineBytes)
+			if len(text) > 0 && text[len(text)-1] == '\n' {
+				text = text[:len(text)-1]
+			}
+			if len(text) > 0 && text[len(text)-1] == '\r' {
+				text = text[:len(text)-1]
+			}
+			tailLines = append(tailLines, Line{Number: num, Text: text})
+			bytePos += int64(len(lineBytes))
+			if len(tailLines) > t.bufferSize*2 {
+				tailLines = tailLines[len(tailLines)-t.bufferSize:]
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if len(tailLines) > t.bufferSize {
+		tailLines = tailLines[len(tailLines)-t.bufferSize:]
+	}
+
+	indexStopCh := make(chan struct{})
+	t.mu.Lock()
+	t.lines = tailLines
+	t.lineNum = num
+	t.offset = currentSize
+	t.fileSize = currentSize
+	t.fileIdent = info
+	t.lineOffsets = tailOffsets
+	t.lastDataAt = time.Now()
+	t.indexingComplete = false
+	t.indexedBytes = 0
+	t.indexStopCh = indexStopCh
+	t.mu.Unlock()
+
+	if t.onTruncated != nil {
+		t.onTruncated()
+	}
+
+	// Background index the full file
+	go t.backgroundIndex(indexStopCh, currentSize)
 }
 
 func (t *Tailer) readNewLines(f *os.File, offset, size int64) []Line {

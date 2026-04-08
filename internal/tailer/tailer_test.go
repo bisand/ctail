@@ -1221,3 +1221,327 @@ func TestTailerRestartResetsLastDataAt(t *testing.T) {
 		t.Errorf("Restart should reset lastDataAt, but it's %v old", time.Since(lastData))
 	}
 }
+
+// --- Tail-first tests for large file support ---
+
+// TestTailerTailFirstLargeFile verifies that files above the tail-first threshold
+// use the tail-first approach: fast initial display showing the last lines,
+// then background indexing for the full line-offset index.
+func TestTailerTailFirstLargeFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.log")
+
+	// Create a file with 5000 lines (~50KB per line = won't work, so let's just
+	// create enough lines to exceed the threshold)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Write ~200 bytes per line × 10000 lines = ~2MB
+	for i := 1; i <= 10000; i++ {
+		f.WriteString("line " + itoa(i) + " padding-to-make-lines-longer-for-file-size-threshold-testing-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")
+	}
+	f.Close()
+
+	// Verify file is above 1MB
+	info, _ := os.Stat(path)
+	if info.Size() < 1*1024*1024 {
+		t.Fatalf("test file should be > 1MB, got %d bytes", info.Size())
+	}
+
+	tail := New(path, 100*time.Millisecond, 1000)
+	// Use a low threshold to ensure tail-first triggers
+	tail.SetTailFirstThreshold(512 * 1024) // 512KB
+
+	readyCh := make(chan struct{}, 1)
+	tail.OnReady(func() {
+		select {
+		case readyCh <- struct{}{}:
+		default:
+		}
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	// Wait for initial read (tail-first should be very fast)
+	select {
+	case <-readyCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for tail-first initial read")
+	}
+
+	lines := tail.GetLines()
+	if len(lines) == 0 {
+		t.Fatal("expected buffered lines from tail-first read, got 0")
+	}
+	if len(lines) > 1000 {
+		t.Errorf("expected at most 1000 buffered lines, got %d", len(lines))
+	}
+
+	// The last line should be "line 10000 padding..."
+	lastLine := lines[len(lines)-1]
+	if lastLine.Text == "" {
+		t.Error("last line should not be empty")
+	}
+
+	// Indexing should start incomplete
+	// Wait for background indexing to complete
+	deadline := time.After(10 * time.Second)
+	for !tail.IsIndexingComplete() {
+		select {
+		case <-deadline:
+			t.Fatal("background indexing did not complete within 10s")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	// After indexing, total lines should be correct
+	if total := tail.GetTotalLines(); total != 10000 {
+		t.Errorf("expected 10000 total lines after indexing, got %d", total)
+	}
+
+	// Line numbers on buffered lines should have been corrected
+	lines = tail.GetLines()
+	lastLine = lines[len(lines)-1]
+	if lastLine.Number != 10000 {
+		t.Errorf("expected last line number 10000, got %d", lastLine.Number)
+	}
+}
+
+// TestTailerTailFirstReadRangeAfterIndexing verifies that ReadRange works for
+// the full file after background indexing completes.
+func TestTailerTailFirstReadRangeAfterIndexing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.log")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 5000; i++ {
+		f.WriteString("line " + itoa(i) + " padding-to-make-lines-longer-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")
+	}
+	f.Close()
+
+	tail := New(path, 100*time.Millisecond, 500)
+	tail.SetTailFirstThreshold(100 * 1024) // 100KB threshold for test
+
+	readyCh := make(chan struct{}, 1)
+	tail.OnReady(func() {
+		select {
+		case readyCh <- struct{}{}:
+		default:
+		}
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	select {
+	case <-readyCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for ready")
+	}
+
+	// Wait for background indexing
+	deadline := time.After(10 * time.Second)
+	for !tail.IsIndexingComplete() {
+		select {
+		case <-deadline:
+			t.Fatal("background indexing did not complete")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	// ReadRange should work for lines at the beginning of the file
+	lines := tail.ReadRange(1, 5)
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 lines from ReadRange(1,5), got %d", len(lines))
+	}
+	if lines[0].Text == "" || lines[0].Number != 1 {
+		t.Errorf("expected line 1, got number=%d text=%q", lines[0].Number, lines[0].Text)
+	}
+
+	// ReadRange in the middle
+	lines = tail.ReadRange(2500, 3)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines from ReadRange(2500,3), got %d", len(lines))
+	}
+	if lines[0].Number != 2500 {
+		t.Errorf("expected line number 2500, got %d", lines[0].Number)
+	}
+}
+
+// TestTailerTailFirstSmallFileBypass verifies that files below the threshold
+// still use the full-read approach (no tail-first).
+func TestTailerTailFirstSmallFileBypass(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "small.log")
+
+	content := "line 1\nline 2\nline 3\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 100*time.Millisecond, 1000)
+	// File is tiny, well below the 1MB threshold
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Should be immediately complete (no background indexing needed)
+	if !tail.IsIndexingComplete() {
+		t.Error("small file should not trigger background indexing")
+	}
+
+	lines := tail.GetLines()
+	if len(lines) != 3 {
+		t.Errorf("expected 3 lines, got %d", len(lines))
+	}
+	if tail.GetTotalLines() != 3 {
+		t.Errorf("expected 3 total lines, got %d", tail.GetTotalLines())
+	}
+}
+
+// TestTailerTailFirstStopDuringIndexing verifies that Stop() cancels the
+// background indexing goroutine without hanging.
+func TestTailerTailFirstStopDuringIndexing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.log")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 10000; i++ {
+		f.WriteString("line " + itoa(i) + " padding-to-make-lines-longer-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")
+	}
+	f.Close()
+
+	tail := New(path, 100*time.Millisecond, 1000)
+	tail.SetTailFirstThreshold(100 * 1024)
+
+	readyCh := make(chan struct{}, 1)
+	tail.OnReady(func() {
+		select {
+		case readyCh <- struct{}{}:
+		default:
+		}
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-readyCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for ready")
+	}
+
+	// Stop immediately — background indexing should be cancelled
+	tail.Stop()
+
+	// Give a moment for goroutines to wind down
+	time.Sleep(200 * time.Millisecond)
+
+	// Should not panic or hang — that's the real test
+}
+
+// TestTailerTailFirstNewLinesAfterInit verifies that new lines appended to
+// the file are still picked up after a tail-first initial read.
+func TestTailerTailFirstNewLinesAfterInit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.log")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 10000; i++ {
+		f.WriteString("line " + itoa(i) + " padding-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")
+	}
+	f.Close()
+
+	var mu sync.Mutex
+	var received []Line
+
+	tail := New(path, 50*time.Millisecond, 1000)
+	tail.SetTailFirstThreshold(100 * 1024)
+	tail.OnLines(func(lines []Line) {
+		mu.Lock()
+		received = append(received, lines...)
+		mu.Unlock()
+	})
+
+	readyCh := make(chan struct{}, 1)
+	tail.OnReady(func() {
+		select {
+		case readyCh <- struct{}{}:
+		default:
+		}
+	})
+
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	select {
+	case <-readyCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for ready")
+	}
+
+	// Append new lines
+	af, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	af.WriteString("new line A\nnew line B\n")
+	af.Close()
+
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) < 2 {
+		t.Errorf("expected at least 2 new lines from OnLines callback, got %d", len(received))
+	}
+}
+
+// TestTailerGetIndexProgress verifies progress reporting during background indexing.
+func TestTailerGetIndexProgress(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "small.log")
+
+	if err := os.WriteFile(path, []byte("line 1\nline 2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := New(path, 100*time.Millisecond, 1000)
+	if err := tail.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Small file — both values should equal file size
+	indexed, total := tail.GetIndexProgress()
+	if indexed != total {
+		t.Errorf("expected indexed == total for small file, got %d != %d", indexed, total)
+	}
+	if total == 0 {
+		t.Error("expected non-zero total bytes")
+	}
+}

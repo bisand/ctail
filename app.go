@@ -28,15 +28,16 @@ import (
 
 // TabInfo holds a tailer and its metadata
 type TabInfo struct {
-	ID       string `json:"id"`
-	FilePath string `json:"filePath"`
-	FileName string `json:"fileName"`
-	Profile  string `json:"profile"`
-	Label    string `json:"label"`
-	Color    string `json:"color"`
-	Position int    `json:"position"`
-	tailer   *tailer.Tailer
-	throttle *lineThrottle
+	ID                   string `json:"id"`
+	FilePath             string `json:"filePath"`
+	FileName             string `json:"fileName"`
+	Profile              string `json:"profile"`
+	Label                string `json:"label"`
+	Color                string `json:"color"`
+	Position             int    `json:"position"`
+	tailer               *tailer.Tailer
+	throttle             *lineThrottle
+	activityDuringPause  int32 // atomic: set when lines arrive while eventsPaused=1
 }
 
 // App is the main application struct bound to Wails
@@ -118,11 +119,28 @@ func (lt *lineThrottle) stop() {
 
 // SetEventsPaused is called by the frontend when the window visibility changes.
 // When paused (hidden), the Go side skips EventsEmit calls to prevent IPC backlog.
+// When unpaused, any tabs that received lines while hidden get a tailer:activity
+// notification so the frontend can refresh stale content.
 func (a *App) SetEventsPaused(paused bool) {
 	if paused {
 		atomic.StoreInt32(&a.eventsPaused, 1)
-	} else {
-		atomic.StoreInt32(&a.eventsPaused, 0)
+		return
+	}
+	atomic.StoreInt32(&a.eventsPaused, 0)
+	// Collect tabs that had new lines while the window was hidden.
+	a.mu.RLock()
+	var notify []string
+	for _, tab := range a.tabs {
+		if atomic.SwapInt32(&tab.activityDuringPause, 0) == 1 {
+			notify = append(notify, tab.ID)
+		}
+	}
+	a.mu.RUnlock()
+	for _, tabId := range notify {
+		id := tabId
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:activity", map[string]interface{}{
+			"tabId": id,
+		})
 	}
 }
 
@@ -534,8 +552,10 @@ func (a *App) FixMaximize() {
 // OpenFileDialog opens a native file dialog and returns the selected path.
 // defaultDir is optional — when non-empty the dialog starts in that directory.
 func (a *App) OpenFileDialog(defaultDir string) (string, error) {
-	// Validate the default directory is accessible with a short timeout
-	// to avoid freezing the UI when the path is on a stale network mount.
+	// Validate the default directory is accessible with a timeout to avoid
+	// freezing the UI when the path is on a stale or slow network mount.
+	// GVFS/SMB paths can take several seconds even for a simple Stat(),
+	// so we use a 5-second timeout (increased from 2s).
 	if defaultDir != "" {
 		ch := make(chan bool, 1)
 		go func() {
@@ -547,8 +567,8 @@ func (a *App) OpenFileDialog(defaultDir string) (string, error) {
 			if !ok {
 				defaultDir = ""
 			}
-		case <-time.After(2 * time.Second):
-			defaultDir = "" // stale mount, fall back to system default
+		case <-time.After(5 * time.Second):
+			defaultDir = "" // slow/stale mount, fall back to system default
 		}
 	}
 
@@ -619,6 +639,12 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	// to prevent IPC/rendering flooding after VPN reconnections.
 	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
 		if a.isEventsPaused() {
+			// Mark that this tab received lines while the window was hidden.
+			a.mu.RLock()
+			if t, ok := a.tabs[id]; ok {
+				atomic.StoreInt32(&t.activityDuringPause, 1)
+			}
+			a.mu.RUnlock()
 			return
 		}
 		if a.getActiveTabID() != id {
@@ -692,7 +718,15 @@ func (a *App) OpenTab(filePath string) (string, error) {
 
 	t.OnReady(func() {
 		go wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
-			"tabId": id,
+			"tabId":            id,
+			"indexingComplete": t.IsIndexingComplete(),
+		})
+	})
+
+	t.OnIndexed(func(totalLines int64) {
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:indexed", map[string]interface{}{
+			"tabId":      id,
+			"totalLines": totalLines,
 		})
 	})
 
@@ -714,6 +748,14 @@ func (a *App) OpenTab(filePath string) (string, error) {
 	tab.Position = maxPos + 1
 	a.tabs[id] = tab
 	a.mu.Unlock()
+
+	// Ensure the Go side knows which tab is active so the throttle flush
+	// routes lines correctly from the start.  Without this, getActiveTabID()
+	// returns "" until the frontend's async SetActiveTab RPC completes,
+	// causing lines to be silently discarded as tailer:activity.
+	if a.getActiveTabID() == "" {
+		a.activeTabID.Store(id)
+	}
 
 	// Start tailing in the background — never blocks
 	if err := t.Start(); err != nil {
@@ -824,6 +866,11 @@ func (a *App) RefreshTab(tabID string) error {
 
 	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
 		if a.isEventsPaused() {
+			a.mu.RLock()
+			if t, ok := a.tabs[tabID]; ok {
+				atomic.StoreInt32(&t.activityDuringPause, 1)
+			}
+			a.mu.RUnlock()
 			return
 		}
 		if a.getActiveTabID() != tabID {
@@ -854,7 +901,14 @@ func (a *App) RefreshTab(tabID string) error {
 	})
 	t.OnReady(func() {
 		go wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
-			"tabId": tabID,
+			"tabId":            tabID,
+			"indexingComplete": t.IsIndexingComplete(),
+		})
+	})
+	t.OnIndexed(func(totalLines int64) {
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:indexed", map[string]interface{}{
+			"tabId":      tabID,
+			"totalLines": totalLines,
 		})
 	})
 	t.OnReconnecting(func() {
@@ -918,6 +972,32 @@ func (a *App) GetTabFileSize(tabID string) int64 {
 		return 0
 	}
 	return tab.tailer.GetFileSize()
+}
+
+// IsTabIndexingComplete returns true when the full line-offset index is built.
+// During background indexing after a tail-first read on large files,
+// ReadRange for early portions of the file may return nil until this is true.
+func (a *App) IsTabIndexingComplete(tabID string) bool {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	a.mu.RUnlock()
+	if !ok {
+		return true
+	}
+	return tab.tailer.IsIndexingComplete()
+}
+
+// GetTabIndexProgress returns (indexedBytes, totalBytes) for the background
+// indexer. If indexing is complete, both values equal the file size.
+func (a *App) GetTabIndexProgress(tabID string) map[string]int64 {
+	a.mu.RLock()
+	tab, ok := a.tabs[tabID]
+	a.mu.RUnlock()
+	if !ok {
+		return map[string]int64{"indexed": 0, "total": 0}
+	}
+	indexed, total := tab.tailer.GetIndexProgress()
+	return map[string]int64{"indexed": indexed, "total": total}
 }
 
 // SearchTab searches the entire file associated with a tab for lines matching
@@ -1111,6 +1191,11 @@ func (a *App) ChangeTabFilePath(tabID string) (string, error) {
 
 	throttle := newLineThrottle(100*time.Millisecond, func(lines []tailer.Line) {
 		if a.isEventsPaused() {
+			a.mu.RLock()
+			if t, ok := a.tabs[tabID]; ok {
+				atomic.StoreInt32(&t.activityDuringPause, 1)
+			}
+			a.mu.RUnlock()
 			return
 		}
 		if a.getActiveTabID() != tabID {
@@ -1141,7 +1226,14 @@ func (a *App) ChangeTabFilePath(tabID string) (string, error) {
 	})
 	t.OnReady(func() {
 		go wailsRuntime.EventsEmit(a.ctx, "tailer:ready", map[string]interface{}{
-			"tabId": tabID,
+			"tabId":            tabID,
+			"indexingComplete": t.IsIndexingComplete(),
+		})
+	})
+	t.OnIndexed(func(totalLines int64) {
+		go wailsRuntime.EventsEmit(a.ctx, "tailer:indexed", map[string]interface{}{
+			"tabId":      tabID,
+			"totalLines": totalLines,
 		})
 	})
 	t.OnReconnecting(func() {
@@ -1157,6 +1249,12 @@ func (a *App) ChangeTabFilePath(tabID string) (string, error) {
 	tab.tailer = t
 	tab.throttle = throttle
 	a.mu.Unlock()
+
+	// Clear frontend lines before starting the new tailer (same as RefreshTab).
+	// Synchronous emit guarantees clearLines runs in JS before tailer:ready arrives.
+	wailsRuntime.EventsEmit(a.ctx, "tailer:truncated", map[string]interface{}{
+		"tabId": tabID,
+	})
 
 	if err := t.Start(); err != nil {
 		return newPath, fmt.Errorf("failed to start tailing: %w", err)

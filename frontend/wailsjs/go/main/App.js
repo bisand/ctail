@@ -78,6 +78,10 @@ export function GetTabFileSize(arg1) {
   return window['go']['main']['App']['GetTabFileSize'](arg1);
 }
 
+export function GetTabIndexProgress(arg1) {
+  return window['go']['main']['App']['GetTabIndexProgress'](arg1);
+}
+
 export function GetTabLineRange(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetTabLineRange'](arg1, arg2, arg3);
 }
@@ -100,6 +104,10 @@ export function GetTheme(arg1) {
 
 export function HasClosedTabs() {
   return window['go']['main']['App']['HasClosedTabs']();
+}
+
+export function IsTabIndexingComplete(arg1) {
+  return window['go']['main']['App']['IsTabIndexingComplete'](arg1);
 }
 
 export function ListProfiles() {

@@ -26,6 +26,11 @@ function createTabStore() {
     },
     addTab(id, filePath, fileName, position) {
       update(state => {
+        // Idempotent: if the tab already exists just activate it (OpenTab
+        // returns existing IDs for already-open files).
+        if (state.tabs.some(t => t.id === id)) {
+          return { ...state, activeTabId: id };
+        }
         const newTab = {
           id,
           filePath,
@@ -40,7 +45,8 @@ function createTabStore() {
           paused: false,
           loadingLines: false,
           status: 'loading',
-          errorMessage: ''
+          errorMessage: '',
+          isIndexing: false
         };
         const tabs = [...state.tabs];
         if (position != null && position >= 0 && position <= tabs.length) {
@@ -114,7 +120,9 @@ function createTabStore() {
       });
     },
     clearLines(tabId) {
-      update(state => replaceTab(state, tabId, { lines: [] }));
+      // Reset totalLines to 0 so the auto-scroll effect re-fires when setLines arrives.
+      // Without this, prevTotalLines === totalLines after reload and auto-scroll never fires.
+      update(state => replaceTab(state, tabId, { lines: [], totalLines: 0 }));
     },
     markHasUpdate(tabId) {
       update(state => {
@@ -133,13 +141,22 @@ function createTabStore() {
       update(state => replaceTab(state, tabId, { color }));
     },
     setFilePath(tabId, filePath, fileName) {
-      update(state => replaceTab(state, tabId, { filePath, fileName, lines: [], totalLines: 0, status: 'loading' }));
+      update(state => replaceTab(state, tabId, { filePath, fileName, lines: [], totalLines: 0, status: 'loading', autoScroll: true, isIndexing: false }));
+    },
+    // Metadata-only update: changes the displayed path/name without resetting
+    // lines, status, or autoScroll.  Used after ChangeTabFilePath where the Go
+    // side already handled the tailer lifecycle (truncated → ready flow).
+    updateFilePath(tabId, filePath, fileName) {
+      update(state => replaceTab(state, tabId, { filePath, fileName, autoScroll: true }));
     },
     setLoadingLines(tabId, value) {
       update(state => replaceTab(state, tabId, { loadingLines: value }));
     },
     setTotalLines(tabId, total) {
       update(state => replaceTab(state, tabId, { totalLines: total }));
+    },
+    setIsIndexing(tabId, value) {
+      update(state => replaceTab(state, tabId, { isIndexing: value }));
     },
     setStatus(tabId, status, errorMessage) {
       const changes = { status };
@@ -197,3 +214,8 @@ export const activeTab = derived(tabStore, $store => {
 
 export const tabs = derived(tabStore, $store => $store.tabs);
 export const activeTabId = derived(tabStore, $store => $store.activeTabId);
+
+// Shared Set that guards against concurrent loadInitialLines calls for the same tab.
+// Also used by the tailer:lines handler to discard streaming lines during a snapshot
+// load, and by LogView to suppress spurious autoScroll disabling during DOM reflow.
+export const pendingInitLoads = new Set();

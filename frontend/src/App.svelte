@@ -7,7 +7,7 @@
   import AboutDialog from './lib/components/AboutDialog.svelte';
   import AIDialog from './lib/components/AIDialog.svelte';
   import UpdateDialog from './lib/components/UpdateDialog.svelte';
-  import { tabStore, activeTab, tabs } from './lib/stores/tabs.js';
+  import { tabStore, activeTab, tabs, pendingInitLoads } from './lib/stores/tabs.js';
   import { settings, settingsPanelOpen } from './lib/stores/settings.js';
   import { profiles } from './lib/stores/rules.js';
   import { OpenFileDialog, OpenTab, CloseTab, ReopenTab, RefreshTab, GetTabLineRange, GetTabTotalLines, GetSettings, GetSavedTabs, GetPendingFiles, SaveSettings, ListProfiles, GetProfile, ListThemes, ManualCheckForUpdates, SetEventsPaused, SetActiveTab, FixMaximize } from '../wailsjs/go/main/App.js';
@@ -50,22 +50,46 @@
   // Notify Go when the active tab changes so it only sends full line data
   // for the active tab (inactive tabs get lightweight activity notifications).
   // Also reload lines from Go if the tab had pending updates while inactive.
+  //
+  // pendingReload tracks tabs that need a content reload when next activated.
+  // We can't rely on tab.hasUpdate here because setActive() clears hasUpdate
+  // atomically — by the time this effect fires, hasUpdate is already false.
+  const pendingReload = new Set();
   let lastNotifiedTabId = null;
   $effect(() => {
     const tab = $activeTab;
     if (!tab || tab.id === lastNotifiedTabId) return;
     lastNotifiedTabId = tab.id;
     SetActiveTab(tab.id).catch(() => {});
-    if (tab.hasUpdate) {
+    if (pendingReload.has(tab.id)) {
+      pendingReload.delete(tab.id);
       loadInitialLines(tab.id);
     }
   });
 
   // Load initial lines for a tab after it becomes ready.
   // Guards against concurrent calls for the same tab (e.g. rapid ready→error→ready cycling).
-  const pendingInitLoads = new Set();
-  async function loadInitialLines(tabId) {
-    if (pendingInitLoads.has(tabId)) return;
+  // fromReadyEvent: true when called from tailer:ready or tailer:indexed — the tailer is
+  // definitely done, so we mark the tab ready even if the file is empty.  When false
+  // (called after a file path change), we skip setting ready if the tailer hasn't finished
+  // yet (total === 0), leaving the tab in 'loading' state so tailer:ready finishes the job.
+  //
+  // pendingReadyTabs: when a tailer:ready arrives while an earlier non-ready call is still
+  // awaiting GetTabTotalLines (which blocks the guard), we record it here so the finally
+  // block can retry — BUT only if the tab is still loading (if the first call already
+  // succeeded, the retry would cause a double-load and scroll-to-top artifact).
+  const pendingReadyTabs = new Set();
+  // Tracks tailer:ready events that arrived before addTab created the tab in
+  // the store.  After addTab, we check this and replay the missed event.
+  const missedReadyTabs = new Map();
+
+  async function loadInitialLines(tabId, fromReadyEvent = false) {
+    if (pendingInitLoads.has(tabId)) {
+      // Another call is in-flight for this tab.  If this one came from tailer:ready we
+      // must not drop it — record so the in-flight call retries when it finishes.
+      if (fromReadyEvent) pendingReadyTabs.add(tabId);
+      return;
+    }
     pendingInitLoads.add(tabId);
     try {
       const total = await GetTabTotalLines(tabId);
@@ -73,13 +97,49 @@
       const lines = await GetTabLineRange(tabId, fetchStart, INITIAL_TAIL);
       if (lines && lines.length > 0) {
         tabStore.setLines(tabId, lines, total);
+        tabStore.setStatus(tabId, 'ready');
+      } else if (fromReadyEvent || total > 0) {
+        // fromReadyEvent: tailer is done (empty file is still 'ready')
+        // total > 0: file has lines but ReadRange returned nil (tail-first indexing in progress)
+        tabStore.setStatus(tabId, 'ready');
       }
-      tabStore.setStatus(tabId, 'ready');
+      // else: total === 0 and not from ready event — tailer not done yet, stay in 'loading'
     } catch (e) {
       console.error('Failed to load initial lines for', tabId, e);
       tabStore.setStatus(tabId, 'error', String(e));
     } finally {
       pendingInitLoads.delete(tabId);
+      // Only retry if tailer:ready arrived while blocked AND the first call didn't already
+      // succeed (i.e. tab is still loading).  A successful first call already loaded lines
+      // correctly; retrying would replace the buffer when scrollTop may still be 0 and
+      // the auto-scroll tick hasn't fired yet, causing a visible scroll-to-top.
+      if (pendingReadyTabs.delete(tabId)) {
+        const tab = $tabs.find(t => t.id === tabId);
+        if (tab && tab.status !== 'ready') {
+          loadInitialLines(tabId, true);
+        }
+      }
+    }
+  }
+
+  // Register a new tab in the store and kick off initial line loading.
+  // Handles the race where tailer:ready fires before addTab by checking
+  // missedReadyTabs.  addTab is idempotent (returns early for existing IDs).
+  function registerAndLoad(tabId, filePath, fileName, position) {
+    tabStore.addTab(tabId, filePath, fileName, position);
+    // If the tab already existed (addTab was a no-op), skip initial load.
+    const tab = $tabs.find(t => t.id === tabId);
+    if (tab && tab.status !== 'loading') return;
+    // Check for a tailer:ready that arrived before the tab was in the store.
+    const missed = missedReadyTabs.get(tabId);
+    if (missed) {
+      missedReadyTabs.delete(tabId);
+      if (!missed.indexingComplete) {
+        tabStore.setIsIndexing(tabId, true);
+      }
+      loadInitialLines(tabId, true);
+    } else {
+      loadInitialLines(tabId);
     }
   }
 
@@ -124,7 +184,11 @@
     function flushPendingLines() {
       lineFlushTimer = null;
       for (const [tabId, lines] of pendingLines) {
-        tabStore.appendLines(tabId, lines);
+        // Skip tabs with an in-flight loadInitialLines — the snapshot will
+        // replace these lines anyway, and appending them first creates gaps.
+        if (!pendingInitLoads.has(tabId)) {
+          tabStore.appendLines(tabId, lines);
+        }
       }
       pendingLines.clear();
     }
@@ -144,6 +208,12 @@
 
     EventsOn('tailer:lines', (data) => {
       if (data.tabId && data.lines) {
+        // While loadInitialLines is in-flight for this tab, discard streaming
+        // lines.  They would be overwritten by the upcoming setLines snapshot
+        // anyway, and appending them first causes gaps (snapshot is stale by
+        // the time it's applied → next streaming batch skips the gap).
+        if (pendingInitLoads.has(data.tabId)) return;
+
         const existing = pendingLines.get(data.tabId) || [];
         existing.push(...data.lines);
         // Always cap the pending buffer to prevent unbounded growth
@@ -176,7 +246,21 @@
 
     EventsOn('tailer:ready', (data) => {
       if (data.tabId) {
-        loadInitialLines(data.tabId);
+        const tab = $tabs.find(t => t.id === data.tabId);
+        if (!tab) {
+          // Tab not yet in store (tailer:ready arrived before addTab).
+          // Record so the post-addTab loadInitialLines handles it.
+          missedReadyTabs.set(data.tabId, data);
+          return;
+        }
+        if (!data.indexingComplete) {
+          tabStore.setIsIndexing(data.tabId, true);
+        }
+        // Skip reload if the explicit loadInitialLines after addTab already
+        // succeeded — a second setLines would trigger a DOM reflow that can
+        // spuriously disable autoScroll after pendingInitLoads is cleared.
+        if (tab.status === 'ready' && tab.lines.length > 0) return;
+        loadInitialLines(data.tabId, true);
       }
     });
 
@@ -186,16 +270,39 @@
       }
     });
 
-    // Lightweight notification from inactive tabs — just set the update badge
+    EventsOn('tailer:indexed', (data) => {
+      if (data.tabId) {
+        tabStore.setIsIndexing(data.tabId, false);
+        if (data.totalLines) tabStore.setTotalLines(data.tabId, data.totalLines);
+        // Reload lines to get correct line numbers, but only if the user is still
+        // following (autoScroll). If they've scrolled up, don't jump their position.
+        const tab = $tabs.find(t => t.id === data.tabId);
+        if (tab && tab.autoScroll) {
+          loadInitialLines(data.tabId, true);
+        }
+      }
+    });
+
+    // Lightweight notification: inactive tabs set the update badge.
+    // Also fired on resume for tabs that had lines while the window was hidden —
+    // including the active tab, which needs a content reload (not just a badge).
     EventsOn('tailer:activity', (data) => {
       if (data.tabId) {
-        tabStore.markHasUpdate(data.tabId);
+        if (data.tabId === tabStore.getActiveTabId()) {
+          // Active tab was stale while hidden — reload content from Go.
+          loadInitialLines(data.tabId);
+        } else {
+          tabStore.markHasUpdate(data.tabId);
+          // Remember to reload content when this tab is next activated.
+          // (tab.hasUpdate is cleared by setActive before the $effect runs)
+          pendingReload.add(data.tabId);
+        }
       }
     });
 
     EventsOn('tab:focus', (tabId) => {
       if (tabId) {
-        activeTab.set(tabId);
+        tabStore.setActive(tabId);
       }
     });
 
@@ -215,7 +322,7 @@
       try {
         const fileName = filePath.split(/[/\\]/).pop();
         const tabId = await OpenTab(filePath);
-        tabStore.addTab(tabId, filePath, fileName);
+        registerAndLoad(tabId, filePath, fileName);
       } catch (e) {
         console.warn('Failed to open external file:', filePath, e);
       }
@@ -226,6 +333,7 @@
       if (tab) {
         CloseTab(tab.id);
         tabStore.removeTab(tab.id);
+        pendingReload.delete(tab.id);
       }
     });
 
@@ -301,7 +409,7 @@
         for (const tab of sorted) {
           try {
             const tabId = await OpenTab(tab.filePath);
-            tabStore.addTab(tabId, tab.filePath, tab.filePath.split(/[/\\]/).pop());
+            registerAndLoad(tabId, tab.filePath, tab.filePath.split(/[/\\]/).pop());
             if (tab.profileId) tabStore.setProfile(tabId, tab.profileId);
             if (tab.label) tabStore.setLabel(tabId, tab.label);
             if (tab.color) tabStore.setColor(tabId, tab.color);
@@ -316,7 +424,7 @@
         for (const filePath of pending) {
           try {
             const tabId = await OpenTab(filePath);
-            tabStore.addTab(tabId, filePath, filePath.split(/[/\\]/).pop());
+            registerAndLoad(tabId, filePath, filePath.split(/[/\\]/).pop());
           } catch (e) {
             console.warn('Failed to open CLI file:', filePath, e);
           }
@@ -486,7 +594,7 @@
         const tab = allTabs.find(t => t.id === id);
         if (tab) {
           const fileName = tab.filePath.split(/[/\\]/).pop();
-          tabStore.addTab(id, tab.filePath, fileName);
+          registerAndLoad(id, tab.filePath, fileName);
           if (tab.label) tabStore.setLabel(id, tab.label);
           if (tab.color) tabStore.setColor(id, tab.color);
           if (tab.profile) tabStore.setProfile(id, tab.profile);
@@ -519,6 +627,7 @@
       if (tab) {
         CloseTab(tab.id);
         tabStore.removeTab(tab.id);
+        pendingReload.delete(tab.id);
       }
     }
     if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')) {
@@ -596,8 +705,7 @@
       if (!path) return;
       const tabId = await OpenTab(path);
       const fileName = path.split(/[/\\]/).pop();
-      tabStore.addTab(tabId, path, fileName);
-      // Lines will arrive via tailer:ready → loadInitialLines
+      registerAndLoad(tabId, path, fileName);
     } catch (e) {
       console.error('Failed to open file:', e);
     }
@@ -607,7 +715,7 @@
     try {
       const tabId = await OpenTab(filePath);
       const fileName = filePath.split(/[/\\]/).pop();
-      tabStore.addTab(tabId, filePath, fileName);
+      registerAndLoad(tabId, filePath, fileName);
     } catch (e) {
       console.error('Failed to open recent file:', e);
     }

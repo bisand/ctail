@@ -1,7 +1,7 @@
 <script>
   import { onMount, tick } from 'svelte';
   import LogLine from './LogLine.svelte';
-  import { activeTab, tabStore } from '../stores/tabs.js';
+  import { activeTab, tabStore, pendingInitLoads } from '../stores/tabs.js';
   import { settings } from '../stores/settings.js';
   import { profiles } from '../stores/rules.js';
   import { GetTabLineRange, GetTabTotalLines, GetTabFileSize, GetMemoryUsage, SearchTab } from '../../../wailsjs/go/main/App.js';
@@ -104,6 +104,18 @@
   });
   let autoScroll = $derived(currentTab ? currentTab.autoScroll : true);
   let totalLines = $derived(currentTab ? currentTab.totalLines : 0);
+  let isIndexing = $derived(currentTab ? currentTab.isIndexing : false);
+
+  // Reset prevTotalLines when the file path changes on the same tab so the
+  // auto-scroll chain (0 → N) reliably fires after a file-path swap.
+  let prevFilePath = null;
+  $effect(() => {
+    const fp = currentTab ? currentTab.filePath : null;
+    if (fp !== prevFilePath) {
+      prevFilePath = fp;
+      prevTotalLines = -1;
+    }
+  });
   let windowStart = $derived(lines.length > 0 ? lines[0].number : 0);
   let windowEnd = $derived(lines.length > 0 ? lines[lines.length - 1].number : 0);
   let canScrollBack = $derived(windowStart > 1);
@@ -229,10 +241,22 @@
   let bottomPad = $derived(Math.max(0, (filteredLines.length - visibleEnd) * lineHeight));
   let totalContentHeight = $derived(filteredLines.length * lineHeight);
 
-  // Recalculate visible range when lines change, but not during a swap
+  // Recalculate visible range when lines change, but not during a swap.
+  // When following (autoScroll=true), position to the end of the buffer immediately
+  // so the first render already shows the tail — avoids a top-of-buffer flash that
+  // would otherwise appear before the auto-scroll tick fires.
   $effect.pre(() => {
     const _len = filteredLines.length;
-    if (!swapping) updateVisibleRange();
+    if (!swapping) {
+      if (autoScroll && _len > 0 && container) {
+        const viewHeight = container.clientHeight || 600;
+        const lineCount = Math.ceil(viewHeight / lineHeight);
+        visibleEnd = _len;
+        visibleStart = Math.max(0, _len - lineCount - OVERSCAN);
+      } else {
+        updateVisibleRange();
+      }
+    }
   });
 
   onMount(() => {
@@ -338,7 +362,9 @@
 
     const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
 
-    if (isAtBottom && !atBottom) {
+    // Don't disable autoScroll during loadInitialLines — DOM reflow from
+    // setLines triggers spurious scroll events that would falsely turn off follow mode.
+    if (isAtBottom && !atBottom && !pendingInitLoads.has(currentTab.id)) {
       tabStore.setAutoScroll(currentTab.id, false);
     }
     if (atBottom && !autoScroll && windowEnd >= totalLines) {
@@ -809,7 +835,7 @@
         {#if tabStatus === 'loading'}
           <span class="status-text">Loading…</span>
         {:else if totalLines > 0}
-          <span class="status-text">Lines {windowStart}–{windowEnd} of {totalLines}</span>
+          <span class="status-text">Lines {windowStart}–{windowEnd} of {isIndexing ? '…' : totalLines}</span>
         {:else}
           <span class="status-text">Empty</span>
         {/if}

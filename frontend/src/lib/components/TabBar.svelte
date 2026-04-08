@@ -198,10 +198,14 @@
     const tabId = ctxTab.id;
     closeCtxMenu();
     try {
+      // ChangeTabFilePath handles the full tailer lifecycle on the Go side
+      // (stop old, create new, emit tailer:truncated, start new) — exactly
+      // like RefreshTab.  tailer:ready → loadInitialLines handles the rest.
+      // We only need to update the display metadata (path/name) afterwards.
       const newPath = await ChangeTabFilePath(tabId);
       if (newPath) {
         const newFileName = newPath.split(/[/\\]/).pop();
-        tabStore.setFilePath(tabId, newPath, newFileName);
+        tabStore.updateFilePath(tabId, newPath, newFileName);
       }
     } catch (e) {
       console.error('Failed to change file:', e);
