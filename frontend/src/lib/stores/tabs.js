@@ -100,16 +100,20 @@ function createTabStore() {
         if (!tab || newLines.length === 0) return state;
         const changes = { totalLines: tab.totalLines + newLines.length };
 
+        const maxBuffer = get(settings).bufferSize || 10000;
         const combined = [...tab.lines, ...newLines];
         if (tab.autoScroll) {
-          // Follow mode: evict old lines from the top to keep memory bounded
-          changes.lines = combined.length > tab.lines.length
-            ? combined.slice(newLines.length)
+          // Follow mode: only evict when buffer exceeds maxBuffer.
+          // This avoids evicting on every append which would shift all
+          // buffer indices and force Svelte to destroy/recreate every
+          // visible DOM element (causing visual gaps/flashes).
+          changes.lines = combined.length > maxBuffer
+            ? combined.slice(combined.length - maxBuffer)
             : combined;
         } else {
           // Not following: append lines but never evict from top.
           // Hard cap at 3x bufferSize to prevent unbounded memory growth.
-          const hardCap = get(settings).bufferSize * 3;
+          const hardCap = maxBuffer * 3;
           changes.lines = combined.length > hardCap
             ? combined.slice(combined.length - hardCap)
             : combined;

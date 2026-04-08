@@ -482,28 +482,29 @@ func (t *Tailer) initialReadFull(f *os.File, info os.FileInfo, fileSize int64) e
 	var bytePos int64
 
 	for {
-		offsets = append(offsets, bytePos)
 		lineBytes, err := reader.ReadBytes('\n')
-		if len(lineBytes) > 0 {
-			num++
-			text := string(lineBytes)
-			if len(text) > 0 && text[len(text)-1] == '\n' {
-				text = text[:len(text)-1]
-			}
-			if len(text) > 0 && text[len(text)-1] == '\r' {
-				text = text[:len(text)-1]
-			}
-			allLines = append(allLines, Line{Number: num, Text: text})
-			bytePos += int64(len(lineBytes))
-			if len(allLines) > t.bufferSize*2 {
-				allLines = allLines[len(allLines)-t.bufferSize:]
-			}
-		}
 		if err != nil {
-			if err == io.EOF {
-				break
+			// EOF or error: partial line (no \n) is left uncommitted.
+			// For initial read this is fine — the poll loop will pick it up.
+			if err != io.EOF {
+				return err
 			}
-			return err
+			break
+		}
+		// Complete line (ends with \n)
+		offsets = append(offsets, bytePos)
+		num++
+		text := string(lineBytes)
+		if len(text) > 0 && text[len(text)-1] == '\n' {
+			text = text[:len(text)-1]
+		}
+		if len(text) > 0 && text[len(text)-1] == '\r' {
+			text = text[:len(text)-1]
+		}
+		allLines = append(allLines, Line{Number: num, Text: text})
+		bytePos += int64(len(lineBytes))
+		if len(allLines) > t.bufferSize*2 {
+			allLines = allLines[len(allLines)-t.bufferSize:]
 		}
 	}
 
@@ -518,7 +519,7 @@ func (t *Tailer) initialReadFull(f *os.File, info os.FileInfo, fileSize int64) e
 	t.lineOffsets = offsets
 	t.lines = allLines
 	t.lineNum = num
-	t.offset = fileSize
+	t.offset = bytePos
 	t.lastDataAt = time.Now()
 	t.indexingComplete = true
 	t.indexedBytes = fileSize
@@ -563,25 +564,25 @@ func (t *Tailer) initialReadTail(f *os.File, info os.FileInfo, fileSize int64) e
 	bytePos := seekPos
 
 	for {
-		tailOffsets = append(tailOffsets, bytePos)
 		lineBytes, err := reader.ReadBytes('\n')
-		if len(lineBytes) > 0 {
-			num++
-			text := string(lineBytes)
-			if len(text) > 0 && text[len(text)-1] == '\n' {
-				text = text[:len(text)-1]
-			}
-			if len(text) > 0 && text[len(text)-1] == '\r' {
-				text = text[:len(text)-1]
-			}
-			tailLines = append(tailLines, Line{Number: num, Text: text})
-			bytePos += int64(len(lineBytes))
-			if len(tailLines) > t.bufferSize*2 {
-				tailLines = tailLines[len(tailLines)-t.bufferSize:]
-			}
-		}
 		if err != nil {
+			// Partial line at EOF — don't commit it; next poll will pick it up.
 			break
+		}
+		// Complete line (terminated by \n) — record offset THEN advance.
+		tailOffsets = append(tailOffsets, bytePos)
+		num++
+		text := string(lineBytes)
+		if len(text) > 0 && text[len(text)-1] == '\n' {
+			text = text[:len(text)-1]
+		}
+		if len(text) > 0 && text[len(text)-1] == '\r' {
+			text = text[:len(text)-1]
+		}
+		tailLines = append(tailLines, Line{Number: num, Text: text})
+		bytePos += int64(len(lineBytes))
+		if len(tailLines) > t.bufferSize*2 {
+			tailLines = tailLines[len(tailLines)-t.bufferSize:]
 		}
 	}
 
@@ -597,7 +598,7 @@ func (t *Tailer) initialReadTail(f *os.File, info os.FileInfo, fileSize int64) e
 	t.lineOffsets = tailOffsets
 	t.lines = tailLines
 	t.lineNum = num
-	t.offset = fileSize
+	t.offset = bytePos
 	t.lastDataAt = time.Now()
 	t.indexingComplete = false
 	t.indexedBytes = 0
@@ -645,22 +646,21 @@ func (t *Tailer) backgroundIndex(stopCh chan struct{}, targetSize int64) {
 		default:
 		}
 
-		offsets = append(offsets, bytePos)
 		lineBytes, err := reader.ReadBytes('\n')
-		if len(lineBytes) > 0 {
-			lineCount++
-			bytePos += int64(len(lineBytes))
+		if err != nil {
+			// Partial line or true EOF — don't record an orphan offset.
+			break
 		}
+		// Complete line (terminated by \n) — record offset THEN advance.
+		offsets = append(offsets, bytePos)
+		lineCount++
+		bytePos += int64(len(lineBytes))
 
 		// Periodically update progress (every ~1000 lines)
 		if lineCount%1000 == 0 {
 			t.mu.Lock()
 			t.indexedBytes = bytePos
 			t.mu.Unlock()
-		}
-
-		if err != nil {
-			break
 		}
 	}
 
@@ -938,7 +938,7 @@ func (t *Tailer) poll() {
 	}
 
 	// Read new data from offset
-	newLines := t.readNewLines(f, prevOffset, currentSize)
+	newLines, consumed := t.readNewLines(f, prevOffset, currentSize)
 	if len(newLines) > 0 {
 		t.mu.Lock()
 		t.lines = append(t.lines, newLines...)
@@ -946,13 +946,20 @@ func (t *Tailer) poll() {
 			t.lines = t.lines[len(t.lines)-t.bufferSize:]
 		}
 		t.fileSize = currentSize
-		t.offset = currentSize
+		t.offset = consumed
 		t.lastDataAt = time.Now()
 		t.mu.Unlock()
 
 		if t.onLines != nil {
 			t.onLines(newLines)
 		}
+	} else {
+		// No complete lines read — still update offset to consumed position
+		// (which equals prevOffset when nothing was read).
+		t.mu.Lock()
+		t.offset = consumed
+		t.fileSize = currentSize
+		t.mu.Unlock()
 	}
 }
 
@@ -971,14 +978,14 @@ func (t *Tailer) handleTruncation(f *os.File, currentSize int64) {
 	}
 
 	// Re-read from beginning
-	newLines := t.readNewLines(f, 0, currentSize)
+	newLines, consumed := t.readNewLines(f, 0, currentSize)
 	if len(newLines) > 0 {
 		t.mu.Lock()
 		t.lines = newLines
 		if len(t.lines) > t.bufferSize {
 			t.lines = t.lines[len(t.lines)-t.bufferSize:]
 		}
-		t.offset = currentSize
+		t.offset = consumed
 		t.mu.Unlock()
 
 		if t.onLines != nil {
@@ -1030,14 +1037,14 @@ func (t *Tailer) handleFullReread(f *os.File, currentSize int64, info os.FileInf
 		t.onTruncated()
 	}
 
-	newLines := t.readNewLines(f, 0, currentSize)
+	newLines, consumed := t.readNewLines(f, 0, currentSize)
 	if len(newLines) > 0 {
 		t.mu.Lock()
 		t.lines = newLines
 		if len(t.lines) > t.bufferSize {
 			t.lines = t.lines[len(t.lines)-t.bufferSize:]
 		}
-		t.offset = currentSize
+		t.offset = consumed
 		t.indexingComplete = true
 		t.indexedBytes = currentSize
 		t.mu.Unlock()
@@ -1073,25 +1080,25 @@ func (t *Tailer) handleFullRereadTail(f *os.File, currentSize int64, info os.Fil
 	bytePos := seekPos
 
 	for {
-		tailOffsets = append(tailOffsets, bytePos)
 		lineBytes, err := reader.ReadBytes('\n')
-		if len(lineBytes) > 0 {
-			num++
-			text := string(lineBytes)
-			if len(text) > 0 && text[len(text)-1] == '\n' {
-				text = text[:len(text)-1]
-			}
-			if len(text) > 0 && text[len(text)-1] == '\r' {
-				text = text[:len(text)-1]
-			}
-			tailLines = append(tailLines, Line{Number: num, Text: text})
-			bytePos += int64(len(lineBytes))
-			if len(tailLines) > t.bufferSize*2 {
-				tailLines = tailLines[len(tailLines)-t.bufferSize:]
-			}
-		}
 		if err != nil {
+			// Partial line at EOF — don't commit it; next poll will pick it up.
 			break
+		}
+		// Complete line (terminated by \n) — record offset THEN advance.
+		tailOffsets = append(tailOffsets, bytePos)
+		num++
+		text := string(lineBytes)
+		if len(text) > 0 && text[len(text)-1] == '\n' {
+			text = text[:len(text)-1]
+		}
+		if len(text) > 0 && text[len(text)-1] == '\r' {
+			text = text[:len(text)-1]
+		}
+		tailLines = append(tailLines, Line{Number: num, Text: text})
+		bytePos += int64(len(lineBytes))
+		if len(tailLines) > t.bufferSize*2 {
+			tailLines = tailLines[len(tailLines)-t.bufferSize:]
 		}
 	}
 
@@ -1103,7 +1110,7 @@ func (t *Tailer) handleFullRereadTail(f *os.File, currentSize int64, info os.Fil
 	t.mu.Lock()
 	t.lines = tailLines
 	t.lineNum = num
-	t.offset = currentSize
+	t.offset = bytePos
 	t.fileSize = currentSize
 	t.fileIdent = info
 	t.lineOffsets = tailOffsets
@@ -1121,9 +1128,13 @@ func (t *Tailer) handleFullRereadTail(f *os.File, currentSize int64, info os.Fil
 	go t.backgroundIndex(indexStopCh, currentSize)
 }
 
-func (t *Tailer) readNewLines(f *os.File, offset, size int64) []Line {
+// readNewLines reads complete lines (terminated by \n) from offset.
+// Returns the lines read and the byte position after the last complete line.
+// Partial lines at EOF (no trailing \n) are left for the next poll cycle
+// to avoid splitting a line across two reads and creating blank/garbled entries.
+func (t *Tailer) readNewLines(f *os.File, offset, size int64) ([]Line, int64) {
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return nil
+		return nil, offset
 	}
 
 	reader := bufio.NewReader(f)
@@ -1136,24 +1147,25 @@ func (t *Tailer) readNewLines(f *os.File, offset, size int64) []Line {
 
 	bytePos := offset
 	for {
-		newOffsets = append(newOffsets, bytePos)
-
 		lineBytes, err := reader.ReadBytes('\n')
-		if len(lineBytes) > 0 {
-			num++
-			text := string(lineBytes)
-			if len(text) > 0 && text[len(text)-1] == '\n' {
-				text = text[:len(text)-1]
-			}
-			if len(text) > 0 && text[len(text)-1] == '\r' {
-				text = text[:len(text)-1]
-			}
-			newLines = append(newLines, Line{Number: num, Text: text})
-			bytePos += int64(len(lineBytes))
-		}
 		if err != nil {
+			// EOF or error: lineBytes may contain a partial line (no \n).
+			// Don't commit it — leave for the next poll so the complete
+			// line is read as one unit.
 			break
 		}
+		// Complete line (ends with \n)
+		newOffsets = append(newOffsets, bytePos)
+		num++
+		text := string(lineBytes)
+		if len(text) > 0 && text[len(text)-1] == '\n' {
+			text = text[:len(text)-1]
+		}
+		if len(text) > 0 && text[len(text)-1] == '\r' {
+			text = text[:len(text)-1]
+		}
+		newLines = append(newLines, Line{Number: num, Text: text})
+		bytePos += int64(len(lineBytes))
 	}
 
 	t.mu.Lock()
@@ -1161,5 +1173,5 @@ func (t *Tailer) readNewLines(f *os.File, offset, size int64) []Line {
 	t.lineNum = num
 	t.mu.Unlock()
 
-	return newLines
+	return newLines, bytePos
 }

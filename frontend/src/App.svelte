@@ -125,6 +125,12 @@
   // Register a new tab in the store and kick off initial line loading.
   // Handles the race where tailer:ready fires before addTab by checking
   // missedReadyTabs.  addTab is idempotent (returns early for existing IDs).
+  //
+  // IMPORTANT: we do NOT speculatively call loadInitialLines when there is
+  // no missed tailer:ready.  The tailer goroutine may still be running its
+  // initial read, so GetTabTotalLines could return 0 or a provisional count
+  // (tail-first mode).  Instead we wait for the tailer:ready event which
+  // guarantees the initial read is complete.
   function registerAndLoad(tabId, filePath, fileName, position) {
     tabStore.addTab(tabId, filePath, fileName, position);
     // If the tab already existed (addTab was a no-op), skip initial load.
@@ -138,9 +144,8 @@
         tabStore.setIsIndexing(tabId, true);
       }
       loadInitialLines(tabId, true);
-    } else {
-      loadInitialLines(tabId);
     }
+    // else: tab stays in 'loading' until tailer:ready fires
   }
 
   onMount(async () => {

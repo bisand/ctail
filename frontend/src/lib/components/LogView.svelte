@@ -124,7 +124,7 @@
   let tabError = $derived(currentTab ? currentTab.errorMessage : '');
 
   // --- Virtual scrolling ---
-  const OVERSCAN = 10;
+  const OVERSCAN = 25;
   let visibleStart = $state(0);
   let visibleEnd = $state(0);
 
