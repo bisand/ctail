@@ -294,6 +294,37 @@ func TestCorruptedSettingsJSON(t *testing.T) {
 	}
 }
 
+func TestSettingsWithBOM(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+
+	configPath := filepath.Join(dir, "ctail")
+	os.MkdirAll(filepath.Join(configPath, "profiles"), 0755)
+	os.MkdirAll(filepath.Join(configPath, "themes"), 0755)
+
+	// Write settings with UTF-8 BOM prefix (Windows Notepad adds this)
+	settings := `{"bufferSize":5000,"restoreTabs":true,"activeProfile":"Test Profile","tabs":[{"filePath":"/tmp/test.log","autoScroll":true}]}`
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	os.WriteFile(filepath.Join(configPath, "settings.json"), append(bom, []byte(settings)...), 0644)
+
+	m, err := NewManager()
+	if err != nil {
+		t.Fatal("manager should not fail on BOM settings:", err)
+	}
+
+	s := m.GetSettings()
+	if s.BufferSize != 5000 {
+		t.Errorf("expected buffer size 5000, got %d", s.BufferSize)
+	}
+	if !s.RestoreTabs {
+		t.Error("expected restoreTabs to be true")
+	}
+	if len(s.Tabs) != 1 {
+		t.Errorf("expected 1 tab, got %d", len(s.Tabs))
+	}
+}
+
 func TestCorruptedProfileJSON(t *testing.T) {
 	dir := t.TempDir()
 	os.Setenv("XDG_CONFIG_HOME", dir)

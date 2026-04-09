@@ -27,6 +27,8 @@ func NewManager() (*Manager, error) {
 		return nil, fmt.Errorf("config dir: %w", err)
 	}
 
+	fmt.Fprintf(os.Stderr, "ctail: config directory: %s\n", dir)
+
 	m := &Manager{
 		configDir: dir,
 		settings:  DefaultSettings(),
@@ -70,6 +72,11 @@ func configDir() (string, error) {
 		xdg = filepath.Join(home, ".config")
 	}
 	return filepath.Join(xdg, "ctail"), nil
+}
+
+// GetConfigDir returns the config directory path for diagnostics
+func (m *Manager) GetConfigDir() string {
+	return m.configDir
 }
 
 // GetSettings returns a copy of current settings
@@ -189,37 +196,54 @@ func (m *Manager) RenameProfile(oldName, newName string) error {
 func (m *Manager) loadSettings() {
 	path := filepath.Join(m.configDir, "settings.json")
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if err != nil || len(data) == 0 {
+		// Main file missing or empty — try the temp file left by an
+		// interrupted atomic write (process killed before rename).
+		tmp := path + ".tmp"
+		data, err = os.ReadFile(tmp)
+		if err != nil || len(data) == 0 {
+			fmt.Fprintf(os.Stderr, "ctail: no settings file found at %s\n", path)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "ctail: recovered settings from %s\n", tmp)
+		// Recover: promote tmp to main file
+		_ = os.Rename(tmp, path)
+	}
+	// Strip UTF-8 BOM if present (Windows Notepad adds this)
+	data = stripBOM(data)
+	var s AppSettings
+	if err := json.Unmarshal(data, &s); err != nil {
+		fmt.Fprintf(os.Stderr, "ctail: failed to parse %s: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "ctail: settings file size: %d bytes, first 200 chars: %s\n", len(data), truncateBytes(data, 200))
 		return
 	}
-	var s AppSettings
-	if json.Unmarshal(data, &s) == nil {
-		s.PollInterval = time.Duration(s.PollIntervalMs) * time.Millisecond
-		// Migrate old theme setting ("dark"/"light") to new format
-		if s.Theme == "dark" || s.Theme == "light" {
-			s.ThemeMode = s.Theme
-			s.Theme = "catppuccin"
-		}
-		if s.ThemeMode == "" {
-			s.ThemeMode = "dark"
-		}
-		if s.Theme == "" {
-			s.Theme = "catppuccin"
-		}
-		if s.ScrollSpeed == 0 {
-			s.ScrollSpeed = 1
-		}
-		if s.ReadTimeoutSec == 0 {
-			s.ReadTimeoutSec = 30
-		}
-		m.settings = s
+	fmt.Fprintf(os.Stderr, "ctail: loaded settings from %s (%d tabs, profile=%q)\n", path, len(s.Tabs), s.ActiveProfile)
+	s.PollInterval = time.Duration(s.PollIntervalMs) * time.Millisecond
+	// Migrate old theme setting ("dark"/"light") to new format
+	if s.Theme == "dark" || s.Theme == "light" {
+		s.ThemeMode = s.Theme
+		s.Theme = "catppuccin"
 	}
+	if s.ThemeMode == "" {
+		s.ThemeMode = "dark"
+	}
+	if s.Theme == "" {
+		s.Theme = "catppuccin"
+	}
+	if s.ScrollSpeed == 0 {
+		s.ScrollSpeed = 1
+	}
+	if s.ReadTimeoutSec == 0 {
+		s.ReadTimeoutSec = 30
+	}
+	m.settings = s
 }
 
 func (m *Manager) loadProfiles() {
 	profileDir := filepath.Join(m.configDir, "profiles")
 	entries, err := os.ReadDir(profileDir)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "ctail: cannot read profiles dir %s: %v\n", profileDir, err)
 		// Create default profile
 		def := DefaultProfile()
 		m.profiles[def.Name] = def
@@ -231,17 +255,28 @@ func (m *Manager) loadProfiles() {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(profileDir, e.Name()))
+		filePath := filepath.Join(profileDir, e.Name())
+		data, err := os.ReadFile(filePath)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "ctail: cannot read profile %s: %v\n", filePath, err)
 			continue
 		}
+		data = stripBOM(data)
 		var p Profile
-		if json.Unmarshal(data, &p) == nil && p.Name != "" {
-			m.profiles[p.Name] = p
+		if err := json.Unmarshal(data, &p); err != nil {
+			fmt.Fprintf(os.Stderr, "ctail: failed to parse profile %s: %v\n", filePath, err)
+			continue
 		}
+		if p.Name == "" {
+			fmt.Fprintf(os.Stderr, "ctail: skipping profile %s: empty name\n", filePath)
+			continue
+		}
+		m.profiles[p.Name] = p
+		fmt.Fprintf(os.Stderr, "ctail: loaded profile %q from %s (%d rules)\n", p.Name, e.Name(), len(p.Rules))
 	}
 
 	if len(m.profiles) == 0 {
+		fmt.Fprintf(os.Stderr, "ctail: no profiles found, creating default\n")
 		def := DefaultProfile()
 		m.profiles[def.Name] = def
 		_ = m.writeJSON(filepath.Join(profileDir, "common-logs.json"), def)
@@ -253,7 +288,30 @@ func (m *Manager) writeJSON(path string, v interface{}) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	// Atomic write: write to a temp file in the same directory, then rename.
+	// This prevents data loss if the process is killed mid-write (common on
+	// Windows shutdown) which would otherwise truncate/empty the target file.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func truncateBytes(data []byte, n int) string {
+	if len(data) <= n {
+		return string(data)
+	}
+	return string(data[:n]) + "..."
+}
+
+// stripBOM removes a UTF-8 BOM prefix if present.
+// Windows Notepad and some editors add this, which breaks JSON parsing.
+func stripBOM(data []byte) []byte {
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		return data[3:]
+	}
+	return data
 }
 
 func sanitizeFilename(name string) string {
@@ -293,6 +351,7 @@ func (m *Manager) loadThemes() {
 		if err != nil {
 			continue
 		}
+		data = stripBOM(data)
 		var t Theme
 		if json.Unmarshal(data, &t) == nil && t.Name != "" {
 			t.BuiltIn = false

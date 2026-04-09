@@ -211,6 +211,55 @@
       console.error('Failed to change file:', e);
     }
   }
+  // Scroll overflow indicators
+  let tabsScrollEl = $state(null);
+  let hasOverflow = $state(false);
+  let canScrollLeft = $state(false);
+  let canScrollRight = $state(false);
+
+  function updateScrollIndicators() {
+    if (!tabsScrollEl) return;
+    const { scrollLeft, scrollWidth, clientWidth } = tabsScrollEl;
+    hasOverflow = scrollWidth > clientWidth + 1;
+    canScrollLeft = scrollLeft > 1;
+    canScrollRight = scrollLeft + clientWidth < scrollWidth - 1;
+  }
+
+  function handleWheel(e) {
+    if (!tabsScrollEl) return;
+    // Convert vertical scroll to horizontal when over tabs
+    if (e.deltaY !== 0) {
+      e.preventDefault();
+      tabsScrollEl.scrollLeft += e.deltaY;
+      updateScrollIndicators();
+    }
+  }
+
+  function scrollTabs(direction) {
+    if (!tabsScrollEl) return;
+    tabsScrollEl.scrollBy({ left: direction * 150, behavior: 'smooth' });
+  }
+
+  function scrollTabIntoView(el) {
+    if (!el || !tabsScrollEl) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
+
+  $effect(() => {
+    if (!tabsScrollEl) return;
+    updateScrollIndicators();
+    const ro = new ResizeObserver(() => updateScrollIndicators());
+    ro.observe(tabsScrollEl);
+    return () => ro.disconnect();
+  });
+
+  // Re-check indicators when tabs change
+  $effect(() => {
+    void $tabs.length;
+    // tick so DOM has updated
+    requestAnimationFrame(() => updateScrollIndicators());
+  });
+
   // Tooltip hover state
   let tooltipTab = $state(null);
   let tooltipPos = $state({ x: 0, y: 0 });
@@ -234,7 +283,8 @@
 <svelte:window onclick={(e) => { closeCtxMenu(); closeColorPicker(); }} />
 
 <div class="tab-bar">
-  <div class="tabs-scroll">
+  <button class="scroll-arrow scroll-arrow-left" class:reserved={hasOverflow} class:hidden={!canScrollLeft} onclick={() => scrollTabs(-1)} title="Scroll tabs left">‹</button>
+  <div class="tabs-scroll" bind:this={tabsScrollEl} onscroll={updateScrollIndicators} onwheel={handleWheel}>
     {#each $tabs as tab, i (tab.id)}
       <div
         class="tab"
@@ -246,7 +296,7 @@
         draggable="true"
         role="tab"
         tabindex="0"
-        onclick={() => switchTab(tab.id)}
+        onclick={(e) => { switchTab(tab.id); scrollTabIntoView(e.currentTarget); }}
         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') switchTab(tab.id); }}
         ondragstart={(e) => handleDragStart(e, i)}
         ondragover={(e) => handleDragOver(e, i)}
@@ -287,6 +337,7 @@
       </div>
     {/each}
   </div>
+  <button class="scroll-arrow scroll-arrow-right" class:reserved={hasOverflow} class:hidden={!canScrollRight} onclick={() => scrollTabs(1)} title="Scroll tabs right">›</button>
   <button class="add-tab-btn" onclick={onAddTab} title="Open file">+</button>
 
   {#if ctxMenu.visible}
@@ -371,6 +422,48 @@
     min-height: 34px;
     user-select: none;
     --wails-draggable: drag;
+    position: relative;
+  }
+
+  .scroll-arrow {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    flex-shrink: 0;
+    font-size: 18px;
+    font-weight: bold;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: none;
+    cursor: pointer;
+    z-index: 2;
+    padding: 0;
+    --wails-draggable: no-drag;
+  }
+
+  .scroll-arrow.reserved {
+    display: flex;
+  }
+
+  .scroll-arrow.hidden {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .scroll-arrow:hover {
+    color: var(--accent);
+    background: var(--bg-hover);
+  }
+
+  .scroll-arrow-left {
+    border-right: 1px solid var(--border);
+    box-shadow: 4px 0 6px -2px rgba(0, 0, 0, 0.15);
+  }
+
+  .scroll-arrow-right {
+    border-left: 1px solid var(--border);
+    box-shadow: -4px 0 6px -2px rgba(0, 0, 0, 0.15);
   }
 
   .tabs-scroll {
