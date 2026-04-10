@@ -260,6 +260,19 @@
     requestAnimationFrame(() => updateScrollIndicators());
   });
 
+  // Auto-scroll to keep the active tab visible when it changes
+  $effect(() => {
+    const id = $activeTabId;
+    if (!id || !tabsScrollEl) return;
+    requestAnimationFrame(() => {
+      const activeEl = tabsScrollEl.querySelector('.tab.active');
+      if (activeEl) {
+        activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        requestAnimationFrame(() => updateScrollIndicators());
+      }
+    });
+  });
+
   // Tooltip hover state
   let tooltipTab = $state(null);
   let tooltipPos = $state({ x: 0, y: 0 });
