@@ -152,6 +152,19 @@ func (a *App) isEventsPaused() bool {
 // Inactive tabs receive lightweight activity notifications instead of full line data.
 func (a *App) SetActiveTab(tabID string) {
 	a.activeTabID.Store(tabID)
+	// Persist last active tab path for session restore
+	if a.config != nil && tabID != "" {
+		a.mu.RLock()
+		tab, ok := a.tabs[tabID]
+		a.mu.RUnlock()
+		if ok {
+			s := a.config.GetSettings()
+			if s.LastActiveTabPath != tab.FilePath {
+				s.LastActiveTabPath = tab.FilePath
+				a.config.SaveSettings(s)
+			}
+		}
+	}
 }
 
 func (a *App) getActiveTabID() string {

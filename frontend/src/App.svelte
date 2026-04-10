@@ -122,6 +122,16 @@
     }
   }
 
+  // Returns the position for a newly opened tab based on the newTabPosition setting.
+  // "afterActive" inserts after the current active tab; "end" (default) appends.
+  function getNewTabPosition() {
+    if ($settings.newTabPosition === 'afterActive' && $activeTab) {
+      const idx = $tabs.findIndex(t => t.id === $activeTab.id);
+      if (idx >= 0) return idx + 1;
+    }
+    return undefined; // append at end
+  }
+
   // Register a new tab in the store and kick off initial line loading.
   // Handles the race where tailer:ready fires before addTab by checking
   // missedReadyTabs.  addTab is idempotent (returns early for existing IDs).
@@ -327,7 +337,7 @@
       try {
         const fileName = filePath.split(/[/\\]/).pop();
         const tabId = await OpenTab(filePath);
-        registerAndLoad(tabId, filePath, fileName);
+        registerAndLoad(tabId, filePath, fileName, getNewTabPosition());
       } catch (e) {
         console.warn('Failed to open external file:', filePath, e);
       }
@@ -433,6 +443,16 @@
           } catch (e) {
             console.warn('Failed to open CLI file:', filePath, e);
           }
+        }
+      }
+
+      // Restore last active tab from previous session
+      const lastPath = $settings.lastActiveTabPath;
+      if (lastPath && (!pending || pending.length === 0)) {
+        const match = $tabs.find(t => t.filePath === lastPath);
+        if (match) {
+          tabStore.setActive(match.id);
+          SetActiveTab(match.id).catch(() => {});
         }
       }
     } catch (e) {
@@ -599,7 +619,7 @@
         const tab = allTabs.find(t => t.id === id);
         if (tab) {
           const fileName = tab.filePath.split(/[/\\]/).pop();
-          registerAndLoad(id, tab.filePath, fileName);
+          registerAndLoad(id, tab.filePath, fileName, getNewTabPosition());
           if (tab.label) tabStore.setLabel(id, tab.label);
           if (tab.color) tabStore.setColor(id, tab.color);
           if (tab.profile) tabStore.setProfile(id, tab.profile);
@@ -710,7 +730,7 @@
       if (!path) return;
       const tabId = await OpenTab(path);
       const fileName = path.split(/[/\\]/).pop();
-      registerAndLoad(tabId, path, fileName);
+      registerAndLoad(tabId, path, fileName, getNewTabPosition());
     } catch (e) {
       console.error('Failed to open file:', e);
     }
@@ -720,7 +740,7 @@
     try {
       const tabId = await OpenTab(filePath);
       const fileName = filePath.split(/[/\\]/).pop();
-      registerAndLoad(tabId, filePath, fileName);
+      registerAndLoad(tabId, filePath, fileName, getNewTabPosition());
     } catch (e) {
       console.error('Failed to open recent file:', e);
     }

@@ -11,6 +11,7 @@ export const settings = writable({
   fontSize: 14,
   showLineNumbers: false,
   wordWrap: false,
+  newTabPosition: 'end',
   activeProfile: 'Common Logs',
   displayBackend: 'auto',
   gpuPolicy: 'auto',

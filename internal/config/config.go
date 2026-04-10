@@ -233,6 +233,9 @@ func (m *Manager) loadSettings() {
 	if s.ScrollSpeed == 0 {
 		s.ScrollSpeed = 1
 	}
+	if s.NewTabPosition == "" {
+		s.NewTabPosition = "end"
+	}
 	if s.ReadTimeoutSec == 0 {
 		s.ReadTimeoutSec = 30
 	}

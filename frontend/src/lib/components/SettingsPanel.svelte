@@ -345,6 +345,14 @@
         <span>Restore Tabs on Startup</span>
       </label>
       <label>
+        <span>New Tab Position</span>
+        <select value={$settings.newTabPosition || 'end'}
+          onchange={e => updateSetting('newTabPosition', e.target.value)}>
+          <option value="end">At the end</option>
+          <option value="afterActive">After active tab</option>
+        </select>
+      </label>
+      <label>
         <span>Theme</span>
         <select value={$settings.theme || 'catppuccin'}
           onchange={async (e) => {

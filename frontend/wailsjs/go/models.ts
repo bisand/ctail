@@ -79,6 +79,8 @@ export namespace config {
 	    showLineNumbers: boolean;
 	    wordWrap: boolean;
 	    restoreTabs: boolean;
+	    newTabPosition: string;
+	    lastActiveTabPath: string;
 	    activeProfile: string;
 	    tabs: TabState[];
 	    recentFiles: string[];
@@ -111,6 +113,8 @@ export namespace config {
 	        this.showLineNumbers = source["showLineNumbers"];
 	        this.wordWrap = source["wordWrap"];
 	        this.restoreTabs = source["restoreTabs"];
+	        this.newTabPosition = source["newTabPosition"];
+	        this.lastActiveTabPath = source["lastActiveTabPath"];
 	        this.activeProfile = source["activeProfile"];
 	        this.tabs = this.convertValues(source["tabs"], TabState);
 	        this.recentFiles = source["recentFiles"];

@@ -54,7 +54,9 @@ type AppSettings struct {
 	FontSize      int           `json:"fontSize"`
 	ShowLineNumbers bool        `json:"showLineNumbers"`
 	WordWrap      bool          `json:"wordWrap"`
-	RestoreTabs   bool          `json:"restoreTabs"`
+	RestoreTabs      bool          `json:"restoreTabs"`
+	NewTabPosition   string        `json:"newTabPosition"`   // "end" or "afterActive"
+	LastActiveTabPath string       `json:"lastActiveTabPath"` // file path of the last active tab, restored on startup
 	ActiveProfile string        `json:"activeProfile"`
 	Tabs          []TabState    `json:"tabs"`
 	RecentFiles   []string      `json:"recentFiles"`
@@ -86,6 +88,7 @@ func DefaultSettings() AppSettings {
 		ShowLineNumbers: false,
 		WordWrap:        false,
 		RestoreTabs:     true,
+		NewTabPosition:  "end",
 		ActiveProfile:   "Common Logs",
 		Tabs:            []TabState{},
 		RecentFiles:     []string{},
