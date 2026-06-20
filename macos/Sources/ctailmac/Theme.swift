@@ -43,6 +43,14 @@ struct ThemeColors: Codable, Equatable {
         scrollbarTrack = s(.scrollbarTrack); scrollbarThumb = s(.scrollbarThumb)
     }
 
+    /// Neutral grey palette used only as a pre-launch placeholder.
+    static let placeholder = ThemeColors(
+        bgPrimary: "#1e1e1e", bgSecondary: "#181818", bgSurface: "#2a2a2a", bgHover: "#3a3a3a",
+        textPrimary: "#e0e0e0", textSecondary: "#b0b0b0", textMuted: "#808080", accent: "#6bcbff",
+        accentHover: "#5bb0e0", border: "#3a3a3a", danger: "#ff6b6b", success: "#a6e3a1",
+        warning: "#f9e2af", tabActive: "#1e1e1e", tabInactive: "#181818", badgeColor: "#f9e2af",
+        scrollbarTrack: "#181818", scrollbarThumb: "#3a3a3a")
+
     // Convenience NSColors used by the log surface and chrome.
     var background: NSColor { Theme.hex(bgPrimary) }
     var backgroundAlt: NSColor { Theme.hex(bgSecondary) }

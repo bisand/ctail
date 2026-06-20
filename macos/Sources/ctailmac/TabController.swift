@@ -153,6 +153,13 @@ final class TabController: NSObject {
     }
 
     var activeTab: Tab? { tabs.indices.contains(active) ? tabs[active] : nil }
+    var openPaths: [String] { tabs.map { $0.filePath } }
+
+    func copyActiveSelection() {
+        guard let text = activeTab?.logView.selectedText(), !text.isEmpty else { return }
+        FileOps.copyText(text)
+    }
+    func selectAllActive() { activeTab?.logView.selectAllRows() }
 
     private weak var shownLogView: LogView?
 
@@ -304,4 +311,9 @@ final class TabController: NSObject {
 @objc protocol AppActions {
     func openFileDialog()
     func findInLog()
+    func toggleTheme()
+    func showAbout()
+    func showSettings()
+    func showAIAssistant()
+    func checkForUpdates()
 }

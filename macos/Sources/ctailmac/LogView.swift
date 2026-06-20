@@ -102,6 +102,19 @@ final class LogView: NSView {
 
     var lineCount: Int { lines.count }
 
+    func selectAllRows() {
+        guard !displayed.isEmpty else { return }
+        table.selectRowIndexes(IndexSet(integersIn: 0..<displayed.count), byExtendingSelection: false)
+    }
+
+    /// Text of the selected rows (or all rows if none selected), newline-joined.
+    func selectedText() -> String {
+        let rows = table.selectedRowIndexes
+        let source = rows.isEmpty ? Array(0..<displayed.count) : Array(rows)
+        return source.compactMap { displayed.indices.contains($0) ? displayed[$0].text : nil }
+            .joined(separator: "\n")
+    }
+
     func scrollToBottom() {
         let n = displayed.count
         guard n > 0 else { return }
