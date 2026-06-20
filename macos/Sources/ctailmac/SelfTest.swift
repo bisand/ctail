@@ -27,6 +27,7 @@ enum SelfTest {
         let suites: [(String, () -> Void)] = [
             ("ConfigStore", configStoreSuite),
             ("Themes", themesSuite),
+            ("Search", searchSuite),
             ("Tailer", tailerSuite),
         ]
         for (name, body) in suites {
@@ -125,6 +126,41 @@ enum SelfTest {
         try? Data(json.utf8).write(to: tmp.appendingPathComponent("nord.json"))
         let p = ThemeCatalog.palette(name: "nord", mode: "dark", custom: tmp)
         eq(p.bgPrimary, "#010203", "custom theme overrides built-in")
+    }
+
+    // MARK: - Search suite
+
+    static func searchSuite() {
+        // Plain substring, case-insensitive by default.
+        let q1 = SearchQuery("error", caseSensitive: false, wholeWord: false, isRegex: false)
+        check(q1.matches("an ERROR happened"), "case-insensitive plain match")
+        check(!q1.matches("all good"), "non-match")
+
+        // Case-sensitive.
+        let q2 = SearchQuery("Error", caseSensitive: true, wholeWord: false, isRegex: false)
+        check(!q2.matches("an error happened"), "case-sensitive excludes lowercase")
+        check(q2.matches("an Error happened"), "case-sensitive matches exact case")
+
+        // Whole word.
+        let q3 = SearchQuery("err", caseSensitive: false, wholeWord: true, isRegex: false)
+        check(!q3.matches("error"), "whole-word excludes substring")
+        check(q3.matches("an err here"), "whole-word matches standalone")
+
+        // Regex + ranges.
+        let q4 = SearchQuery(#"\d{3}"#, caseSensitive: false, wholeWord: false, isRegex: true)
+        check(q4.matches("code 404 returned"), "regex match")
+        eq(q4.ranges(in: "a 404 b 500").count, 2, "regex finds all ranges")
+
+        // Plain query escapes regex metacharacters.
+        let q5 = SearchQuery("a.b", caseSensitive: false, wholeWord: false, isRegex: false)
+        check(q5.matches("a.b"), "plain matches literal dot")
+        check(!q5.matches("axb"), "plain does not treat dot as wildcard")
+
+        // Invalid regex flagged.
+        let q6 = SearchQuery("(unclosed", caseSensitive: false, wholeWord: false, isRegex: true)
+        check(!q6.isValid, "invalid regex reported")
+        let q7 = SearchQuery("", caseSensitive: false, wholeWord: false, isRegex: true)
+        check(q7.isValid && q7.isEmpty, "empty query is valid + empty")
     }
 
     // MARK: - Tailer suite

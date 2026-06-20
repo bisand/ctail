@@ -67,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
         }
     }
 
+    func findInLog() { tabs.openSearch() }
+
     // MARK: - Menu
 
     private func buildMenu() {
@@ -80,6 +82,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit ctail", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+
+        let editItem = NSMenuItem(); main.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Find…", action: #selector(findInLog), keyEquivalent: "f")
+        editItem.submenu = editMenu
+
         NSApp.mainMenu = main
     }
 

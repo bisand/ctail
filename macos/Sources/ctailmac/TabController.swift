@@ -7,6 +7,7 @@ final class TabController: NSObject {
     let container = NSView()
     private let tabBar: TabBarView
     private let content = NSView()
+    private lazy var searchBar = makeSearchBar()
     private let statusLabel = NSTextField(labelWithString: "")
     private let followLabel = NSTextField(labelWithString: "")
     private let statusBar = NSView()
@@ -153,18 +154,22 @@ final class TabController: NSObject {
 
     var activeTab: Tab? { tabs.indices.contains(active) ? tabs[active] : nil }
 
+    private weak var shownLogView: LogView?
+
     private func showActiveContent() {
-        content.subviews.forEach { $0.removeFromSuperview() }
+        shownLogView?.removeFromSuperview()        // swap only the log view, keep the search bar
         if let tab = activeTab {
             tab.logView.translatesAutoresizingMaskIntoConstraints = false
-            content.addSubview(tab.logView)
+            content.addSubview(tab.logView, positioned: .below, relativeTo: searchBar)
             NSLayoutConstraint.activate([
                 tab.logView.topAnchor.constraint(equalTo: content.topAnchor),
                 tab.logView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
                 tab.logView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
                 tab.logView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             ])
+            shownLogView = tab.logView
             onActiveFileChanged?(tab.filePath)
+            if !searchBar.isHidden { runSearch(resetPosition: true) }
         }
         reloadBar()
         refreshStatus()
@@ -234,12 +239,58 @@ final class TabController: NSObject {
         tabBar.reload(titles: tabs.map { ($0.displayName, $0.color) }, active: active)
     }
 
-    // MARK: - Keyboard (Ctrl+Tab / Ctrl+Shift+Tab)
+    // MARK: - Search (issue #9)
+
+    private func makeSearchBar() -> SearchBar {
+        let bar = SearchBar(palette: palette)
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.isHidden = true
+        bar.onChange = { [weak self] in self?.runSearch(resetPosition: true) }
+        bar.onNext = { [weak self] in self?.stepSearch(forward: true) }
+        bar.onPrev = { [weak self] in self?.stepSearch(forward: false) }
+        bar.onClose = { [weak self] in self?.closeSearch() }
+        content.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
+            bar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+        ])
+        return bar
+    }
+
+    func openSearch() {
+        guard activeTab != nil else { return }
+        searchBar.isHidden = false
+        content.addSubview(searchBar)            // keep above the log view
+        searchBar.focusField()
+        runSearch(resetPosition: true)
+    }
+
+    private func closeSearch() {
+        searchBar.isHidden = true
+        activeTab?.logView.clearSearch()
+        refreshStatus()
+    }
+
+    private func runSearch(resetPosition: Bool) {
+        guard let log = activeTab?.logView else { return }
+        let r = log.search(text: searchBar.queryText, caseSensitive: searchBar.caseSensitive,
+                           wholeWord: searchBar.wholeWord, isRegex: searchBar.isRegex,
+                           filter: searchBar.filterMode)
+        searchBar.setCounter(total: r.total, current: r.current, valid: log.searchIsValid)
+    }
+
+    private func stepSearch(forward: Bool) {
+        guard let log = activeTab?.logView else { return }
+        let r = forward ? log.nextMatch() : log.prevMatch()
+        searchBar.setCounter(total: r.total, current: r.current, valid: log.searchIsValid)
+    }
+
+    // MARK: - Keyboard (Ctrl+Tab / Ctrl+Shift+Tab + Cmd+F)
 
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self else { return e }
-            // Tab key = 48. Ctrl held.
+            // Ctrl+Tab / Ctrl+Shift+Tab — tab key is 48.
             if e.keyCode == 48, e.modifierFlags.contains(.control) {
                 e.modifierFlags.contains(.shift) ? self.prevTab() : self.nextTab()
                 return nil
@@ -252,4 +303,5 @@ final class TabController: NSObject {
 /// Selector target protocol so the "+" button can route to the app's open dialog.
 @objc protocol AppActions {
     func openFileDialog()
+    func findInLog()
 }
