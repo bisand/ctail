@@ -40,13 +40,13 @@ struct HighlightRule {
 /// line-level rule, then layering all match-level rules on top.
 struct HighlightEngine {
     var rules: [HighlightRule]
-    let theme: Theme
+    let palette: ThemeColors
     let font: NSFont
 
     func render(_ line: String) -> NSAttributedString {
         let attr = NSMutableAttributedString(
             string: line,
-            attributes: [.font: font, .foregroundColor: theme.foreground]
+            attributes: [.font: font, .foregroundColor: palette.foreground]
         )
         let full = NSRange(location: 0, length: (line as NSString).length)
 

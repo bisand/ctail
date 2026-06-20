@@ -26,6 +26,7 @@ enum SelfTest {
     static func run() -> Int32 {
         let suites: [(String, () -> Void)] = [
             ("ConfigStore", configStoreSuite),
+            ("Themes", themesSuite),
             ("Tailer", tailerSuite),
         ]
         for (name, body) in suites {
@@ -90,6 +91,40 @@ enum SelfTest {
         // sanitize
         eq(ConfigStore.sanitize("a/b:c"), "a_b_c", "sanitize strips path chars")
         eq(ConfigStore.sanitize(""), "profile", "sanitize empty fallback")
+    }
+
+    // MARK: - Themes suite
+
+    static func themesSuite() {
+        eq(ThemeCatalog.builtIns.count, 21, "21 built-in themes")
+        check(ThemeCatalog.builtIns.allSatisfy { !$0.name.isEmpty && !$0.displayName.isEmpty },
+              "themes have names")
+
+        // Known palette values from themes.go.
+        let cat = ThemeCatalog.palette(name: "catppuccin", mode: "dark")
+        eq(cat.bgPrimary, "#1e1e2e", "catppuccin dark bg")
+        let catLight = ThemeCatalog.palette(name: "catppuccin", mode: "light")
+        eq(catLight.bgPrimary, "#eff1f5", "catppuccin light bg")
+        eq(ThemeCatalog.palette(name: "nord", mode: "dark").accent, "#88c0d0", "nord accent")
+
+        // Unknown name falls back to catppuccin.
+        eq(ThemeCatalog.palette(name: "does-not-exist", mode: "dark").bgPrimary, "#1e1e2e", "fallback theme")
+
+        // Hex parsing: 3-digit shorthand + alpha=1.
+        let c = Theme.hex("#fff")
+        eq(Int((c.redComponent * 255).rounded()), 255, "hex shorthand expands")
+
+        // Custom theme JSON round-trips with Go keys and overrides built-ins.
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ctail-themes-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let json = #"""
+        {"name":"nord","displayName":"My Nord","dark":{"bg-primary":"#010203","text-primary":"#ffffff"}}
+        """#
+        try? Data(json.utf8).write(to: tmp.appendingPathComponent("nord.json"))
+        let p = ThemeCatalog.palette(name: "nord", mode: "dark", custom: tmp)
+        eq(p.bgPrimary, "#010203", "custom theme overrides built-in")
     }
 
     // MARK: - Tailer suite (filled out in issue #3)

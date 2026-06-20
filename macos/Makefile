@@ -21,6 +21,10 @@ run:
 	swift build
 	./.build/debug/ctailmac $(FILE)
 
+## themes: regenerate Themes.generated.swift from the Go theme source
+themes:
+	python3 scripts/gen_themes.py ../internal/config/themes.go Sources/ctailmac/Themes.generated.swift
+
 ## icon: generate AppIcon.icns from Resources/appicon.png
 icon:
 	@bash scripts/make-icns.sh Resources/appicon.png .build/AppIcon.icns

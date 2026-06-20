@@ -11,7 +11,7 @@ final class LogView: NSView {
     private var lines: [LogLine] = []
     private let bufferSize = 200_000        // sliding window cap, like the Go buffer
     private var highlighter: HighlightEngine
-    private let theme: Theme
+    private let palette: ThemeColors
     private let rowFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
     /// Whether new lines auto-scroll into view (tail -f). Auto-disables when the
@@ -19,9 +19,9 @@ final class LogView: NSView {
     private(set) var following = true
     var onFollowingChanged: ((Bool) -> Void)?
 
-    init(theme: Theme, rules: [HighlightRule]) {
-        self.theme = theme
-        self.highlighter = HighlightEngine(rules: rules, theme: theme,
+    init(palette: ThemeColors, rules: [HighlightRule]) {
+        self.palette = palette
+        self.highlighter = HighlightEngine(rules: rules, palette: palette,
                                            font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular))
         super.init(frame: .zero)
         setup()
@@ -30,7 +30,7 @@ final class LogView: NSView {
 
     private func setup() {
         table.headerView = nil
-        table.backgroundColor = theme.background
+        table.backgroundColor = palette.background
         table.usesAlternatingRowBackgroundColors = false
         table.gridStyleMask = []
         table.rowHeight = ceil(rowFont.ascender - rowFont.descender + rowFont.leading) + 4
@@ -50,7 +50,7 @@ final class LogView: NSView {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = theme.background
+        scrollView.backgroundColor = palette.background
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
         NSLayoutConstraint.activate([
@@ -115,7 +115,7 @@ extension LogView: NSTableViewDelegate {
         if id.rawValue == "gutter" {
             cell.attributedStringValue = NSAttributedString(
                 string: String(line.number),
-                attributes: [.font: rowFont, .foregroundColor: theme.gutter]
+                attributes: [.font: rowFont, .foregroundColor: palette.gutter]
             )
             cell.alignment = .right
         } else {

@@ -7,9 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusLabel: NSTextField!
     private var followLabel: NSTextField!
 
-    private let theme = Theme.catppuccinMocha
     private let config = ConfigStore()
     private var settings = AppSettings()
+
+    // Resolved from the configured theme name + mode (21 built-ins + custom).
+    private lazy var theme: ThemeColors =
+        ThemeCatalog.palette(name: settings.theme, mode: settings.themeMode, custom: config.themesDir)
 
     // Highlight rules compiled from the active profile (loaded from config).
     private lazy var rules: [HighlightRule] = loadActiveProfileRules()
@@ -51,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = theme.background
         window.center()
 
-        logView = LogView(theme: theme, rules: rules)
+        logView = LogView(palette: theme, rules: rules)
         logView.translatesAutoresizingMaskIntoConstraints = false
         logView.onFollowingChanged = { [weak self] f in self?.updateFollow(f) }
 
@@ -80,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bar.layer?.backgroundColor = theme.backgroundAlt.cgColor
 
         statusLabel = label(theme.foreground)
-        followLabel = label(Theme.hex("#a6e3a1"))
+        followLabel = label(theme.successColor)
         followLabel.alignment = .right
         bar.addSubview(statusLabel)
         bar.addSubview(followLabel)
@@ -104,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateFollow(_ following: Bool) {
         followLabel.stringValue = following ? "● FOLLOWING (tail -f)" : "○ paused — scroll to bottom to resume"
-        followLabel.textColor = following ? Theme.hex("#a6e3a1") : theme.gutter
+        followLabel.textColor = following ? theme.successColor : theme.gutter
     }
 
     private func refreshStatus() {
