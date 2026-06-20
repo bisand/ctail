@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     private var tabs: TabController!
 
     private let config = ConfigStore()
+    private lazy var bookmarks = BookmarkStore(dir: config.dir)
     private var settings = AppSettings()
     private var palette = ThemeColors.placeholder
 
@@ -36,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ notification: Notification) { persistSession() }
     func application(_ application: NSApplication, open urls: [URL]) {
-        urls.forEach { tabs?.open(path: $0.path) }
+        urls.forEach { bookmarks.save($0); tabs?.open(path: $0.path) }
     }
 
     private func resolvePalette() -> ThemeColors {
@@ -101,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
 
     private func installController() {
         window.backgroundColor = palette.background
-        tabs = TabController(config: config, settings: settings, palette: palette)
+        tabs = TabController(config: config, settings: settings, palette: palette, bookmarks: bookmarks)
         tabs.onActiveFileChanged = { [weak self] path in
             self?.window.title = path.map { "ctail — \(($0 as NSString).lastPathComponent)" } ?? "ctail"
         }
@@ -116,7 +117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         panel.message = "Choose log file(s) to tail"
-        if panel.runModal() == .OK { panel.urls.forEach { tabs.open(path: $0.path) } }
+        if panel.runModal() == .OK {
+            panel.urls.forEach { bookmarks.save($0); tabs.open(path: $0.path) }
+        }
     }
 
     func findInLog() { tabs.openSearch() }

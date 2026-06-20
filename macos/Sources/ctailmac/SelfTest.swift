@@ -30,6 +30,7 @@ enum SelfTest {
             ("Search", searchSuite),
             ("Updates", updatesSuite),
             ("AI", aiSuite),
+            ("Bookmarks", bookmarksSuite),
             ("Tailer", tailerSuite),
         ]
         for (name, body) in suites {
@@ -202,6 +203,20 @@ enum SelfTest {
 
         // Copilot editor headers are present.
         check(CopilotAuth.editorHeaders["Copilot-Integration-Id"] == "vscode-chat", "copilot integration header")
+    }
+
+    // MARK: - Bookmarks suite (graceful no-bookmark behavior)
+
+    static func bookmarksSuite() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ctail-bm-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = BookmarkStore(dir: dir)
+        check(!store.hasBookmark("/no/such/file"), "no bookmark for unknown path")
+        check(!store.beginAccess("/no/such/file"), "beginAccess false without bookmark")
+        store.endAccess("/no/such/file")   // must not crash
+        check(true, "endAccess on unknown path is safe")
     }
 
     // MARK: - Tailer suite

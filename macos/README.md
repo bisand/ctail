@@ -36,18 +36,36 @@ swift build
 # then open /tmp/ctail-demo.log in the app
 ```
 
-## What this proves / what's still open
+## Status
 
-**Proven:** native tailing + rotation/truncation, virtualized rendering, regex
-highlighting, follow mode, theming — the architecture (SwiftUI-or-AppKit shell +
-AppKit `NSTableView` log surface) holds up.
+Feature parity with the Wails app is implemented natively (tracked under the
+"Native macOS App" milestone, issues #1–#16):
 
-**Not yet built (the other ~60%, mostly mechanical):** tabs, profiles/rules
-editor, settings panel, AI assistant + Copilot device flow, search bar, update
-checker, custom themes, context menus.
+- **Engine** — polling tailer with inode rotation + truncation detection,
+  partial-line buffering, tail-first + background line indexing, windowed range
+  reads, read timeouts.
+- **UI** — virtualized `NSTableView` log surface, multi-tab interface (drag
+  reorder, rename, color, Ctrl+Tab, reopen-closed), VS Code-style search
+  (case/word/regex + filter mode), all 21 themes + custom themes, profiles &
+  rules editor, settings panel, native menu bar + context menus.
+- **Integrations** — recent files, file associations, session persistence,
+  background throttling, GitHub update check, AI assistant (OpenAI/GitHub
+  Models/Copilot/custom) with Copilot device-flow OAuth.
+- **App Store** — sandbox entitlements + **security-scoped bookmarks** so opened
+  files reopen across launches; bookmark use is best-effort so unsandboxed
+  dev/direct builds still work.
 
-**The remaining real risk — App Store sandboxing:** this binary runs
-unsandboxed. Shipping via the App Store requires the sandbox entitlement plus
-**security-scoped bookmarks** to retain access to user-picked files across
-launches, and may constrain watching arbitrary network mounts. That's the next
-thing to validate.
+## Sandbox notes
+
+`make bundle` ad-hoc signs with `Resources/ctail.entitlements` (sandbox on). For
+actual App Store submission, sign with your Apple Developer identity +
+provisioning profile. Watching files on arbitrary network mounts may be
+constrained under the sandbox; a notarized direct-download build remains the
+fallback for the unrestricted experience.
+
+## Tests
+
+`make test` runs the in-process self-test suite (`--selftest`) — 80 checks
+across config, themes, search, updates, AI endpoint/parsing, bookmarks, and the
+tail engine. XCTest isn't available under the Command Line Tools toolchain; the
+harness is trivially portable to XCTest once full Xcode is installed.

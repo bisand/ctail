@@ -15,6 +15,7 @@ final class TabController: NSObject {
     private let config: ConfigStore
     private var settings: AppSettings
     private var palette: ThemeColors
+    private let bookmarks: BookmarkStore
 
     private(set) var tabs: [Tab] = []
     private(set) var active = -1
@@ -25,10 +26,11 @@ final class TabController: NSObject {
     var onActiveFileChanged: ((String?) -> Void)?
     var onTabsChanged: (() -> Void)?
 
-    init(config: ConfigStore, settings: AppSettings, palette: ThemeColors) {
+    init(config: ConfigStore, settings: AppSettings, palette: ThemeColors, bookmarks: BookmarkStore) {
         self.config = config
         self.settings = settings
         self.palette = palette
+        self.bookmarks = bookmarks
         self.tabBar = TabBarView(palette: palette)
         super.init()
         buildLayout()
@@ -100,6 +102,9 @@ final class TabController: NSObject {
         // If already open, just focus it.
         if let i = tabs.firstIndex(where: { $0.filePath == path }) { activate(i); return tabs[i] }
 
+        // Start accessing the security-scoped resource before tailing (sandbox).
+        bookmarks.beginAccess(path)
+
         let tab = Tab(filePath: path, palette: palette, rules: rules(for: settings.activeProfile),
                       profileName: settings.activeProfile,
                       pollInterval: Double(settings.pollIntervalMs) / 1000.0,
@@ -135,6 +140,7 @@ final class TabController: NSObject {
         guard tabs.indices.contains(index) else { return }
         let tab = tabs[index]
         tab.tailer.stop()
+        bookmarks.endAccess(tab.filePath)
         closedStack.append(tab.filePath)
         tab.logView.removeFromSuperview()
         tabs.remove(at: index)
