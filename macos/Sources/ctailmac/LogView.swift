@@ -16,7 +16,7 @@ final class LogView: NSView {
     private let bufferSize = 200_000             // sliding window cap, like the Go buffer
     private var highlighter: HighlightEngine
     private let palette: ThemeColors
-    private let rowFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    private let rowFont: NSFont
 
     // Search state.
     private var query = SearchQuery("", caseSensitive: false, wholeWord: false, isRegex: false)
@@ -31,13 +31,16 @@ final class LogView: NSView {
 
     private var displayed: [LogLine] { filterMode ? filtered : lines }
 
-    init(palette: ThemeColors, rules: [HighlightRule]) {
+    init(palette: ThemeColors, rules: [HighlightRule], fontSize: CGFloat = 12, showLineNumbers: Bool = true) {
         self.palette = palette
-        self.highlighter = HighlightEngine(rules: rules, palette: palette,
-                                           font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular))
+        self.rowFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        self.showLineNumbers = showLineNumbers
+        self.highlighter = HighlightEngine(rules: rules, palette: palette, font: rowFont)
         super.init(frame: .zero)
         setup()
     }
+
+    private let showLineNumbers: Bool
     required init?(coder: NSCoder) { fatalError() }
 
     private func setup() {
@@ -50,7 +53,8 @@ final class LogView: NSView {
         table.selectionHighlightStyle = .regular
 
         let gutter = NSTableColumn(identifier: .init("gutter"))
-        gutter.width = 64
+        gutter.width = showLineNumbers ? 64 : 0
+        gutter.isHidden = !showLineNumbers
         let text = NSTableColumn(identifier: .init("text"))
         text.resizingMask = .autoresizingMask
         table.addTableColumn(gutter)

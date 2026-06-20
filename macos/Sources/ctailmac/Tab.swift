@@ -12,12 +12,14 @@ final class Tab {
     let logView: LogView
 
     init(filePath: String, palette: ThemeColors, rules: [HighlightRule],
-         profileName: String, pollInterval: TimeInterval, readTimeout: TimeInterval) {
+         profileName: String, pollInterval: TimeInterval, readTimeout: TimeInterval,
+         fontSize: CGFloat, showLineNumbers: Bool) {
         self.filePath = filePath
         self.label = ""
         self.color = ""
         self.profileName = profileName
-        self.logView = LogView(palette: palette, rules: rules)
+        self.logView = LogView(palette: palette, rules: rules,
+                               fontSize: fontSize, showLineNumbers: showLineNumbers)
         self.tailer = Tailer(path: filePath, pollInterval: pollInterval, readTimeout: readTimeout)
     }
 

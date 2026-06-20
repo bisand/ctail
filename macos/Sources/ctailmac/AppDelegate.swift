@@ -123,15 +123,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
 
     func toggleTheme() {
         updateSettings { $0.themeMode = ($0.themeMode == "light") ? "dark" : "light" }
-        // Live re-theme: rebuild the content with the new palette, preserving the
-        // open files and active tab.
+        rebuildContent()
+    }
+
+    /// Rebuilds the content (new palette/font/intervals) while preserving the
+    /// open files and active tab. Used by Toggle Theme and Settings.
+    private func rebuildContent() {
         let paths = tabs.openPaths
         let activeIdx = tabs.active
         palette = resolvePalette()
         installController()
+        tabs.onTabsChanged = { [weak self] in self?.persistSession() }
         paths.forEach { tabs.open(path: $0) }
         if tabs.tabs.indices.contains(activeIdx) { tabs.activate(activeIdx) }
     }
+
+    func showSettings() {
+        let controller = SettingsWindowController(
+            settings: config.loadSettings(),
+            themes: ThemeCatalog.all(custom: config.themesDir)) { [weak self] new in
+                guard let self else { return }
+                config.saveSettings(new)
+                self.settings = new
+                self.rebuildContent()
+        }
+        settingsWindow = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+    private var settingsWindow: SettingsWindowController?
 
     @objc func copySelection() { tabs.copyActiveSelection() }
     @objc func selectAllLines() { tabs.selectAllActive() }
@@ -156,7 +176,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     }
 
     // Wired in their own issues — placeholders so the menu is complete now.
-    func showSettings() { notYet("Settings", "#8") }
     func showAIAssistant() { notYet("AI Assistant", "#10") }
 
     func checkForUpdates() { runUpdateCheck(manual: true) }

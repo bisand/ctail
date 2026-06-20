@@ -103,7 +103,9 @@ final class TabController: NSObject {
         let tab = Tab(filePath: path, palette: palette, rules: rules(for: settings.activeProfile),
                       profileName: settings.activeProfile,
                       pollInterval: Double(settings.pollIntervalMs) / 1000.0,
-                      readTimeout: Double(settings.readTimeoutSec))
+                      readTimeout: Double(settings.readTimeoutSec),
+                      fontSize: CGFloat(settings.fontSize),
+                      showLineNumbers: settings.showLineNumbers)
         wire(tab)
         config.addRecentFile(path)
 
