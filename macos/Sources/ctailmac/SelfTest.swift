@@ -127,9 +127,75 @@ enum SelfTest {
         eq(p.bgPrimary, "#010203", "custom theme overrides built-in")
     }
 
-    // MARK: - Tailer suite (filled out in issue #3)
+    // MARK: - Tailer suite
 
     static func tailerSuite() {
-        // Placeholder so the suite list is wired; real cases land with engine parity.
+        // --- pure line splitter ---
+        let (lines, offsets, consumed) = Tailer.splitLines(Data("a\nb\npartial".utf8), startingAt: 0, baseOffset: 0)
+        eq(lines.map { $0.text }, ["a", "b"], "splits complete lines, drops partial")
+        eq(lines.map { $0.number }, [1, 2], "numbers are 1-based")
+        eq(offsets, [0, 2], "line start offsets")
+        eq(consumed, 4, "consumed stops before the partial line")
+
+        // CRLF stripping + continued numbering from a base.
+        let crlf = Tailer.splitLines(Data("x\r\ny\r\n".utf8), startingAt: 10, baseOffset: 100)
+        eq(crlf.lines.map { $0.text }, ["x", "y"], "strips trailing CR")
+        eq(crlf.lines.map { $0.number }, [11, 12], "continues from startNum")
+        eq(crlf.offsets, [100, 103], "offsets are baseOffset-relative")
+
+        // Empty buffer.
+        eq(Tailer.splitLines(Data(), startingAt: 5, baseOffset: 0).lines.count, 0, "empty buffer yields no lines")
+
+        // --- file-driven engine (synchronous seams; no run loop needed) ---
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ctail-tailer-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("app.log")
+        func write(_ s: String) { try? Data(s.utf8).write(to: file) }
+        func appendText(_ s: String) {
+            let fh = try? FileHandle(forWritingTo: file)
+            fh?.seekToEndOfFile(); fh?.write(Data(s.utf8)); try? fh?.close()
+        }
+
+        write("line1\nline2\nline3\n")
+        let t = Tailer(path: file.path, pollInterval: 0.05)
+        t.performInitialRead()
+        eq(t.totalLines, 3, "initial read indexes 3 lines")
+        eq(t.readRange(start: 1, count: 3).map { $0.text }, ["line1", "line2", "line3"], "readRange full")
+        eq(t.readRange(start: 2, count: 1).map { $0.text }, ["line2"], "readRange windowed")
+
+        // Append -> poll picks up only the new line.
+        appendText("line4\n")
+        t.performPoll()
+        eq(t.totalLines, 4, "poll appends new line to index")
+        eq(t.readRange(start: 4, count: 1).first?.text, "line4", "new line readable")
+
+        // Partial line not committed until its newline arrives.
+        appendText("partial-no-newline")
+        t.performPoll()
+        eq(t.totalLines, 4, "partial line not counted yet")
+        appendText("\n")
+        t.performPoll()
+        eq(t.totalLines, 5, "partial completes on newline")
+        eq(t.readRange(start: 5, count: 1).first?.text, "partial-no-newline", "completed partial text")
+
+        // Truncation -> index resets and re-reads.
+        write("fresh1\nfresh2\n")
+        t.performPoll()
+        eq(t.totalLines, 2, "truncation resets to new content")
+        eq(t.readRange(start: 1, count: 2).map { $0.text }, ["fresh1", "fresh2"], "post-truncation content")
+
+        // Rotation (different inode) -> treated like truncation/reset.
+        try? FileManager.default.removeItem(at: file)
+        write("rotated\n")
+        t.performPoll()
+        eq(t.totalLines, 1, "rotation re-reads new inode")
+        eq(t.readRange(start: 1, count: 1).first?.text, "rotated", "rotated content")
+
+        // --- pure offset indexer ---
+        write("aa\nbb\ncc\n")
+        let idx = Tailer.indexOffsets(path: file.path, upTo: 9)
+        eq(idx, [0, 3, 6], "indexOffsets finds every line start")
     }
 }

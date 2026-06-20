@@ -111,7 +111,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshStatus() {
-        statusLabel.stringValue = "\(logView.lineCount) lines"
+        // Prefer the tailer's indexed total (accurate for large/tail-first files);
+        // fall back to what's currently in the view.
+        let total = max(tailer?.totalLines ?? 0, Int64(logView.lineCount))
+        let indexing = (tailer?.indexingComplete == false) ? " — indexing…" : ""
+        statusLabel.stringValue = "\(total) lines\(indexing)"
     }
 
     // MARK: - File / tailer wiring
@@ -135,11 +139,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config.addRecentFile(path)
         window.title = "ctail — \((path as NSString).lastPathComponent)"
 
-        let t = Tailer(path: path)
+        let t = Tailer(path: path, readTimeout: TimeInterval(settings.readTimeoutSec))
         t.onLines = { [weak self] lines in self?.logView.append(lines); self?.refreshStatus() }
         t.onReset = { [weak self] in self?.logView.reset() }
         t.onError = { [weak self] msg in self?.statusLabel.stringValue = "⚠︎ \(msg)" }
         t.onReady = { [weak self] in self?.refreshStatus() }
+        t.onIndexed = { [weak self] _ in self?.refreshStatus() }
         t.start()
         tailer = t
     }
