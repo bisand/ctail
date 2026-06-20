@@ -44,6 +44,8 @@ final class ConfigStore {
 
     // MARK: - Recent files (stored in settings, capped at 15, MRU order)
 
+    func recentFiles() -> [String] { loadSettings().recentFiles }
+
     func addRecentFile(_ path: String, max: Int = 15) {
         var s = loadSettings()
         s.recentFiles.removeAll { $0 == path }
