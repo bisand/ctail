@@ -125,6 +125,7 @@ final class TabController: NSObject {
             self.statusLabel.stringValue = "⚠︎ \(msg)"
         }
         tab.logView.onFollowingChanged = { [weak self, weak tab] _ in self?.refreshStatusIfActive(tab) }
+        tab.logView.menu = makeLogMenu()
     }
 
     func close(_ index: Int) {
@@ -219,11 +220,84 @@ final class TabController: NSObject {
         reloadBar()
     }
 
+    // MARK: - Context menus (issue #12)
+
     private func showContextMenu(_ index: Int, _ event: NSEvent) {
-        // Minimal for now (rename); the full tab context menu lands in issue #12.
         guard tabs.indices.contains(index) else { return }
-        promptRename(index)
+        ctxIndex = index
+        let menu = NSMenu()
+        addItem(menu, "Rename…", #selector(ctxRename))
+        let colorItem = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
+        colorItem.submenu = colorSubmenu()
+        menu.addItem(colorItem)
+        addItem(menu, "Refresh", #selector(ctxRefresh))
+        menu.addItem(.separator())
+        addItem(menu, "Change File Path…", #selector(ctxChangePath))
+        addItem(menu, "Copy Path", #selector(ctxCopyPath))
+        addItem(menu, "Reveal in Finder", #selector(ctxReveal))
+        menu.addItem(.separator())
+        addItem(menu, "Close Tab", #selector(ctxClose))
+        NSMenu.popUpContextMenu(menu, with: event, for: tabBar)
     }
+
+    private var ctxIndex = -1
+    private let tabColors = ["#f38ba8", "#fab387", "#f9e2af", "#a6e3a1", "#89b4fa", "#cba6f7"]
+
+    private func addItem(_ menu: NSMenu, _ title: String, _ action: Selector) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+    }
+
+    private func colorSubmenu() -> NSMenu {
+        let sub = NSMenu()
+        for (i, hex) in tabColors.enumerated() {
+            let item = NSMenuItem(title: "Color \(i + 1)", action: #selector(ctxSetColor(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = hex
+            let swatch = NSImage(size: NSSize(width: 12, height: 12))
+            swatch.lockFocus(); Theme.hex(hex).setFill(); NSRect(x: 0, y: 0, width: 12, height: 12).fill(); swatch.unlockFocus()
+            item.image = swatch
+            sub.addItem(item)
+        }
+        sub.addItem(.separator())
+        let none = NSMenuItem(title: "No Color", action: #selector(ctxSetColor(_:)), keyEquivalent: "")
+        none.target = self; none.representedObject = ""
+        sub.addItem(none)
+        return sub
+    }
+
+    @objc private func ctxRename() { promptRename(ctxIndex) }
+    @objc private func ctxRefresh() { guard tabs.indices.contains(ctxIndex) else { return }; tabs[ctxIndex].logView.reset(); tabs[ctxIndex].tailer.refresh() }
+    @objc private func ctxCopyPath() { guard tabs.indices.contains(ctxIndex) else { return }; FileOps.copyPath(tabs[ctxIndex].filePath) }
+    @objc private func ctxReveal() { guard tabs.indices.contains(ctxIndex) else { return }; FileOps.revealInFinder(tabs[ctxIndex].filePath) }
+    @objc private func ctxClose() { close(ctxIndex) }
+    @objc private func ctxSetColor(_ sender: NSMenuItem) { setColor(ctxIndex, (sender.representedObject as? String) ?? "") }
+
+    @objc private func ctxChangePath() {
+        guard tabs.indices.contains(ctxIndex) else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.allowsMultipleSelection = false
+        panel.message = "Point this tab at a different file"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let pos = ctxIndex
+        close(pos)
+        open(path: url.path)
+    }
+
+    /// Builds the log-area right-click menu (assigned to each tab's LogView).
+    func makeLogMenu() -> NSMenu {
+        let menu = NSMenu()
+        addItem(menu, "Copy", #selector(logCopy))
+        addItem(menu, "Select All", #selector(logSelectAll))
+        menu.addItem(.separator())
+        addItem(menu, "Ask AI about selection…", #selector(logAskAI))
+        return menu
+    }
+
+    @objc private func logCopy() { copyActiveSelection() }
+    @objc private func logSelectAll() { selectAllActive() }
+    @objc private func logAskAI() { NSApp.sendAction(#selector(AppActions.showAIAssistant), to: nil, from: nil) }
 
     // MARK: - Status
 

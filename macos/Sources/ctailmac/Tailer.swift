@@ -82,6 +82,17 @@ final class Tailer {
         }
     }
 
+    /// Manual refresh: discard state and re-read the file from scratch (used by
+    /// the tab "Refresh" command). Fires onReset so the view clears first.
+    func refresh() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.lineNum = 0; self.offset = 0; self.fileSize = 0; self.inode = 0; self.lineOffsets = []
+            self.fire { self.onReset?() }
+            self.performInitialRead()
+        }
+    }
+
     // MARK: - Synchronous core (also the test seam)
 
     func performInitialRead() {
