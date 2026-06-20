@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         } else {
             args.forEach { tabs.open(path: $0) }
         }
+        maybeAutoCheckUpdates()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -157,7 +158,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     // Wired in their own issues — placeholders so the menu is complete now.
     func showSettings() { notYet("Settings", "#8") }
     func showAIAssistant() { notYet("AI Assistant", "#10") }
-    func checkForUpdates() { notYet("Check for Updates", "#15") }
+
+    func checkForUpdates() { runUpdateCheck(manual: true) }
+
+    /// Auto-check on launch when enabled and the interval has elapsed (tracked in
+    /// UserDefaults so it needs no settings-schema change). Quiet unless an
+    /// update is found.
+    private func maybeAutoCheckUpdates() {
+        guard !settings.disableUpdateCheck else { return }
+        let key = "lastUpdateCheck"
+        let last = UserDefaults.standard.double(forKey: key)
+        let now = Date().timeIntervalSince1970
+        let intervalSec = Double(max(1, settings.updateCheckIntervalHours)) * 3600
+        guard now - last >= intervalSec else { return }
+        UserDefaults.standard.set(now, forKey: key)
+        runUpdateCheck(manual: false)
+    }
+
+    private func runUpdateCheck(manual: Bool) {
+        UpdateChecker.check(current: appVersion()) { [weak self] r in
+            guard let self else { return }
+            if let error = r.error { if manual { self.alert("Update check failed", error) }; return }
+            if r.updateAvailable {
+                let a = NSAlert()
+                a.messageText = "Update available: \(r.latest)"
+                a.informativeText = "You have \(r.current).\n\n" + String(r.notes.prefix(500))
+                a.addButton(withTitle: "Download")
+                a.addButton(withTitle: "Later")
+                if a.runModal() == .alertFirstButtonReturn, let url = URL(string: r.url) {
+                    NSWorkspace.shared.open(url)
+                }
+            } else if manual {
+                self.alert("You're up to date", "ctail \(r.current) is the latest version.")
+            }
+        }
+    }
+
+    private func alert(_ title: String, _ body: String) {
+        let a = NSAlert(); a.messageText = title; a.informativeText = body; a.runModal()
+    }
 
     private func notYet(_ name: String, _ issue: String) {
         let a = NSAlert()

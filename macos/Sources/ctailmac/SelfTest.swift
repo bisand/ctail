@@ -28,6 +28,7 @@ enum SelfTest {
             ("ConfigStore", configStoreSuite),
             ("Themes", themesSuite),
             ("Search", searchSuite),
+            ("Updates", updatesSuite),
             ("Tailer", tailerSuite),
         ]
         for (name, body) in suites {
@@ -161,6 +162,19 @@ enum SelfTest {
         check(!q6.isValid, "invalid regex reported")
         let q7 = SearchQuery("", caseSensitive: false, wholeWord: false, isRegex: true)
         check(q7.isValid && q7.isEmpty, "empty query is valid + empty")
+    }
+
+    // MARK: - Updates suite
+
+    static func updatesSuite() {
+        let c = UpdateChecker.compareVersions
+        check(c("1.0.1", "1.0.0") > 0, "patch newer")
+        check(c("1.0.0", "1.0.1") < 0, "patch older")
+        check(c("1.2.0", "1.10.0") < 0, "numeric (not lexical) compare")
+        eq(c("0.9.9", "0.9.9"), 0, "equal versions")
+        check(c("1.0", "1.0.0") == 0, "missing components treated as 0")
+        check(c("2.0.0", "1.9.9") > 0, "major newer")
+        check(c("0.9.9+255", "0.9.9") == 0, "build suffix ignored")
     }
 
     // MARK: - Tailer suite
