@@ -14,11 +14,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         palette = resolvePalette()
         buildMenu()
         buildWindow()
+        tabs.onTabsChanged = { [weak self] in self?.persistSession() }
 
         let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         if args.isEmpty {
-            openFileDialog()
-            if tabs.tabs.isEmpty { NSApp.terminate(nil) }
+            if settings.restoreTabs && !settings.tabs.isEmpty {
+                tabs.restore(settings.tabs,
+                             activePath: settings.lastActiveTabPath.isEmpty ? nil : settings.lastActiveTabPath)
+            }
+            if tabs.tabs.isEmpty {
+                openFileDialog()
+                if tabs.tabs.isEmpty { NSApp.terminate(nil) }
+            }
         } else {
             args.forEach { tabs.open(path: $0) }
         }
@@ -26,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    func applicationWillTerminate(_ notification: Notification) { persistSession() }
     func application(_ application: NSApplication, open urls: [URL]) {
         urls.forEach { tabs?.open(path: $0.path) }
     }
@@ -44,9 +52,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
                           backing: .buffered, defer: false)
         window.title = "ctail"
         window.titlebarAppearsTransparent = true
-        window.center()
+        // Restore saved geometry, else center.
+        let w = settings.window
+        if w.width > 0 && w.height > 0 && (w.x != 0 || w.y != 0) {
+            window.setFrame(NSRect(x: w.x, y: w.y, width: w.width, height: w.height), display: false)
+        } else {
+            window.center()
+        }
         installController()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - Session persistence (issue #14)
+
+    /// Load-modify-save so we never clobber fields (e.g. recentFiles) written to
+    /// disk elsewhere during the session.
+    private func updateSettings(_ mutate: (inout AppSettings) -> Void) {
+        var s = config.loadSettings()
+        mutate(&s)
+        config.saveSettings(s)
+        settings = s
+    }
+
+    private func persistSession() {
+        guard tabs != nil else { return }
+        let states = tabs.tabStates()
+        let activePath = tabs.activePath ?? ""
+        let frame = window.frame
+        updateSettings {
+            $0.tabs = states
+            $0.lastActiveTabPath = activePath
+            $0.window = WindowState(x: Int(frame.origin.x), y: Int(frame.origin.y),
+                                    width: Int(frame.width), height: Int(frame.height),
+                                    maximised: self.window.isZoomed)
+        }
     }
 
     private func installController() {
@@ -72,8 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     func findInLog() { tabs.openSearch() }
 
     func toggleTheme() {
-        settings.themeMode = (settings.themeMode == "light") ? "dark" : "light"
-        config.saveSettings(settings)
+        updateSettings { $0.themeMode = ($0.themeMode == "light") ? "dark" : "light" }
         // Live re-theme: rebuild the content with the new palette, preserving the
         // open files and active tab.
         let paths = tabs.openPaths

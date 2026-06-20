@@ -23,6 +23,7 @@ final class TabController: NSObject {
     private var keyMonitor: Any?
 
     var onActiveFileChanged: ((String?) -> Void)?
+    var onTabsChanged: (() -> Void)?
 
     init(config: ConfigStore, settings: AppSettings, palette: ThemeColors) {
         self.config = config
@@ -155,6 +156,27 @@ final class TabController: NSObject {
 
     var activeTab: Tab? { tabs.indices.contains(active) ? tabs[active] : nil }
     var openPaths: [String] { tabs.map { $0.filePath } }
+    var activePath: String? { activeTab?.filePath }
+
+    // MARK: - Session snapshot / restore (issue #14)
+
+    func tabStates() -> [TabState] {
+        tabs.enumerated().map { $0.element.toState(position: $0.offset) }
+    }
+
+    /// Reopens persisted tabs (skipping files that no longer exist), restoring
+    /// label/color/profile, then activates the previously active tab.
+    func restore(_ states: [TabState], activePath: String?) {
+        for s in states.sorted(by: { $0.position < $1.position }) {
+            guard FileManager.default.fileExists(atPath: s.filePath) else { continue }
+            let tab = open(path: s.filePath)
+            tab.label = s.label
+            tab.color = s.color
+            if !s.profileId.isEmpty { tab.profileName = s.profileId }
+        }
+        reloadBar()
+        if let activePath, let i = tabs.firstIndex(where: { $0.filePath == activePath }) { activate(i) }
+    }
 
     func copyActiveSelection() {
         guard let text = activeTab?.logView.selectedText(), !text.isEmpty else { return }
@@ -181,6 +203,7 @@ final class TabController: NSObject {
         }
         reloadBar()
         refreshStatus()
+        onTabsChanged?()
     }
 
     // MARK: - Reorder / rename / color
