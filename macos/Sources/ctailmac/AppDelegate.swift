@@ -61,6 +61,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         }
         installController()
         window.makeKeyAndOrderFront(nil)
+
+        // Background optimization (issue #16): throttle tailing when the window
+        // isn't visible on screen.
+        NotificationCenter.default.addObserver(self, selector: #selector(occlusionChanged),
+                                               name: NSWindow.didChangeOcclusionStateNotification,
+                                               object: window)
+    }
+
+    @objc private func occlusionChanged() {
+        tabs?.setBackgrounded(!window.occlusionState.contains(.visible))
     }
 
     // MARK: - Session persistence (issue #14)

@@ -24,7 +24,7 @@ struct LogLine: Equatable {
 /// methods so the engine is testable without the async timer.
 final class Tailer {
     private let path: String
-    private let pollInterval: TimeInterval
+    private var pollInterval: TimeInterval
     private let readTimeout: TimeInterval
     private let tailFirstThreshold: Int64 = 1 * 1024 * 1024   // 1 MB
     private let tailSeekBack: Int64 = 512 * 1024              // 512 KB
@@ -79,6 +79,18 @@ final class Tailer {
     func stop() {
         queue.async { [weak self] in
             self?.timer?.cancel(); self?.timer = nil; self?.running = false
+        }
+    }
+
+    /// Adjusts the poll cadence at runtime (issue #16: slow inactive/backgrounded
+    /// tabs to keep CPU near zero, speed the active tab back up).
+    func setPollInterval(_ interval: TimeInterval) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let clamped = max(0.05, interval)
+            guard self.running, abs(clamped - self.pollInterval) > 0.001 else { return }
+            self.pollInterval = clamped
+            self.timer?.schedule(deadline: .now() + clamped, repeating: clamped)
         }
     }
 

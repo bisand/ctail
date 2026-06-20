@@ -203,6 +203,7 @@ final class TabController: NSObject {
         }
         reloadBar()
         refreshStatus()
+        applyIntervals()
         onTabsChanged?()
     }
 
@@ -215,6 +216,31 @@ final class TabController: NSObject {
         tabs.insert(t, at: to)
         active = tabs.firstIndex(where: { $0.id == moving.id }) ?? to
         reloadBar()
+    }
+
+    // MARK: - Background optimization (issue #16)
+
+    private var backgrounded = false
+    private var activeInterval: TimeInterval { max(0.05, Double(settings.pollIntervalMs) / 1000.0) }
+    private var inactiveInterval: TimeInterval { max(2.0, activeInterval * 4) }
+    private let backgroundInterval: TimeInterval = 5.0
+
+    /// Called when the window's occlusion state changes. When fully hidden we
+    /// slow every tailer right down; when visible we restore the active/inactive
+    /// cadence.
+    func setBackgrounded(_ b: Bool) {
+        guard b != backgrounded else { return }
+        backgrounded = b
+        applyIntervals()
+    }
+
+    /// Active tab polls fast; inactive tabs poll slowly (they keep tailing so the
+    /// buffer is warm on switch); everything crawls when backgrounded.
+    private func applyIntervals() {
+        for (i, tab) in tabs.enumerated() {
+            let interval = backgrounded ? backgroundInterval : (i == active ? activeInterval : inactiveInterval)
+            tab.tailer.setPollInterval(interval)
+        }
     }
 
     func nextTab() { guard !tabs.isEmpty else { return }; activate((active + 1) % tabs.count) }
