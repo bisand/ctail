@@ -187,8 +187,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     }
 
-    // Wired in their own issues — placeholders so the menu is complete now.
-    func showAIAssistant() { notYet("AI Assistant", "#10") }
+    func showAIAssistant() {
+        let controller = AIAssistantWindowController(
+            settings: config.loadSettings(), config: config,
+            logProvider: { [weak self] in self?.tabs.activeLogContext() ?? "" },
+            onProfileGenerated: { [weak self] name in
+                guard let self else { return }
+                self.updateSettings { $0.activeProfile = name }
+                self.rebuildContent()
+            })
+        aiWindow = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+    private var aiWindow: AIAssistantWindowController?
 
     func checkForUpdates() { runUpdateCheck(manual: true) }
 

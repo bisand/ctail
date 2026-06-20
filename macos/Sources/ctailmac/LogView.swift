@@ -106,6 +106,11 @@ final class LogView: NSView {
 
     var lineCount: Int { lines.count }
 
+    /// The last `n` lines as text, for AI context.
+    func tailText(_ n: Int = 500) -> String {
+        lines.suffix(n).map { $0.text }.joined(separator: "\n")
+    }
+
     func selectAllRows() {
         guard !displayed.isEmpty else { return }
         table.selectRowIndexes(IndexSet(integersIn: 0..<displayed.count), byExtendingSelection: false)

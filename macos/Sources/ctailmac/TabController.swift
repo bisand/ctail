@@ -180,6 +180,9 @@ final class TabController: NSObject {
         if let activePath, let i = tabs.firstIndex(where: { $0.filePath == activePath }) { activate(i) }
     }
 
+    /// Log context for the AI assistant: the active tab's recent lines.
+    func activeLogContext() -> String { activeTab?.logView.tailText(500) ?? "" }
+
     func copyActiveSelection() {
         guard let text = activeTab?.logView.selectedText(), !text.isEmpty else { return }
         FileOps.copyText(text)

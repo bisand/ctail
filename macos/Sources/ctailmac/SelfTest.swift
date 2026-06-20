@@ -29,6 +29,7 @@ enum SelfTest {
             ("Themes", themesSuite),
             ("Search", searchSuite),
             ("Updates", updatesSuite),
+            ("AI", aiSuite),
             ("Tailer", tailerSuite),
         ]
         for (name, body) in suites {
@@ -175,6 +176,32 @@ enum SelfTest {
         check(c("1.0", "1.0.0") == 0, "missing components treated as 0")
         check(c("2.0.0", "1.9.9") > 0, "major newer")
         check(c("0.9.9+255", "0.9.9") == 0, "build suffix ignored")
+    }
+
+    // MARK: - AI suite (network-free parts)
+
+    static func aiSuite() {
+        // Endpoint resolution per provider/base.
+        eq(AIClient(endpoint: "https://api.openai.com", apiKey: "", model: "x").completionsURL,
+           "https://api.openai.com/v1/chat/completions", "openai endpoint")
+        eq(AIClient(endpoint: "https://api.githubcopilot.com", apiKey: "", model: "x").completionsURL,
+           "https://api.githubcopilot.com/chat/completions", "copilot endpoint")
+        eq(AIClient(endpoint: "http://localhost:11434/v1", apiKey: "", model: "x").completionsURL,
+           "http://localhost:11434/v1/chat/completions", "ollama /v1 endpoint")
+        eq(AIClient(endpoint: "https://x/v1/chat/completions", apiKey: "", model: "x").completionsURL,
+           "https://x/v1/chat/completions", "already-full endpoint untouched")
+        eq(AIService.defaultEndpoint(for: "openai"), "https://api.openai.com", "default openai endpoint")
+
+        // Rule-array JSON (what generate-rules returns) decodes into [Rule].
+        let json = #"""
+        [{"id":"err","name":"Error","pattern":"(?i)ERROR","matchType":"line","foreground":"#ff0000","background":"","bold":true,"italic":false,"enabled":true,"priority":100}]
+        """#
+        let rules = try? JSONDecoder().decode([Rule].self, from: Data(json.utf8))
+        eq(rules?.count, 1, "rule array decodes")
+        eq(rules?.first?.matchType, "line", "rule field decoded")
+
+        // Copilot editor headers are present.
+        check(CopilotAuth.editorHeaders["Copilot-Integration-Id"] == "vscode-chat", "copilot integration header")
     }
 
     // MARK: - Tailer suite
