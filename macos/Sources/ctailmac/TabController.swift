@@ -439,6 +439,7 @@ final class TabController: NSObject {
     func toggleTheme()
     func showAbout()
     func showSettings()
+    func showProfiles()
     func showAIAssistant()
     func checkForUpdates()
 }

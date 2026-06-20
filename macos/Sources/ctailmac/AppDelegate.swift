@@ -153,6 +153,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     }
     private var settingsWindow: SettingsWindowController?
 
+    func showProfiles() {
+        let controller = ProfilesWindowController(config: config, palette: palette) { [weak self] name in
+            guard let self else { return }
+            self.updateSettings { $0.activeProfile = name }
+            self.rebuildContent()      // apply the newly active profile's rules
+        }
+        profilesWindow = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+    private var profilesWindow: ProfilesWindowController?
+
     @objc func copySelection() { tabs.copyActiveSelection() }
     @objc func selectAllLines() { tabs.selectAllActive() }
     @objc private func closeActiveTab() { tabs.close(tabs.active) }
@@ -267,6 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         let viewItem = NSMenuItem(); main.addItem(viewItem)
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Toggle Theme", action: #selector(toggleTheme), keyEquivalent: "")
+        viewMenu.addItem(withTitle: "Profiles & Rules…", action: #selector(showProfiles), keyEquivalent: "")
         viewItem.submenu = viewMenu
 
         // Tools menu.

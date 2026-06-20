@@ -94,6 +94,15 @@ struct Theme: Codable, Equatable {
 
     func palette(mode: String) -> ThemeColors { mode == "light" ? light : dark }
 
+    /// NSColor -> "#rrggbb".
+    static func hexString(_ color: NSColor) -> String {
+        let c = color.usingColorSpace(.sRGB) ?? color
+        return String(format: "#%02x%02x%02x",
+                      Int((c.redComponent * 255).rounded()),
+                      Int((c.greenComponent * 255).rounded()),
+                      Int((c.blueComponent * 255).rounded()))
+    }
+
     static func hex(_ s: String) -> NSColor {
         var h = s.trimmingCharacters(in: .whitespaces)
         if h.hasPrefix("#") { h.removeFirst() }
