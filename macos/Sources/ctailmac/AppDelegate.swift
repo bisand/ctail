@@ -8,18 +8,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var followLabel: NSTextField!
 
     private let theme = Theme.catppuccinMocha
+    private let config = ConfigStore()
+    private var settings = AppSettings()
 
-    // A few sample highlight rules so the demo shows the real highlighting path.
-    private lazy var rules: [HighlightRule] = [
-        HighlightRule(pattern: #"\b(ERROR|FATAL|panic)\b"#, fg: Theme.hex("#f38ba8"), bold: true, lineLevel: true),
-        HighlightRule(pattern: #"\bWARN(ING)?\b"#,          fg: Theme.hex("#f9e2af"), lineLevel: true),
-        HighlightRule(pattern: #"\bINFO\b"#,                fg: Theme.hex("#a6e3a1")),
-        HighlightRule(pattern: #"\bDEBUG\b"#,               fg: Theme.hex("#6c7086")),
-        HighlightRule(pattern: #"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\b"#, fg: Theme.hex("#89b4fa")),
-        HighlightRule(pattern: #"\bhttps?://[^\s]+"#,       fg: Theme.hex("#74c7ec")),
-    ].compactMap { $0 }
+    // Highlight rules compiled from the active profile (loaded from config).
+    private lazy var rules: [HighlightRule] = loadActiveProfileRules()
+
+    private func loadActiveProfileRules() -> [HighlightRule] {
+        config.ensureDefaultProfile()
+        let profile = config.loadProfile(settings.activeProfile)
+            ?? config.loadProfile("Common Logs")
+            ?? Defaults.commonLogsProfile()
+        return HighlightRule.compile(profile)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        settings = config.loadSettings()
         buildMenu()
         buildWindow()
 
@@ -125,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openFile(_ path: String) {
         tailer?.stop()
         logView.reset()
+        config.addRecentFile(path)
         window.title = "ctail — \((path as NSString).lastPathComponent)"
 
         let t = Tailer(path: path)

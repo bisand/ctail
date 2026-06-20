@@ -10,10 +10,29 @@ struct HighlightRule {
     let bold: Bool
     let lineLevel: Bool
 
-    init?(pattern: String, fg: NSColor? = nil, bg: NSColor? = nil, bold: Bool = false, lineLevel: Bool = false) {
-        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
+    init?(pattern: String, fg: NSColor? = nil, bg: NSColor? = nil, bold: Bool = false,
+          lineLevel: Bool = false, options: NSRegularExpression.Options = []) {
+        // Case sensitivity comes from inline flags in the pattern (e.g. "(?i)..."),
+        // matching the Go rules, so we don't force .caseInsensitive globally.
+        guard let re = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
         self.regex = re
         self.fg = fg; self.bg = bg; self.bold = bold; self.lineLevel = lineLevel
+    }
+
+    /// Builds a highlight rule from a persisted config Rule. Returns nil for
+    /// disabled rules or invalid patterns (which are simply skipped).
+    static func from(_ rule: Rule) -> HighlightRule? {
+        guard rule.enabled else { return nil }
+        let fg = rule.foreground.isEmpty ? nil : Theme.hex(rule.foreground)
+        let bg = rule.background.isEmpty ? nil : Theme.hex(rule.background)
+        return HighlightRule(pattern: rule.pattern, fg: fg, bg: bg, bold: rule.bold,
+                             lineLevel: rule.matchType == "line")
+    }
+
+    /// Compiles an ordered profile into highlight rules. Higher priority first so
+    /// the first matching line-level rule wins (mirrors the Go engine ordering).
+    static func compile(_ profile: Profile) -> [HighlightRule] {
+        profile.rules.sorted { $0.priority > $1.priority }.compactMap { HighlightRule.from($0) }
     }
 }
 

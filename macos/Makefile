@@ -39,9 +39,10 @@ bundle: build icon
 		&& echo "ad-hoc signed" || echo "codesign skipped (ad-hoc unavailable)"
 	@echo "built $(APP_DIR) (v$(VERSION) build $(BUILD))"
 
-## test: run the Swift test suite
+## test: run the in-process self-tests (XCTest needs full Xcode; CLT lacks it)
 test:
-	swift test
+	swift build
+	./.build/debug/ctailmac --selftest
 
 ## clean: remove build artifacts
 clean:
