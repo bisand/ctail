@@ -193,6 +193,23 @@ enum SelfTest {
            "https://x/v1/chat/completions", "already-full endpoint untouched")
         eq(AIService.defaultEndpoint(for: "openai"), "https://api.openai.com", "default openai endpoint")
 
+        // Anthropic provider: endpoint/model defaults + /v1/messages URL building.
+        eq(AIService.defaultEndpoint(for: "anthropic"), "https://api.anthropic.com", "default anthropic endpoint")
+        eq(AIService.defaultModel(for: "anthropic"), "claude-sonnet-4-6", "default anthropic model")
+        eq(AnthropicClient(endpoint: "https://api.anthropic.com", apiKey: "", model: "x").messagesURL,
+           "https://api.anthropic.com/v1/messages", "anthropic messages URL")
+        eq(AnthropicClient(endpoint: "https://proxy/v1", apiKey: "", model: "x").messagesURL,
+           "https://proxy/v1/messages", "anthropic /v1 endpoint")
+        eq(AnthropicClient(endpoint: "https://proxy/v1/messages", apiKey: "", model: "x").messagesURL,
+           "https://proxy/v1/messages", "anthropic already-full endpoint untouched")
+
+        // CLI backend: prompt flattening (system first, then turns) + arg shapes.
+        let prompt = CLIChatBackend.combinedPrompt(
+            [AIMessage(role: "system", content: "SYS"), AIMessage(role: "user", content: "USER")])
+        eq(prompt, "SYS\n\nUSER", "CLI prompt flattens system then user")
+        eq(CLIChatBackend.Tool.claude.args(model: "claude-x"), ["-p", "--model", "claude-x"], "claude CLI args")
+        eq(CLIChatBackend.Tool.codex.args(model: ""), ["exec"], "codex CLI args without model")
+
         // Rule-array JSON (what generate-rules returns) decodes into [Rule].
         let json = #"""
         [{"id":"err","name":"Error","pattern":"(?i)ERROR","matchType":"line","foreground":"#ff0000","background":"","bold":true,"italic":false,"enabled":true,"priority":100}]

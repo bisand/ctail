@@ -131,8 +131,8 @@ final class AIAssistantWindowController: NSWindowController {
         }
     }
 
-    /// Resolves an AIClient, kicking off Copilot sign-in if needed.
-    private func ensureClient(_ completion: @escaping (Result<AIClient, Error>) -> Void) {
+    /// Resolves a chat backend, kicking off Copilot sign-in if needed.
+    private func ensureClient(_ completion: @escaping (Result<any ChatBackend, Error>) -> Void) {
         AIService.makeClient(settings: settings) { [weak self] result in
             if case .failure(let e) = result, case AIError.needsCopilotAuth = e {
                 self?.startCopilotSignIn(then: completion)
@@ -142,7 +142,7 @@ final class AIAssistantWindowController: NSWindowController {
         }
     }
 
-    private func startCopilotSignIn(then completion: @escaping (Result<AIClient, Error>) -> Void) {
+    private func startCopilotSignIn(then completion: @escaping (Result<any ChatBackend, Error>) -> Void) {
         setBusy(true, "Requesting Copilot device code…")
         CopilotAuth.requestDeviceCode { [weak self] result in
             guard let self else { return }

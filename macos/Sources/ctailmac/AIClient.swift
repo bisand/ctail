@@ -4,7 +4,7 @@ import Foundation
 /// OpenAI, GitHub Models, GitHub Copilot, and any OpenAI-compatible server
 /// (Ollama, LM Studio, …). For Copilot, callers pass the exchanged short-lived
 /// token and the editor identification headers via `extraHeaders`.
-struct AIClient {
+struct AIClient: ChatBackend {
     let endpoint: String      // base URL, e.g. "https://api.openai.com"
     let apiKey: String
     let model: String
@@ -74,26 +74,54 @@ enum AIError: LocalizedError {
 /// Resolves provider settings into a ready-to-use AIClient, handling Copilot's
 /// token exchange. Default endpoints match the Go app.
 enum AIService {
+    /// Providers the app knows about. CLI tools are only offered off-sandbox.
+    static let apiProviders = ["openai", "github", "copilot", "anthropic", "custom"]
+    static let cliProviders = ["claude-cli", "codex-cli"]
+
     static func defaultEndpoint(for provider: String) -> String {
         switch provider {
-        case "openai":  return "https://api.openai.com"
-        case "github":  return "https://models.inference.ai.azure.com"
-        case "copilot": return "https://api.githubcopilot.com"
-        default:        return ""
+        case "openai":    return "https://api.openai.com"
+        case "github":    return "https://models.inference.ai.azure.com"
+        case "copilot":   return "https://api.githubcopilot.com"
+        case "anthropic": return "https://api.anthropic.com"
+        default:          return ""
         }
     }
 
-    /// Builds a client for the current settings. For Copilot, exchanges the saved
-    /// OAuth token for a short-lived API token (throws .needsCopilotAuth if not
-    /// signed in).
-    static func makeClient(settings: AppSettings, completion: @escaping (Result<AIClient, Error>) -> Void) {
-        let endpoint = settings.aiEndpoint.isEmpty ? defaultEndpoint(for: settings.aiProvider) : settings.aiEndpoint
-        let model = settings.aiModel.isEmpty ? "gpt-4o-mini" : settings.aiModel
+    static func defaultModel(for provider: String) -> String {
+        switch provider {
+        case "anthropic":              return "claude-sonnet-4-6"
+        case "claude-cli", "codex-cli": return ""    // the CLI picks its own default
+        default:                       return "gpt-4o-mini"
+        }
+    }
 
-        if settings.aiProvider == "copilot" {
+    /// Builds a backend for the current settings, picking the right transport for
+    /// the provider. Copilot exchanges its OAuth token for a short-lived API token
+    /// (fails with .needsCopilotAuth if not signed in); CLI tools are refused in a
+    /// sandboxed build.
+    static func makeClient(settings: AppSettings, completion: @escaping (Result<any ChatBackend, Error>) -> Void) {
+        let provider = settings.aiProvider
+        let model = settings.aiModel.isEmpty ? defaultModel(for: provider) : settings.aiModel
+
+        switch provider {
+        case "anthropic":
+            let endpoint = settings.aiEndpoint.isEmpty ? defaultEndpoint(for: "anthropic") : settings.aiEndpoint
+            completion(.success(AnthropicClient(endpoint: endpoint, apiKey: settings.aiKey, model: model)))
+
+        case "claude-cli", "codex-cli":
+            guard !AIEnvironment.isSandboxed else {
+                return completion(.failure(AIError.message(
+                    "CLI tools aren't available in the App Store build. Choose an API provider, or use the direct-download build of ctail.")))
+            }
+            let tool: CLIChatBackend.Tool = (provider == "claude-cli") ? .claude : .codex
+            completion(.success(CLIChatBackend(tool: tool, model: model)))
+
+        case "copilot":
             guard let oauth = CopilotAuth.savedOAuthToken else {
                 return completion(.failure(AIError.needsCopilotAuth))
             }
+            let endpoint = settings.aiEndpoint.isEmpty ? defaultEndpoint(for: "copilot") : settings.aiEndpoint
             CopilotAuth.exchangeToken(oauth: oauth) { result in
                 switch result {
                 case .success(let token):
@@ -102,7 +130,9 @@ enum AIService {
                 case .failure(let e): completion(.failure(e))
                 }
             }
-        } else {
+
+        default:
+            let endpoint = settings.aiEndpoint.isEmpty ? defaultEndpoint(for: provider) : settings.aiEndpoint
             completion(.success(AIClient(endpoint: endpoint, apiKey: settings.aiKey, model: model)))
         }
     }

@@ -81,7 +81,11 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         }
         modePopup.addItems(withTitles: ["dark", "light"])
         newTabPopup.addItems(withTitles: ["end", "afterActive"])
-        aiProviderPopup.addItems(withTitles: ["", "openai", "github", "copilot", "custom"])
+        // CLI tools (claude/codex) only run outside the App Sandbox, so hide them
+        // in the App Store build.
+        var providers = ["", "openai", "anthropic", "github", "copilot", "custom"]
+        if !AIEnvironment.isSandboxed { providers += AIService.cliProviders }
+        aiProviderPopup.addItems(withTitles: providers)
         themes.forEach {
             // Mark Pro-only themes with a lock; selecting one prompts the paywall
             // on save (the real theme name stays in representedObject).
