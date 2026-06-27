@@ -333,5 +333,25 @@ enum SelfTest {
            "range scanned forward from checkpoint 1")
         eq(bt.readRange(start: 2001, count: 1).first?.text, "L2001", "exact checkpoint-boundary line")
         eq(bt.readRange(start: 2500, count: 1).first?.text, "L2500", "last line")
+
+        // --- tail-first (instant tail): numbers are local until the head count lands ---
+        var tfBody = ""
+        for n in 1...50 { tfBody += "L\(n)\n" }
+        write(tfBody)
+        // Tiny thresholds force the large-file tail-first path on a small fixture.
+        let tf = Tailer(path: file.path, pollInterval: 0.05, tailFirstThreshold: 20, tailSeekBack: 12)
+        tf.performInitialRead()
+        eq(tf.indexingComplete, false, "tail-first defers the full line count")
+        eq(tf.readRange(start: 1, count: 1).isEmpty, true, "scrollback disabled until count ready")
+        eq(tf.totalLines < 50, true, "before count, total is just the local tail")
+        // Simulate the background head count completing.
+        let head = Tailer.indexFile(path: file.path, upTo: tf.tailStart, stride: 1000)
+        tf.applyHeadCount(head.checkpoints, base: head.total)
+        eq(tf.indexingComplete, true, "count ready after head index")
+        eq(tf.totalLines, 50, "absolute total after head count")
+        eq(tf.readRange(start: 1, count: 1).first?.text, "L1", "head-region line via scrollback")
+        eq(tf.readRange(start: head.total + 1, count: 1).first?.text, "L\(head.total + 1)",
+           "first tail line at absolute number base+1")
+        eq(tf.readRange(start: 50, count: 1).first?.text, "L50", "tail-region last line")
     }
 }

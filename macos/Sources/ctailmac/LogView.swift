@@ -139,20 +139,17 @@ final class LogView: NSView {
         table.reloadData()
     }
 
-    /// The background offset index just finished (large files). If we're tailing,
-    /// reload the visible tail from disk so the gutter shows true absolute line
-    /// numbers — the initial fast tail was numbered provisionally.
-    func indexBecameReady(total: Int64) {
-        guard following, total > 0, let requestRange else { return }
-        let count = min(windowCap, Int(total))
-        let start = total - Int64(count) + 1
-        requestRange(start, count) { [weak self] tail in
-            guard let self, self.following, !tail.isEmpty else { return }
-            self.lines = tail
-            self.windowStart = tail.first?.number ?? 1
-            self.table.reloadData()
-            self.scrollToBottom()
+    /// The background line count finished: the tail was shown numbered locally
+    /// (1, 2, …); shift every resident line by `base` (lines before the tail) to
+    /// make the numbers absolute, and drop the placeholder gutter. Cheap and
+    /// in-memory — no disk reload.
+    func applyLineNumberBase(_ base: Int64) {
+        if base > 0 {
+            lines = lines.map { LogLine(number: $0.number + base, text: $0.text) }
+            filtered = filtered.map { LogLine(number: $0.number + base, text: $0.text) }
+            windowStart += base
         }
+        table.reloadData()      // gutter now renders real numbers (indexingReady == true)
     }
 
     var lineCount: Int { lines.count }
@@ -477,8 +474,11 @@ extension LogView: NSTableViewDelegate {
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? NSTextField) ?? makeCell(id)
 
         if id.rawValue == "gutter" {
+            // While the background line count runs, real numbers aren't known yet
+            // — show a placeholder rather than the provisional local numbers.
+            let counting = !(indexingReadyProvider?() ?? true)
             cell.attributedStringValue = NSAttributedString(
-                string: String(line.number),
+                string: counting ? "·" : String(line.number),
                 attributes: [.font: rowFont, .foregroundColor: palette.gutter])
             cell.alignment = .right
         } else {

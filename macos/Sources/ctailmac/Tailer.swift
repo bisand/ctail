@@ -8,67 +8,74 @@ struct LogLine: Equatable {
 
 /// Polling-based file tailer ported from internal/tailer/tailer.go.
 ///
-/// Design choices carried over from the Go original:
+/// Design choices:
 ///   - Polling (not kqueue/FSEvents) so slow/unreachable network mounts can't
 ///     wedge the UI — every I/O op runs off the main thread and under a timeout.
-///   - Inode-change detection for log rotation (file renamed + recreated).
-///   - Truncation detection when the file shrinks.
-///   - Only *complete* lines (ending in \n) are committed; a trailing partial
-///     line is left in place until the next poll reads it whole.
-///   - Tail-first: for large files we seek near the end on first read instead of
-///     paging the whole thing, then build a sparse line-offset index in the
-///     background so scrollback (ReadRange) and the total count become available.
-///     The index keeps one checkpoint per `indexStride` lines, so its memory cost
-///     is ~1000× smaller than one offset per line — readRange seeks to the nearest
-///     checkpoint and scans forward.
+///   - Inode-change detection for log rotation; truncation detection on shrink.
+///   - Only *complete* lines (ending in \n) are committed; a trailing partial is
+///     left until the next poll reads it whole.
 ///
-/// The pure line-splitting and indexing logic is factored into static functions
-/// (`splitLines`, `indexFile`) and the poll body into synchronous `perform*`
-/// methods so the engine is testable without the async timer.
+/// Instant tail (the important bit): for large files we seek near the end and
+/// show + live-follow the tail IMMEDIATELY, numbering those lines *locally* from
+/// the tail start (1, 2, …). The expensive part — counting how many lines precede
+/// the tail (`base`) so we can show true line numbers, plus indexing the head for
+/// scrollback — runs in the background and never blocks display or following.
+/// Absolute line number = `base + localNumber`; until `base` is known the UI
+/// shows a placeholder in the gutter.
+///
+/// The byte-offset index is split into two disjoint, independently-owned regions
+/// so the background scan and the live poller never touch the same state:
+///   - `headCheckpoints`: sparse offsets for lines before the tail (absolute),
+///     written once by the background scan.
+///   - `tailCheckpoints`: sparse offsets for lines from the tail onward (local),
+///     appended by the live poller.
 final class Tailer {
     private let path: String
     private var pollInterval: TimeInterval
     private let readTimeout: TimeInterval
-    private let tailFirstThreshold: Int64 = 1 * 1024 * 1024   // 1 MB
-    private let tailSeekBack: Int64 = 512 * 1024              // 512 KB
+    private let tailFirstThreshold: Int64
+    private let tailSeekBack: Int64
+
+    /// Sparse index granularity: one checkpoint per this many lines.
+    private let indexStride = 1000
 
     private let queue = DispatchQueue(label: "net.biseth.ctail.tailer")
-    // Concurrent so a long background index doesn't block timed reads behind it.
     private let ioQueue = DispatchQueue(label: "net.biseth.ctail.tailer.io", attributes: .concurrent)
     private var timer: DispatchSourceTimer?
 
-    /// Sparse index granularity: one byte-offset checkpoint is kept per this many
-    /// lines (so the index costs 8 bytes / `indexStride` lines instead of 8 bytes
-    /// per line — ~1000× less memory on a huge file). `readRange` seeks to the
-    /// nearest checkpoint and scans forward at most `indexStride` lines.
-    private let indexStride = 1000
-
     // --- state (only touched on `queue`, or synchronously in tests) ---
-    private var lineNum: Int64 = 0
+    private var lineNum: Int64 = 0          // LOCAL line count (lines read since tailStart)
     private var offset: Int64 = 0
     private var fileSize: Int64 = 0
     private var inode: UInt64 = 0
     private var inError = false
     private var running = false
-    /// Byte offset of the start of every `indexStride`-th line: `checkpoints[k]`
-    /// is the start of line `k * indexStride + 1`.
-    private(set) var checkpoints: [Int64] = []
-    private(set) var indexingComplete = true
+    private(set) var tailStart: Int64 = 0   // byte offset where tail reading began
+    private(set) var base: Int64 = 0        // complete lines before tailStart (absolute offset)
+    private(set) var baseKnown = true       // false while the background count runs
+    private var headCheckpoints: [Int64] = []   // absolute offsets for lines 1...base
+    private var tailCheckpoints: [Int64] = []    // offsets for tail lines, indexed locally
 
     // --- callbacks (invoked on the main queue) ---
     var onLines: (([LogLine]) -> Void)?
-    var onReset: (() -> Void)?          // truncation or rotation: clear the view
+    var onReset: (() -> Void)?              // truncation or rotation: clear the view
     var onError: ((String) -> Void)?
     var onReady: (() -> Void)?
-    var onIndexed: ((Int64) -> Void)?   // background indexing finished; arg = total lines
+    var onBaseResolved: ((Int64) -> Void)?  // background count done; arg = base (lines before tail)
 
-    init(path: String, pollInterval: TimeInterval = 0.25, readTimeout: TimeInterval = 30) {
+    init(path: String, pollInterval: TimeInterval = 0.25, readTimeout: TimeInterval = 30,
+         tailFirstThreshold: Int64 = 1 * 1024 * 1024, tailSeekBack: Int64 = 512 * 1024) {
         self.path = path
         self.pollInterval = max(0.05, pollInterval)
         self.readTimeout = readTimeout
+        self.tailFirstThreshold = tailFirstThreshold
+        self.tailSeekBack = tailSeekBack
     }
 
-    var totalLines: Int64 { lineNum }
+    /// Total lines known so far (grows as the file is tailed; absolute once based).
+    var totalLines: Int64 { base + lineNum }
+    /// Whether absolute line numbers / scrollback are available yet.
+    var indexingComplete: Bool { baseKnown }
 
     // MARK: - Lifecycle
 
@@ -76,12 +83,9 @@ final class Tailer {
         queue.async { [weak self] in
             guard let self, !self.running else { return }
             self.running = true
-            self.performInitialRead()
+            self.performInitialRead()      // shows + starts following the tail at once
             self.fire { self.onReady?() }
-            // For large files performInitialRead pauses polling until the
-            // background index is ready (so line numbers stay consistent); only
-            // start the timer here when the index is already complete.
-            if self.indexingComplete { self.startTimer() }
+            self.startTimer()              // live polling begins immediately
         }
     }
 
@@ -102,8 +106,7 @@ final class Tailer {
 
     private func pauseTimer() { timer?.cancel(); timer = nil }
 
-    /// Adjusts the poll cadence at runtime (issue #16: slow inactive/backgrounded
-    /// tabs to keep CPU near zero, speed the active tab back up).
+    /// Adjusts the poll cadence at runtime (slow inactive/backgrounded tabs).
     func setPollInterval(_ interval: TimeInterval) {
         queue.async { [weak self] in
             guard let self else { return }
@@ -114,17 +117,13 @@ final class Tailer {
         }
     }
 
-    /// Manual refresh: discard state and re-read the file from scratch (used by
-    /// the tab "Refresh" command). Fires onReset so the view clears first.
+    /// Manual refresh: discard state and re-read from scratch.
     func refresh() {
         queue.async { [weak self] in
             guard let self else { return }
-            self.lineNum = 0; self.offset = 0; self.fileSize = 0; self.inode = 0; self.checkpoints = []
-            self.fire { self.onReset?() }
+            self.resetState(newSize: 0)
             self.performInitialRead()
-            // Small files index synchronously above; resume polling here. (Large
-            // files re-pause and let the background index restart the timer.)
-            if self.indexingComplete, self.running { self.startTimer() }
+            if self.timer == nil, self.running { self.startTimer() }
         }
     }
 
@@ -134,25 +133,24 @@ final class Tailer {
         guard let st = stat() else { return }
         inode = st.inode
         fileSize = st.size
+        lineNum = 0; offset = 0; base = 0
+        headCheckpoints = []; tailCheckpoints = []
 
         if st.size > tailFirstThreshold {
-            // Tail-first: show the tail immediately, then index the whole file in
-            // the background. Live polling is paused until the index is ready so
-            // line numbers and the offset index stay consistent — a huge file is
-            // historical, and a brief delay before live updates is acceptable.
-            // The tail lines carry provisional numbers; they are renumbered from
-            // disk once indexing completes (see scheduleBackgroundIndex / onIndexed).
-            pauseTimer()
-            let start = alignToLineBoundary(max(0, st.size - tailSeekBack))
-            let (lines, _) = readNewLines(from: start, to: st.size, appendOffsets: false)
-            checkpoints = []
-            indexingComplete = false
-            if !lines.isEmpty { fire { self.onLines?(lines) } }
-            scheduleBackgroundIndex(targetSize: st.size)
-        } else {
-            let (lines, consumed) = readNewLines(from: 0, to: st.size, appendOffsets: true)
+            // Instant tail: show the last chunk now (numbered locally), follow live,
+            // and count the head in the background to fill in real numbers.
+            tailStart = alignToLineBoundary(max(0, st.size - tailSeekBack))
+            baseKnown = false
+            let (lines, consumed) = readNewLines(from: tailStart, to: st.size, buildTailIndex: true)
             offset = consumed
-            indexingComplete = true
+            if !lines.isEmpty { fire { self.onLines?(lines) } }
+            scheduleHeadCount(tailStart: tailStart)
+        } else {
+            // Small file: read it all from the top; numbers are absolute immediately.
+            tailStart = 0
+            baseKnown = true
+            let (lines, consumed) = readNewLines(from: 0, to: st.size, buildTailIndex: true)
+            offset = consumed
             if !lines.isEmpty { fire { self.onLines?(lines) } }
         }
     }
@@ -165,13 +163,12 @@ final class Tailer {
         let wasInError = inError
         inError = false
 
-        // Rotation: same path, different inode -> the old file rolled away.
         let rotated = inode != 0 && st.inode != inode
         if rotated { inode = st.inode }
 
         if rotated || st.size < fileSize {            // rotation or truncation -> re-read from 0
             resetState(newSize: st.size)
-            let (lines, consumed) = readNewLines(from: 0, to: st.size, appendOffsets: true)
+            let (lines, consumed) = readNewLines(from: 0, to: st.size, buildTailIndex: true)
             offset = consumed
             if !lines.isEmpty { fire { self.onLines?(lines) } }
             return
@@ -180,39 +177,56 @@ final class Tailer {
         if wasInError { fire { self.onReady?() } }
         if st.size == offset { return }               // nothing new
 
-        let (lines, consumed) = readNewLines(from: offset, to: st.size, appendOffsets: true)
+        let (lines, consumed) = readNewLines(from: offset, to: st.size, buildTailIndex: true)
         offset = consumed
         fileSize = st.size
         if !lines.isEmpty { fire { self.onLines?(lines) } }
     }
 
     private func resetState(newSize: Int64) {
-        lineNum = 0; offset = 0; fileSize = newSize; checkpoints = []
+        lineNum = 0; offset = 0; fileSize = newSize; inode = 0
+        tailStart = 0; base = 0; baseKnown = true
+        headCheckpoints = []; tailCheckpoints = []
         fire { self.onReset?() }
     }
 
-    // MARK: - Windowed range reads (scrollback beyond the live buffer)
+    // MARK: - Background head count (large files)
 
-    /// Reads `count` lines starting at 1-based `start` directly from disk. Seeks to
-    /// the nearest preceding checkpoint and scans forward, so only a sparse index
-    /// is needed. Returns [] if indexing hasn't reached that range yet.
+    private func scheduleHeadCount(tailStart: Int64) {
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            let result = Self.indexFile(path: self.path, upTo: tailStart, stride: self.indexStride)
+            self.queue.async { self.applyHeadCount(result.checkpoints, base: result.total) }
+        }
+    }
+
+    /// Adopts the background head index: records the absolute offsets for the head
+    /// region and the line count before the tail, then notifies so the UI can swap
+    /// placeholder gutters for real numbers. Live state (offset/lineNum/tail index)
+    /// is owned by the poller and left untouched.
+    func applyHeadCount(_ checkpoints: [Int64], base newBase: Int64) {
+        headCheckpoints = checkpoints
+        base = newBase
+        baseKnown = true
+        fire { self.onBaseResolved?(newBase) }
+    }
+
+    // MARK: - Windowed range reads (scrollback)
+
+    /// Reads `count` lines starting at 1-based absolute `start` directly from disk,
+    /// seeking to the nearest checkpoint (head or tail region) and scanning forward.
+    /// Returns [] until the head count is known.
     func readRange(start: Int64, count: Int) -> [LogLine] {
-        let total = lineNum
-        guard start >= 1, count > 0, !checkpoints.isEmpty, start <= total else { return [] }
-        let s = Int64(indexStride)
+        let total = base + lineNum
+        guard baseKnown, start >= 1, count > 0, start <= total else { return [] }
         let lastLine = min(total, start + Int64(count) - 1)
-        let startCP = Int((start - 1) / s)
-        guard startCP < checkpoints.count else { return [] }
-        let fromByte = checkpoints[startCP]
-        let firstLineAtCP = Int64(startCP) * s + 1          // line number at fromByte
-        // End at the first checkpoint strictly past lastLine, else EOF.
-        let endCP = Int(lastLine / s) + 1
-        let toByte = endCP < checkpoints.count ? checkpoints[endCP] : fileSize
+        guard let (fromByte, lineAtByte) = checkpointAtOrBefore(start) else { return [] }
+        let toByte = checkpointAfter(lastLine) ?? fileSize
         guard let data = readBytes(from: fromByte, to: toByte) else { return [] }
         var out: [LogLine] = []
         out.reserveCapacity(Int(lastLine - start + 1))
-        var num = firstLineAtCP
-        for slice in splitComplete(data) {                  // scan forward from the checkpoint
+        var num = lineAtByte
+        for slice in splitComplete(data) {
             if num >= start && num <= lastLine { out.append(LogLine(number: num, text: slice)) }
             num += 1
             if num > lastLine { break }
@@ -220,8 +234,39 @@ final class Tailer {
         return out
     }
 
-    /// Async wrapper around `readRange` used by the UI's sliding window: runs the
-    /// disk read on the tailer queue and delivers the lines back on the main queue.
+    /// Byte offset + the absolute line number there, for the checkpoint at/just
+    /// before `absLine`. Resolves head vs. tail region.
+    private func checkpointAtOrBefore(_ absLine: Int64) -> (byte: Int64, line: Int64)? {
+        let s = Int64(indexStride)
+        if absLine <= base {
+            guard !headCheckpoints.isEmpty else { return nil }
+            let k = Int((absLine - 1) / s)
+            guard k < headCheckpoints.count else { return nil }
+            return (headCheckpoints[k], Int64(k) * s + 1)
+        } else {
+            let local = absLine - base
+            let k = Int((local - 1) / s)
+            guard k < tailCheckpoints.count else { return nil }
+            return (tailCheckpoints[k], base + Int64(k) * s + 1)
+        }
+    }
+
+    /// Byte offset of the first checkpoint strictly after `absLine`, or nil (= EOF).
+    private func checkpointAfter(_ absLine: Int64) -> Int64? {
+        let s = Int64(indexStride)
+        if absLine < base {
+            let k = Int(absLine / s) + 1
+            if k < headCheckpoints.count { return headCheckpoints[k] }
+            return tailCheckpoints.first            // crossing into the tail at tailStart
+        } else {
+            let local = absLine - base
+            let k = Int(local / s) + 1
+            if k < tailCheckpoints.count { return tailCheckpoints[k] }
+            return nil
+        }
+    }
+
+    /// Async wrapper used by the UI's sliding window.
     func fetchRange(start: Int64, count: Int, completion: @escaping ([LogLine]) -> Void) {
         queue.async { [weak self] in
             let lines = self?.readRange(start: start, count: count) ?? []
@@ -229,44 +274,19 @@ final class Tailer {
         }
     }
 
-    // MARK: - Background indexing (large files)
+    // MARK: - Pure indexer (testable)
 
-    private func scheduleBackgroundIndex(targetSize: Int64) {
-        ioQueue.async { [weak self] in
-            guard let self else { return }
-            let (checkpoints, total, consumed) = Self.indexFile(path: self.path, upTo: targetSize,
-                                                                stride: self.indexStride)
-            self.queue.async {
-                // Adopt the index as authoritative and fix up the state the
-                // provisional tail read left approximate: true line count and the
-                // byte offset where live tailing resumes.
-                if total > 0 {
-                    self.checkpoints = checkpoints
-                    self.lineNum = total
-                    self.offset = consumed
-                    self.fileSize = targetSize
-                }
-                self.indexingComplete = true
-                if self.running { self.startTimer() }   // resume live tailing
-                if total > 0 { self.fire { self.onIndexed?(total) } }
-            }
-        }
-    }
-
-    /// Scans a file building a sparse byte-offset index (one checkpoint per
-    /// `stride` lines), the total complete-line count, and the byte offset just
-    /// past the last complete line (where live tailing resumes, so a trailing
-    /// partial line is re-read whole on the next poll). Pure + testable.
-    ///
-    /// Each 1 MB chunk read is wrapped in an autoreleasepool so the scan's
-    /// transient memory stays at one chunk rather than accumulating the whole file.
+    /// Scans [0, size) building a sparse offset index (one checkpoint per `stride`
+    /// lines), the complete-line count, and the byte offset past the last complete
+    /// line. Each 1 MB chunk read is wrapped in an autoreleasepool so the scan's
+    /// transient memory stays at one chunk.
     static func indexFile(path: String, upTo size: Int64, stride: Int = 1000)
         -> (checkpoints: [Int64], total: Int64, consumed: Int64) {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return ([], 0, 0) }
+        guard size > 0, let fh = FileHandle(forReadingAtPath: path) else { return ([0], 0, 0) }
         defer { try? fh.close() }
         let s = Int64(max(1, stride))
-        var checkpoints: [Int64] = [0]      // line 1 starts at byte 0
-        var total: Int64 = 0                // complete (newline-terminated) lines
+        var checkpoints: [Int64] = [0]
+        var total: Int64 = 0
         var consumed: Int64 = 0
         var pos: Int64 = 0
         let chunkSize = 1 << 20
@@ -275,14 +295,18 @@ final class Tailer {
         while pos < size && !stop {
             autoreleasepool {
                 guard let chunk = try? fh.read(upToCount: chunkSize), !chunk.isEmpty else { stop = true; return }
+                let limit = Int(min(Int64(chunk.count), size - pos))
                 chunk.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                    for k in 0..<raw.count where raw[k] == nl {
-                        let next = pos + Int64(k) + 1
+                    guard let base = raw.baseAddress else { return }
+                    var p = 0
+                    // memchr is SIMD-optimized — far faster than scanning byte-by-byte.
+                    while p < limit, let hit = memchr(base + p, Int32(nl), limit - p) {
+                        let idx = base.distance(to: hit)
+                        let next = pos + Int64(idx) + 1
                         total += 1
                         consumed = next
-                        // `next` starts line (total + 1); keep it as a checkpoint
-                        // when that line number is 1 + k*stride (total a multiple).
                         if next < size && total % s == 0 { checkpoints.append(next) }
+                        p = idx + 1
                     }
                 }
                 pos += Int64(chunk.count)
@@ -312,25 +336,25 @@ final class Tailer {
         } ?? nil
     }
 
-    /// Reads [from, to), splits complete lines, advances `lineNum`, and (when
-    /// asked) records a sparse checkpoint for every `indexStride`-th line.
-    private func readNewLines(from: Int64, to: Int64, appendOffsets: Bool) -> (lines: [LogLine], consumed: Int64) {
+    /// Reads [from, to), splits complete lines numbered absolutely (`base + local`),
+    /// advances the LOCAL `lineNum`, and appends sparse tail checkpoints.
+    private func readNewLines(from: Int64, to: Int64, buildTailIndex: Bool) -> (lines: [LogLine], consumed: Int64) {
         guard let data = readBytes(from: from, to: to), !data.isEmpty else { return ([], from) }
-        let (lines, offsets, consumed) = Self.splitLines(data, startingAt: lineNum, baseOffset: from)
+        let (lines, offsets, consumed) = Self.splitLines(data, startingAt: base + lineNum, baseOffset: from)
         if !lines.isEmpty {
-            lineNum = lines.last!.number
-            if appendOffsets {
+            lineNum = lines.last!.number - base       // absolute -> local
+            if buildTailIndex {
                 let s = Int64(indexStride)
-                for (idx, line) in lines.enumerated() where (line.number - 1) % s == 0 {
-                    checkpoints.append(offsets[idx])     // line 1 + k*stride
+                for (i, line) in lines.enumerated() where (line.number - base - 1) % s == 0 {
+                    tailCheckpoints.append(offsets[i])
                 }
             }
         }
         return (lines, consumed)
     }
 
-    /// Pure line splitter: returns complete lines, their start offsets, and the
-    /// byte offset just past the last complete line (trailing partial left behind).
+    /// Pure line splitter: complete lines numbered from `startNum`, their start
+    /// offsets, and the byte offset just past the last complete line.
     static func splitLines(_ data: Data, startingAt startNum: Int64, baseOffset: Int64)
         -> (lines: [LogLine], offsets: [Int64], consumed: Int64) {
         var lines: [LogLine] = []
@@ -355,7 +379,6 @@ final class Tailer {
         return (lines, offsets, consumed)
     }
 
-    /// Splits a buffer into complete-line strings (drops a trailing partial).
     private func splitComplete(_ data: Data) -> [String] {
         Self.splitLines(data, startingAt: 0, baseOffset: 0).lines.map { $0.text }
     }
@@ -368,8 +391,6 @@ final class Tailer {
         return start
     }
 
-    /// Runs `work` on a separate queue and waits up to `readTimeout`; returns nil
-    /// on timeout so a hung mount degrades to an error instead of freezing.
     private func withTimeout<T>(_ work: @escaping () -> T?) -> T? {
         let sem = DispatchSemaphore(value: 0)
         var result: T?

@@ -165,8 +165,8 @@ final class TabController: NSObject {
         }
         tab.tailer.onReset = { [weak tab] in tab?.logView.reset() }
         tab.tailer.onReady = { [weak self, weak tab] in self?.refreshStatusIfActive(tab) }
-        tab.tailer.onIndexed = { [weak self, weak tab] total in
-            tab?.logView.indexBecameReady(total: total)
+        tab.tailer.onBaseResolved = { [weak self, weak tab] base in
+            tab?.logView.applyLineNumberBase(base)
             self?.refreshStatusIfActive(tab)
         }
         tab.tailer.onError = { [weak self, weak tab] msg in
@@ -420,9 +420,13 @@ final class TabController: NSObject {
             followCheck.isHidden = true
             return
         }
-        let total = max(tab.tailer.totalLines, Int64(tab.logView.lineCount))
-        let indexing = tab.tailer.indexingComplete ? "" : " — indexing…"
-        statusLabel.stringValue = "\(tab.displayName) · \(total) lines\(indexing)"
+        if tab.tailer.indexingComplete {
+            let total = max(tab.tailer.totalLines, Int64(tab.logView.lineCount))
+            statusLabel.stringValue = "\(tab.displayName) · \(total) lines"
+        } else {
+            // Tail is live; the full line count is still being computed.
+            statusLabel.stringValue = "\(tab.displayName) · counting lines…"
+        }
         followCheck.isHidden = false
         followCheck.state = tab.logView.following ? .on : .off
         followCheck.contentTintColor = tab.logView.following ? palette.successColor : nil
