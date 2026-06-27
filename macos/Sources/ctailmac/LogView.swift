@@ -13,10 +13,12 @@ final class LogView: NSView {
     private let table = LogTableView()
     private var lines: [LogLine] = []            // the in-memory window (≤ windowCap)
     private var filtered: [LogLine] = []         // populated only in filter mode
-    /// Absolute 1-based file line number of `lines.first` (1 when empty). The
-    /// window slides over the file; only `windowCap` lines are ever resident, the
-    /// rest is paged from disk on demand and evicted from the far end.
-    private var windowStart: Int64 = 1
+    /// The window slides over the file; only `windowCap` lines are ever resident,
+    /// the rest is paged from disk on demand and evicted from the far end. The
+    /// window bounds are DERIVED from the buffer (never tracked separately) so they
+    /// can't desync — the source of an earlier splice bug.
+    private var windowStart: Int64 { lines.first?.number ?? 1 }   // absolute line of lines.first
+    private var windowEnd: Int64 { lines.last?.number ?? 0 }      // absolute line of lines.last
     private let windowCap: Int                   // configurable: settings.bufferSize
     private let pageChunk: Int                   // configurable: settings.scrollBuffer
     private var isPaging = false                 // serializes disk page-in requests
@@ -118,9 +120,12 @@ final class LogView: NSView {
         // up, new lines stay on disk (reachable by paging back down) and their view
         // is left undisturbed.
         guard following else { return }
+        // Only extend a buffer that's actually at the live tail: the new lines must
+        // be contiguous with what we hold. This guards against a stale `following`
+        // splicing tail lines onto a scrolled-up (head) window.
+        if let last = lines.last, newLines.first!.number != last.number + 1 { return }
         lines.append(contentsOf: newLines)
         if lines.count > windowCap { lines.removeFirst(lines.count - windowCap) }
-        windowStart = lines.first?.number ?? 1
         if filterMode || !query.isEmpty {
             // Keep the filter view / match set current as new lines stream in.
             recomputeSearch(preserveCurrent: true)
@@ -134,7 +139,6 @@ final class LogView: NSView {
         lines.removeAll(keepingCapacity: true)
         filtered.removeAll(keepingCapacity: true)
         matchRows.removeAll(); currentMatch = -1
-        windowStart = 1
         following = true
         table.reloadData()
     }
@@ -144,12 +148,16 @@ final class LogView: NSView {
     /// make the numbers absolute, and drop the placeholder gutter. Cheap and
     /// in-memory — no disk reload.
     func applyLineNumberBase(_ base: Int64) {
+        let wasFollowing = following
         if base > 0 {
             lines = lines.map { LogLine(number: $0.number + base, text: $0.text) }
             filtered = filtered.map { LogLine(number: $0.number + base, text: $0.text) }
-            windowStart += base
         }
         table.reloadData()      // gutter now renders real numbers (indexingReady == true)
+        // reloadData can reset the scroll position; if we were following the tail,
+        // stay pinned to the bottom so `following` keeps matching the viewport
+        // (otherwise the window desyncs and later paging splices the wrong range).
+        if wasFollowing { scrollToBottom() }
     }
 
     var lineCount: Int { lines.count }
@@ -201,7 +209,6 @@ final class LogView: NSView {
             guard !head.isEmpty else { return }
             self.setFollowing(false)
             self.lines = head
-            self.windowStart = head.first?.number ?? 1
             self.table.reloadData()
             self.scrollRowToTop(0)
         }
@@ -221,7 +228,6 @@ final class LogView: NSView {
             defer { self.isPaging = false }
             guard !tail.isEmpty else { return }
             self.lines = tail
-            self.windowStart = tail.first?.number ?? 1
             self.setFollowing(true)
             self.table.reloadData()
             self.scrollToBottom()
@@ -253,9 +259,8 @@ final class LogView: NSView {
         guard !filterMode else { return }
         let total = totalLinesProvider?() ?? Int64(lines.count)
         let clampedTop = min(max(1, topLine), max(1, total))
-        let windowEnd = windowStart + Int64(lines.count) - 1
         let rows = Int64(viewportRows())
-        let haveAbove = clampedTop >= windowStart
+        let haveAbove = !lines.isEmpty && clampedTop >= windowStart
         let haveBelow = windowEnd >= min(total, clampedTop + rows - 1)
 
         if haveAbove && haveBelow {                      // already resident — instant scroll
@@ -276,7 +281,6 @@ final class LogView: NSView {
             guard !win.isEmpty else { return }
             self.setFollowing(false)
             self.lines = win
-            self.windowStart = win.first?.number ?? start
             self.table.reloadData()
             self.scrollRowToTop(Int(clampedTop - self.windowStart))
         }
@@ -320,7 +324,6 @@ final class LogView: NSView {
         let rowH = table.rowHeight
         let viewportRows = max(1, Int(visible.height / rowH))
         let total = totalLinesProvider?() ?? Int64(lines.count)
-        let windowEnd = windowStart + Int64(lines.count) - 1
         let atVisualBottom = visible.maxY >= documentHeight - rowH * 1.5
         let atVisualTop = visible.minY <= rowH * Double(viewportRows)
 
@@ -350,10 +353,9 @@ final class LogView: NSView {
         requestRange(newStart, count) { [weak self] older in
             guard let self else { return }
             defer { self.isPaging = false }
-            guard !older.isEmpty else { return }
+            guard !older.isEmpty, older.last?.number == self.windowStart - 1 else { return }   // must be contiguous
             self.following = false
             self.lines.insert(contentsOf: older, at: 0)
-            self.windowStart = older.first?.number ?? newStart
             if self.lines.count > self.windowCap {
                 self.lines.removeLast(self.lines.count - self.windowCap)   // evict the far (bottom) end
             }
@@ -363,7 +365,6 @@ final class LogView: NSView {
 
     private func pageDown() {
         let total = totalLinesProvider?() ?? Int64(lines.count)
-        let windowEnd = windowStart + Int64(lines.count) - 1
         guard windowEnd < total, let requestRange else { return }
         isPaging = true
         let fetchStart = windowEnd + 1
@@ -372,13 +373,12 @@ final class LogView: NSView {
         requestRange(fetchStart, count) { [weak self] newer in
             guard let self else { return }
             defer { self.isPaging = false }
-            guard !newer.isEmpty else { return }
+            guard !newer.isEmpty, newer.first?.number == self.windowEnd + 1 else { return }   // must be contiguous
             self.lines.append(contentsOf: newer)
             var evicted = 0
             if self.lines.count > self.windowCap {
                 evicted = self.lines.count - self.windowCap
                 self.lines.removeFirst(evicted)                            // evict the far (top) end
-                self.windowStart += Int64(evicted)
             }
             self.reloadKeepingPosition(rowsDeltaAboveViewport: -evicted)
         }
