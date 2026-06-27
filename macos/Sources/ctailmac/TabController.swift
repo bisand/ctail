@@ -183,7 +183,7 @@ final class TabController: NSObject {
 
     func reopenClosed() {
         guard let path = closedStack.popLast() else { return }
-        if FileManager.default.fileExists(atPath: path) { open(path: path) }
+        if bookmarks.hasBookmark(path) || FileManager.default.fileExists(atPath: path) { open(path: path) }
     }
 
     func activate(_ index: Int) {
@@ -207,7 +207,12 @@ final class TabController: NSObject {
     /// label/color/profile, then activates the previously active tab.
     func restore(_ states: [TabState], activePath: String?) {
         for s in states.sorted(by: { $0.position < $1.position }) {
-            guard FileManager.default.fileExists(atPath: s.filePath) else { continue }
+            // Under the sandbox the file isn't reachable via a bare existence check
+            // until its security-scoped bookmark is resolved — so allow it through
+            // when we hold a bookmark (open() resolves it and begins access), and
+            // only fall back to a filesystem check for unsandboxed/dev builds.
+            guard bookmarks.hasBookmark(s.filePath) || FileManager.default.fileExists(atPath: s.filePath)
+            else { continue }
             let tab = open(path: s.filePath)
             tab.label = s.label
             tab.color = s.color
