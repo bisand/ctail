@@ -285,20 +285,36 @@ enum SelfTest {
         eq(t.totalLines, 1, "rotation re-reads new inode")
         eq(t.readRange(start: 1, count: 1).first?.text, "rotated", "rotated content")
 
-        // --- pure offset indexer ---
-        write("aa\nbb\ncc\n")
-        let idx = Tailer.indexOffsets(path: file.path, upTo: 9)
-        eq(idx, [0, 3, 6], "indexOffsets finds every line start")
+        // --- sparse offset indexer ---
+        write("aa\nbb\ncc\n")                       // line starts at bytes 0,3,6; size 9
+        let dense = Tailer.indexFile(path: file.path, upTo: 9, stride: 1)
+        eq(dense.checkpoints, [0, 3, 6], "stride 1 records every line start")
+        eq(dense.total, 3, "indexFile counts all complete lines")
+        eq(dense.consumed, 9, "indexFile consumed stops past the last newline")
 
-        // indexFile also reports where live tailing resumes (past last newline).
-        let indexed = Tailer.indexFile(path: file.path, upTo: 9)
-        eq(indexed.offsets, [0, 3, 6], "indexFile finds every line start")
-        eq(indexed.consumed, 9, "indexFile consumed stops past the last newline")
+        // With a larger stride only every Nth line start is kept (sparse index).
+        let sparse = Tailer.indexFile(path: file.path, upTo: 9, stride: 2)
+        eq(sparse.checkpoints, [0, 6], "stride 2 keeps every 2nd line start")
+        eq(sparse.total, 3, "sparse index still counts all lines")
 
-        // A trailing partial line leaves consumed before it so it is re-read whole.
+        // A trailing partial line is excluded from the count and from consumed.
         write("aa\nbb\npartial")
-        let partial = Tailer.indexFile(path: file.path, upTo: 12)
-        eq(partial.offsets, [0, 3, 6], "indexFile indexes the partial's start")
-        eq(partial.consumed, 6, "indexFile consumed excludes the trailing partial")
+        let partial = Tailer.indexFile(path: file.path, upTo: 12, stride: 1)
+        eq(partial.total, 2, "trailing partial line not counted")
+        eq(partial.consumed, 6, "consumed excludes the trailing partial")
+
+        // readRange must seek to the right checkpoint and scan forward across the
+        // sparse index (default stride 1000), so test a file spanning >2 strides.
+        var big = ""
+        for n in 1...2500 { big += "L\(n)\n" }
+        write(big)
+        let bt = Tailer(path: file.path, pollInterval: 0.05)
+        bt.performInitialRead()
+        eq(bt.totalLines, 2500, "sparse-indexed file counts all lines")
+        eq(bt.readRange(start: 1, count: 1).first?.text, "L1", "first line via checkpoint 0")
+        eq(bt.readRange(start: 1500, count: 2).map { $0.text }, ["L1500", "L1501"],
+           "range scanned forward from checkpoint 1")
+        eq(bt.readRange(start: 2001, count: 1).first?.text, "L2001", "exact checkpoint-boundary line")
+        eq(bt.readRange(start: 2500, count: 1).first?.text, "L2500", "last line")
     }
 }
