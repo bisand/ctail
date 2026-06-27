@@ -4,3 +4,11 @@ build/*.rpm
 node_modules
 frontend/dist
 *.log
+
+# macOS Finder metadata
+.DS_Store
+
+# Swift / Xcode generated state & build output
+.swiftpm/
+.build/
+DerivedData/
