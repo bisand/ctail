@@ -82,7 +82,13 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         modePopup.addItems(withTitles: ["dark", "light"])
         newTabPopup.addItems(withTitles: ["end", "afterActive"])
         aiProviderPopup.addItems(withTitles: ["", "openai", "github", "copilot", "custom"])
-        themes.forEach { themePopup.addItem(withTitle: $0.displayName); themePopup.lastItem?.representedObject = $0.name }
+        themes.forEach {
+            // Mark Pro-only themes with a lock; selecting one prompts the paywall
+            // on save (the real theme name stays in representedObject).
+            let locked = !Pro.themeAllowed($0.name)
+            themePopup.addItem(withTitle: $0.displayName + (locked ? "  🔒" : ""))
+            themePopup.lastItem?.representedObject = $0.name
+        }
     }
 
     private func buildPanes() {

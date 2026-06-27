@@ -27,6 +27,7 @@ final class TabController: NSObject {
 
     var onActiveFileChanged: ((String?) -> Void)?
     var onTabsChanged: (() -> Void)?
+    var onProRequired: ((Pro.Feature) -> Void)?
 
     init(config: ConfigStore, settings: AppSettings, palette: ThemeColors, bookmarks: BookmarkStore) {
         self.config = config
@@ -114,10 +115,19 @@ final class TabController: NSObject {
         return HighlightRule.compile(profile)
     }
 
+    /// Opens (or focuses) a file. Returns nil when blocked by the free-tier tab
+    /// limit (the paywall is requested via `onProRequired`). `enforceLimit` is
+    /// false for session restore / content rebuilds, which mustn't be gated.
     @discardableResult
-    func open(path: String) -> Tab {
+    func open(path: String, enforceLimit: Bool = true) -> Tab? {
         // If already open, just focus it.
         if let i = tabs.firstIndex(where: { $0.filePath == path }) { activate(i); return tabs[i] }
+
+        // Free tier: cap simultaneously-open files (Pro is unlimited).
+        if enforceLimit, !Pro.isUnlocked, tabs.count >= Pro.freeTabLimit {
+            onProRequired?(.tabs)
+            return nil
+        }
 
         // Start accessing the security-scoped resource before tailing (sandbox).
         bookmarks.beginAccess(path)
@@ -213,7 +223,9 @@ final class TabController: NSObject {
             // only fall back to a filesystem check for unsandboxed/dev builds.
             guard bookmarks.hasBookmark(s.filePath) || FileManager.default.fileExists(atPath: s.filePath)
             else { continue }
-            let tab = open(path: s.filePath)
+            // Restore isn't gated by the free-tier tab limit — a saved session
+            // is reinstated as-is.
+            guard let tab = open(path: s.filePath, enforceLimit: false) else { continue }
             tab.label = s.label
             tab.color = s.color
             if !s.profileId.isEmpty { tab.profileName = s.profileId }

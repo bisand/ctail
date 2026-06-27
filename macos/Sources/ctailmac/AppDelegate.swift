@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         buildWindow()
         tabs.onTabsChanged = { [weak self] in self?.persistSession() }
 
+        // StoreKit: load Pro entitlement and keep the menu in sync.
+        StoreManager.shared.onChange = { [weak self] _ in self?.proStatusChanged() }
+        StoreManager.shared.start()
+
         let args = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         if args.isEmpty {
             if settings.restoreTabs && !settings.tabs.isEmpty {
@@ -41,7 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     }
 
     private func resolvePalette() -> ThemeColors {
-        ThemeCatalog.palette(name: settings.theme, mode: settings.themeMode, custom: config.themesDir)
+        // Defensive gate: a Pro theme only applies when Pro is unlocked (covers a
+        // hand-edited settings.json too).
+        let name = Pro.themeAllowed(settings.theme) ? settings.theme : Pro.fallbackTheme
+        return ThemeCatalog.palette(name: name, mode: settings.themeMode, custom: config.themesDir)
     }
 
     // MARK: - Window
@@ -106,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         tabs.onActiveFileChanged = { [weak self] path in
             self?.window.title = path.map { "ctail — \(($0 as NSString).lastPathComponent)" } ?? "ctail"
         }
+        tabs.onProRequired = { [weak self] feature in self?.showPaywall(feature: feature) }
         window.contentView = tabs.container
     }
 
@@ -137,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         palette = resolvePalette()
         installController()
         tabs.onTabsChanged = { [weak self] in self?.persistSession() }
-        paths.forEach { tabs.open(path: $0) }
+        paths.forEach { tabs.open(path: $0, enforceLimit: false) }
         if tabs.tabs.indices.contains(activeIdx) { tabs.activate(activeIdx) }
     }
 
@@ -146,9 +154,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
             settings: config.loadSettings(),
             themes: ThemeCatalog.all(custom: config.themesDir)) { [weak self] new in
                 guard let self else { return }
+                var new = new
+                // Theme gate: a Pro theme picked without Pro reverts to the free
+                // default and prompts the paywall.
+                let pickedLockedTheme = !Pro.themeAllowed(new.theme)
+                if pickedLockedTheme { new.theme = Pro.fallbackTheme }
                 config.saveSettings(new)
                 self.settings = new
                 self.rebuildContent()
+                if pickedLockedTheme { self.showPaywall(feature: .themes) }
         }
         settingsWindow = controller
         controller.showWindow(nil)
@@ -191,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     }
 
     func showAIAssistant() {
+        guard Pro.isUnlocked else { showPaywall(feature: .ai); return }
         let controller = AIAssistantWindowController(
             settings: config.loadSettings(), config: config,
             logProvider: { [weak self] in self?.tabs.activeLogContext() ?? "" },
@@ -204,6 +219,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         controller.window?.makeKeyAndOrderFront(nil)
     }
     private var aiWindow: AIAssistantWindowController?
+
+    // MARK: - ctail Pro (StoreKit)
+
+    private var paywall: PaywallWindowController?
+
+    func showPaywall(feature: Pro.Feature? = nil) {
+        if Pro.isUnlocked { alert("ctail Pro", "You already have ctail Pro. Thank you!"); return }
+        if let existing = paywall?.window { existing.makeKeyAndOrderFront(nil); return }
+        let controller = PaywallWindowController(feature: feature) { [weak self] in
+            self?.proStatusChanged()
+            self?.rebuildContent()        // apply any now-unlocked theme immediately
+        }
+        paywall = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func unlockPro() { showPaywall() }
+
+    @objc private func restorePurchases() {
+        Task {
+            await StoreManager.shared.restore()
+            await MainActor.run {
+                self.proStatusChanged()
+                self.alert(StoreManager.shared.isPro ? "ctail Pro restored" : "Nothing to restore",
+                           StoreManager.shared.isPro
+                            ? "Your Pro features are unlocked."
+                            : "No previous ctail Pro purchase was found for this Apple ID.")
+            }
+        }
+    }
+
+    /// Reflect entitlement changes in the menu.
+    private func proStatusChanged() {
+        unlockProItem?.isHidden = Pro.isUnlocked
+        restoreItem?.isHidden = Pro.isUnlocked
+        proActiveItem?.isHidden = !Pro.isUnlocked
+    }
+    private weak var unlockProItem: NSMenuItem?
+    private weak var restoreItem: NSMenuItem?
+    private weak var proActiveItem: NSMenuItem?
 
     func checkForUpdates() { runUpdateCheck(manual: true) }
 
@@ -263,6 +319,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         appMenu.addItem(.separator())
         let prefs = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         prefs.target = self
+        appMenu.addItem(.separator())
+        let unlock = appMenu.addItem(withTitle: "Unlock ctail Pro…", action: #selector(unlockPro), keyEquivalent: "")
+        unlock.target = self
+        let restore = appMenu.addItem(withTitle: "Restore Purchases", action: #selector(restorePurchases), keyEquivalent: "")
+        restore.target = self
+        let proActive = appMenu.addItem(withTitle: "ctail Pro ✓ Unlocked", action: nil, keyEquivalent: "")
+        proActive.isEnabled = false
+        proActive.isHidden = true
+        unlockProItem = unlock; restoreItem = restore; proActiveItem = proActive
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit ctail", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
