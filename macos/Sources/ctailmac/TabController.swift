@@ -9,8 +9,10 @@ final class TabController: NSObject {
     private let content = NSView()
     private lazy var searchBar = makeSearchBar()
     private let statusLabel = NSTextField(labelWithString: "")
-    private let followLabel = NSTextField(labelWithString: "")
+    private let memoryLabel = NSTextField(labelWithString: "")
+    private let followCheck = NSButton(checkboxWithTitle: "Follow", target: nil, action: nil)
     private let statusBar = NSView()
+    private var memoryTimer: Timer?
 
     private let config: ConfigStore
     private var settings: AppSettings
@@ -37,7 +39,10 @@ final class TabController: NSObject {
         installKeyMonitor()
     }
 
-    deinit { if let m = keyMonitor { NSEvent.removeMonitor(m) } }
+    deinit {
+        if let m = keyMonitor { NSEvent.removeMonitor(m) }
+        memoryTimer?.invalidate()
+    }
 
     // MARK: - Layout
 
@@ -53,10 +58,18 @@ final class TabController: NSObject {
         statusBar.layer?.backgroundColor = palette.backgroundAlt.cgColor
         statusLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         statusLabel.textColor = palette.foreground
-        followLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        followLabel.textColor = palette.successColor
-        followLabel.alignment = .right
-        [statusLabel, followLabel].forEach {
+        memoryLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        memoryLabel.textColor = palette.muted
+        memoryLabel.alignment = .right
+        memoryLabel.toolTip = "App memory footprint"
+        followCheck.target = self
+        followCheck.action = #selector(toggleFollow)
+        followCheck.toolTip = "Auto-scroll to follow new lines (tail -f)"
+        followCheck.attributedTitle = NSAttributedString(
+            string: "Follow",
+            attributes: [.foregroundColor: palette.foreground, .font: NSFont.systemFont(ofSize: 11)])
+        (followCheck.cell as? NSButtonCell)?.backgroundColor = .clear
+        [statusLabel, memoryLabel, followCheck].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             statusBar.addSubview($0)
         }
@@ -73,12 +86,16 @@ final class TabController: NSObject {
             statusBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            statusBar.heightAnchor.constraint(equalToConstant: 24),
+            statusBar.heightAnchor.constraint(equalToConstant: 26),
             statusLabel.leadingAnchor.constraint(equalTo: statusBar.leadingAnchor, constant: 10),
             statusLabel.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
-            followLabel.trailingAnchor.constraint(equalTo: statusBar.trailingAnchor, constant: -10),
-            followLabel.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            followCheck.trailingAnchor.constraint(equalTo: statusBar.trailingAnchor, constant: -10),
+            followCheck.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            memoryLabel.trailingAnchor.constraint(equalTo: followCheck.leadingAnchor, constant: -14),
+            memoryLabel.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
         ])
+
+        startMemoryMonitor()
 
         tabBar.onSelect = { [weak self] i in self?.activate(i) }
         tabBar.onClose = { [weak self] i in self?.close(i) }
@@ -381,13 +398,39 @@ final class TabController: NSObject {
     }
 
     private func refreshStatus() {
-        guard let tab = activeTab else { statusLabel.stringValue = ""; followLabel.stringValue = ""; return }
+        guard let tab = activeTab else {
+            statusLabel.stringValue = ""
+            followCheck.isHidden = true
+            return
+        }
         let total = max(tab.tailer.totalLines, Int64(tab.logView.lineCount))
         let indexing = tab.tailer.indexingComplete ? "" : " — indexing…"
         statusLabel.stringValue = "\(tab.displayName) · \(total) lines\(indexing)"
-        let following = tab.logView.following
-        followLabel.stringValue = following ? "● FOLLOWING" : "○ paused"
-        followLabel.textColor = following ? palette.successColor : palette.muted
+        followCheck.isHidden = false
+        followCheck.state = tab.logView.following ? .on : .off
+        followCheck.contentTintColor = tab.logView.following ? palette.successColor : nil
+    }
+
+    @objc private func toggleFollow() {
+        activeTab?.logView.setFollow(followCheck.state == .on)
+        refreshStatus()
+    }
+
+    // MARK: - Memory indicator
+
+    private func startMemoryMonitor() {
+        updateMemoryLabel()
+        let t = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in self?.updateMemoryLabel() }
+        RunLoop.main.add(t, forMode: .common)   // keep updating while menus/scrolls track
+        memoryTimer = t
+    }
+
+    private func updateMemoryLabel() {
+        guard let bytes = MemoryFootprint.current() else { memoryLabel.stringValue = ""; return }
+        let mb = Double(bytes) / (1024 * 1024)
+        memoryLabel.stringValue = mb >= 1024
+            ? String(format: "%.2f GB", mb / 1024)
+            : String(format: "%.0f MB", mb)
     }
 
     private func reloadBar() {
@@ -452,6 +495,21 @@ final class TabController: NSObject {
             }
             return e
         }
+    }
+}
+
+/// Reads this process's real memory footprint (the same figure Activity Monitor
+/// shows as "Memory"), for the status-bar indicator.
+enum MemoryFootprint {
+    static func current() -> UInt64? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return kr == KERN_SUCCESS ? info.phys_footprint : nil
     }
 }
 

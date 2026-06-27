@@ -181,6 +181,12 @@ final class LogView: NSView {
         table.scrollRowToVisible(n - 1)
     }
 
+    /// Public toggle for the status-bar Follow checkbox: enabling jumps to the
+    /// live tail and resumes auto-scroll; disabling just stops following.
+    func setFollow(_ on: Bool) {
+        if on { jumpToEnd() } else { setFollowing(false) }
+    }
+
     // MARK: - Keyboard navigation (Home / End / Page Up / Page Down)
 
     /// Home: jump to the very start of the file, loading the first window from disk.
