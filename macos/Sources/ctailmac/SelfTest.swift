@@ -1,0 +1,357 @@
+import Foundation
+
+// Lightweight in-process test harness. XCTest/Testing aren't available under the
+// Command Line Tools toolchain (they ship with full Xcode), so tests run via
+// `ctailmac --selftest` and report a pass/fail summary. The check() helpers
+// mirror XCTAssert* closely enough to migrate later with a find/replace.
+enum SelfTest {
+    nonisolated(unsafe) static var failures = 0
+    nonisolated(unsafe) static var checks = 0
+
+    static func check(_ cond: Bool, _ msg: @autoclosure () -> String,
+                      _ file: StaticString = #file, _ line: UInt = #line) {
+        checks += 1
+        if !cond {
+            failures += 1
+            FileHandle.standardError.write(Data("  ✘ FAIL [\(file):\(line)] \(msg())\n".utf8))
+        }
+    }
+
+    static func eq<T: Equatable>(_ a: T, _ b: T, _ label: String = "",
+                                 _ file: StaticString = #file, _ line: UInt = #line) {
+        check(a == b, "\(label): \(a) != \(b)", file, line)
+    }
+
+    /// Runs every suite and returns the process exit code (0 = all passed).
+    static func run() -> Int32 {
+        let suites: [(String, () -> Void)] = [
+            ("ConfigStore", configStoreSuite),
+            ("Themes", themesSuite),
+            ("Search", searchSuite),
+            ("Updates", updatesSuite),
+            ("AI", aiSuite),
+            ("Bookmarks", bookmarksSuite),
+            ("Tailer", tailerSuite),
+        ]
+        for (name, body) in suites {
+            let before = failures
+            body()
+            let status = (failures == before) ? "ok" : "FAILED"
+            print("• \(name): \(status)")
+        }
+        print("\n\(checks) checks, \(failures) failures")
+        return failures == 0 ? 0 : 1
+    }
+
+    // MARK: - ConfigStore suite
+
+    static func configStoreSuite() {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ctail-selftest-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let store = ConfigStore(root: tmp)
+
+        // round-trip
+        var s = AppSettings()
+        s.bufferSize = 42_000; s.theme = "nord"; s.recentFiles = ["/a.log", "/b.log"]
+        check(store.saveSettings(s), "saveSettings")
+        eq(store.loadSettings(), s, "settings round-trip")
+
+        // defaults when missing
+        let store2 = ConfigStore(root: tmp.appendingPathComponent("empty"))
+        eq(store2.loadSettings().bufferSize, 10_000, "default bufferSize")
+        eq(store2.loadSettings().activeProfile, "Common Logs", "default activeProfile")
+
+        // lenient decode
+        let json = #"{"bufferSize": 500, "theme": "dracula", "unknownKey": true}"#
+        if let d = try? JSONDecoder().decode(AppSettings.self, from: Data(json.utf8)) {
+            eq(d.bufferSize, 500, "lenient bufferSize")
+            eq(d.theme, "dracula", "lenient theme")
+            eq(d.fontSize, 14, "lenient default fontSize")
+        } else { check(false, "lenient decode threw") }
+
+        // profile CRUD
+        store.ensureDefaultProfile()
+        eq(store.listProfiles(), ["Common Logs"], "default profile present")
+        let p = Profile(name: "My Profile",
+                        rules: [Rule(id: "x", name: "X", pattern: "foo", matchType: "line")])
+        check(store.saveProfile(p), "saveProfile")
+        eq(store.listProfiles(), ["Common Logs", "My Profile"], "profile listed")
+        eq(store.loadProfile("My Profile"), p, "profile round-trip")
+        check(store.renameProfile("My Profile", to: "Renamed"), "renameProfile")
+        check(store.loadProfile("My Profile") == nil, "old profile gone")
+        eq(store.loadProfile("Renamed")?.rules.first?.pattern, "foo", "renamed keeps rules")
+        store.deleteProfile("Renamed")
+        eq(store.listProfiles(), ["Common Logs"], "profile deleted")
+
+        // recent files MRU + cap
+        for i in 0..<20 { store.addRecentFile("/log/\(i).log") }
+        eq(store.loadSettings().recentFiles.count, 15, "recent capped at 15")
+        eq(store.loadSettings().recentFiles.first, "/log/19.log", "recent MRU order")
+        store.addRecentFile("/log/5.log")
+        eq(store.loadSettings().recentFiles.first, "/log/5.log", "re-add moves to front")
+        eq(store.loadSettings().recentFiles.filter { $0 == "/log/5.log" }.count, 1, "no dupes")
+
+        // sanitize
+        eq(ConfigStore.sanitize("a/b:c"), "a_b_c", "sanitize strips path chars")
+        eq(ConfigStore.sanitize(""), "profile", "sanitize empty fallback")
+    }
+
+    // MARK: - Themes suite
+
+    static func themesSuite() {
+        eq(ThemeCatalog.builtIns.count, 21, "21 built-in themes")
+        check(ThemeCatalog.builtIns.allSatisfy { !$0.name.isEmpty && !$0.displayName.isEmpty },
+              "themes have names")
+
+        // Known palette values from themes.go.
+        let cat = ThemeCatalog.palette(name: "catppuccin", mode: "dark")
+        eq(cat.bgPrimary, "#1e1e2e", "catppuccin dark bg")
+        let catLight = ThemeCatalog.palette(name: "catppuccin", mode: "light")
+        eq(catLight.bgPrimary, "#eff1f5", "catppuccin light bg")
+        eq(ThemeCatalog.palette(name: "nord", mode: "dark").accent, "#88c0d0", "nord accent")
+
+        // Unknown name falls back to catppuccin.
+        eq(ThemeCatalog.palette(name: "does-not-exist", mode: "dark").bgPrimary, "#1e1e2e", "fallback theme")
+
+        // Hex parsing: 3-digit shorthand + alpha=1.
+        let c = Theme.hex("#fff")
+        eq(Int((c.redComponent * 255).rounded()), 255, "hex shorthand expands")
+
+        // Custom theme JSON round-trips with Go keys and overrides built-ins.
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ctail-themes-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let json = #"""
+        {"name":"nord","displayName":"My Nord","dark":{"bg-primary":"#010203","text-primary":"#ffffff"}}
+        """#
+        try? Data(json.utf8).write(to: tmp.appendingPathComponent("nord.json"))
+        let p = ThemeCatalog.palette(name: "nord", mode: "dark", custom: tmp)
+        eq(p.bgPrimary, "#010203", "custom theme overrides built-in")
+    }
+
+    // MARK: - Search suite
+
+    static func searchSuite() {
+        // Plain substring, case-insensitive by default.
+        let q1 = SearchQuery("error", caseSensitive: false, wholeWord: false, isRegex: false)
+        check(q1.matches("an ERROR happened"), "case-insensitive plain match")
+        check(!q1.matches("all good"), "non-match")
+
+        // Case-sensitive.
+        let q2 = SearchQuery("Error", caseSensitive: true, wholeWord: false, isRegex: false)
+        check(!q2.matches("an error happened"), "case-sensitive excludes lowercase")
+        check(q2.matches("an Error happened"), "case-sensitive matches exact case")
+
+        // Whole word.
+        let q3 = SearchQuery("err", caseSensitive: false, wholeWord: true, isRegex: false)
+        check(!q3.matches("error"), "whole-word excludes substring")
+        check(q3.matches("an err here"), "whole-word matches standalone")
+
+        // Regex + ranges.
+        let q4 = SearchQuery(#"\d{3}"#, caseSensitive: false, wholeWord: false, isRegex: true)
+        check(q4.matches("code 404 returned"), "regex match")
+        eq(q4.ranges(in: "a 404 b 500").count, 2, "regex finds all ranges")
+
+        // Plain query escapes regex metacharacters.
+        let q5 = SearchQuery("a.b", caseSensitive: false, wholeWord: false, isRegex: false)
+        check(q5.matches("a.b"), "plain matches literal dot")
+        check(!q5.matches("axb"), "plain does not treat dot as wildcard")
+
+        // Invalid regex flagged.
+        let q6 = SearchQuery("(unclosed", caseSensitive: false, wholeWord: false, isRegex: true)
+        check(!q6.isValid, "invalid regex reported")
+        let q7 = SearchQuery("", caseSensitive: false, wholeWord: false, isRegex: true)
+        check(q7.isValid && q7.isEmpty, "empty query is valid + empty")
+    }
+
+    // MARK: - Updates suite
+
+    static func updatesSuite() {
+        let c = UpdateChecker.compareVersions
+        check(c("1.0.1", "1.0.0") > 0, "patch newer")
+        check(c("1.0.0", "1.0.1") < 0, "patch older")
+        check(c("1.2.0", "1.10.0") < 0, "numeric (not lexical) compare")
+        eq(c("0.9.9", "0.9.9"), 0, "equal versions")
+        check(c("1.0", "1.0.0") == 0, "missing components treated as 0")
+        check(c("2.0.0", "1.9.9") > 0, "major newer")
+        check(c("0.9.9+255", "0.9.9") == 0, "build suffix ignored")
+    }
+
+    // MARK: - AI suite (network-free parts)
+
+    static func aiSuite() {
+        // Endpoint resolution per provider/base.
+        eq(AIClient(endpoint: "https://api.openai.com", apiKey: "", model: "x").completionsURL,
+           "https://api.openai.com/v1/chat/completions", "openai endpoint")
+        eq(AIClient(endpoint: "https://api.githubcopilot.com", apiKey: "", model: "x").completionsURL,
+           "https://api.githubcopilot.com/chat/completions", "copilot endpoint")
+        eq(AIClient(endpoint: "http://localhost:11434/v1", apiKey: "", model: "x").completionsURL,
+           "http://localhost:11434/v1/chat/completions", "ollama /v1 endpoint")
+        eq(AIClient(endpoint: "https://x/v1/chat/completions", apiKey: "", model: "x").completionsURL,
+           "https://x/v1/chat/completions", "already-full endpoint untouched")
+        eq(AIService.defaultEndpoint(for: "openai"), "https://api.openai.com", "default openai endpoint")
+
+        // Anthropic provider: endpoint/model defaults + /v1/messages URL building.
+        eq(AIService.defaultEndpoint(for: "anthropic"), "https://api.anthropic.com", "default anthropic endpoint")
+        eq(AIService.defaultModel(for: "anthropic"), "claude-sonnet-4-6", "default anthropic model")
+        eq(AnthropicClient(endpoint: "https://api.anthropic.com", apiKey: "", model: "x").messagesURL,
+           "https://api.anthropic.com/v1/messages", "anthropic messages URL")
+        eq(AnthropicClient(endpoint: "https://proxy/v1", apiKey: "", model: "x").messagesURL,
+           "https://proxy/v1/messages", "anthropic /v1 endpoint")
+        eq(AnthropicClient(endpoint: "https://proxy/v1/messages", apiKey: "", model: "x").messagesURL,
+           "https://proxy/v1/messages", "anthropic already-full endpoint untouched")
+
+        // CLI backend: prompt flattening (system first, then turns) + arg shapes.
+        let prompt = CLIChatBackend.combinedPrompt(
+            [AIMessage(role: "system", content: "SYS"), AIMessage(role: "user", content: "USER")])
+        eq(prompt, "SYS\n\nUSER", "CLI prompt flattens system then user")
+        eq(CLIChatBackend.Tool.claude.args(model: "claude-x"), ["-p", "--model", "claude-x"], "claude CLI args")
+        eq(CLIChatBackend.Tool.codex.args(model: ""), ["exec"], "codex CLI args without model")
+
+        // Rule-array JSON (what generate-rules returns) decodes into [Rule].
+        let json = #"""
+        [{"id":"err","name":"Error","pattern":"(?i)ERROR","matchType":"line","foreground":"#ff0000","background":"","bold":true,"italic":false,"enabled":true,"priority":100}]
+        """#
+        let rules = try? JSONDecoder().decode([Rule].self, from: Data(json.utf8))
+        eq(rules?.count, 1, "rule array decodes")
+        eq(rules?.first?.matchType, "line", "rule field decoded")
+
+        // Copilot editor headers are present.
+        check(CopilotAuth.editorHeaders["Copilot-Integration-Id"] == "vscode-chat", "copilot integration header")
+    }
+
+    // MARK: - Bookmarks suite (graceful no-bookmark behavior)
+
+    static func bookmarksSuite() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ctail-bm-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = BookmarkStore(dir: dir)
+        check(!store.hasBookmark("/no/such/file"), "no bookmark for unknown path")
+        check(!store.beginAccess("/no/such/file"), "beginAccess false without bookmark")
+        store.endAccess("/no/such/file")   // must not crash
+        check(true, "endAccess on unknown path is safe")
+    }
+
+    // MARK: - Tailer suite
+
+    static func tailerSuite() {
+        // --- pure line splitter ---
+        let (lines, offsets, consumed) = Tailer.splitLines(Data("a\nb\npartial".utf8), startingAt: 0, baseOffset: 0)
+        eq(lines.map { $0.text }, ["a", "b"], "splits complete lines, drops partial")
+        eq(lines.map { $0.number }, [1, 2], "numbers are 1-based")
+        eq(offsets, [0, 2], "line start offsets")
+        eq(consumed, 4, "consumed stops before the partial line")
+
+        // CRLF stripping + continued numbering from a base.
+        let crlf = Tailer.splitLines(Data("x\r\ny\r\n".utf8), startingAt: 10, baseOffset: 100)
+        eq(crlf.lines.map { $0.text }, ["x", "y"], "strips trailing CR")
+        eq(crlf.lines.map { $0.number }, [11, 12], "continues from startNum")
+        eq(crlf.offsets, [100, 103], "offsets are baseOffset-relative")
+
+        // Empty buffer.
+        eq(Tailer.splitLines(Data(), startingAt: 5, baseOffset: 0).lines.count, 0, "empty buffer yields no lines")
+
+        // --- file-driven engine (synchronous seams; no run loop needed) ---
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ctail-tailer-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("app.log")
+        func write(_ s: String) { try? Data(s.utf8).write(to: file) }
+        func appendText(_ s: String) {
+            let fh = try? FileHandle(forWritingTo: file)
+            fh?.seekToEndOfFile(); fh?.write(Data(s.utf8)); try? fh?.close()
+        }
+
+        write("line1\nline2\nline3\n")
+        let t = Tailer(path: file.path, pollInterval: 0.05)
+        t.performInitialRead()
+        eq(t.totalLines, 3, "initial read indexes 3 lines")
+        eq(t.readRange(start: 1, count: 3).map { $0.text }, ["line1", "line2", "line3"], "readRange full")
+        eq(t.readRange(start: 2, count: 1).map { $0.text }, ["line2"], "readRange windowed")
+
+        // Append -> poll picks up only the new line.
+        appendText("line4\n")
+        t.performPoll()
+        eq(t.totalLines, 4, "poll appends new line to index")
+        eq(t.readRange(start: 4, count: 1).first?.text, "line4", "new line readable")
+
+        // Partial line not committed until its newline arrives.
+        appendText("partial-no-newline")
+        t.performPoll()
+        eq(t.totalLines, 4, "partial line not counted yet")
+        appendText("\n")
+        t.performPoll()
+        eq(t.totalLines, 5, "partial completes on newline")
+        eq(t.readRange(start: 5, count: 1).first?.text, "partial-no-newline", "completed partial text")
+
+        // Truncation -> index resets and re-reads.
+        write("fresh1\nfresh2\n")
+        t.performPoll()
+        eq(t.totalLines, 2, "truncation resets to new content")
+        eq(t.readRange(start: 1, count: 2).map { $0.text }, ["fresh1", "fresh2"], "post-truncation content")
+
+        // Rotation (different inode) -> treated like truncation/reset.
+        try? FileManager.default.removeItem(at: file)
+        write("rotated\n")
+        t.performPoll()
+        eq(t.totalLines, 1, "rotation re-reads new inode")
+        eq(t.readRange(start: 1, count: 1).first?.text, "rotated", "rotated content")
+
+        // --- sparse offset indexer ---
+        write("aa\nbb\ncc\n")                       // line starts at bytes 0,3,6; size 9
+        let dense = Tailer.indexFile(path: file.path, upTo: 9, stride: 1)
+        eq(dense.checkpoints, [0, 3, 6], "stride 1 records every line start")
+        eq(dense.total, 3, "indexFile counts all complete lines")
+        eq(dense.consumed, 9, "indexFile consumed stops past the last newline")
+
+        // With a larger stride only every Nth line start is kept (sparse index).
+        let sparse = Tailer.indexFile(path: file.path, upTo: 9, stride: 2)
+        eq(sparse.checkpoints, [0, 6], "stride 2 keeps every 2nd line start")
+        eq(sparse.total, 3, "sparse index still counts all lines")
+
+        // A trailing partial line is excluded from the count and from consumed.
+        write("aa\nbb\npartial")
+        let partial = Tailer.indexFile(path: file.path, upTo: 12, stride: 1)
+        eq(partial.total, 2, "trailing partial line not counted")
+        eq(partial.consumed, 6, "consumed excludes the trailing partial")
+
+        // readRange must seek to the right checkpoint and scan forward across the
+        // sparse index (default stride 1000), so test a file spanning >2 strides.
+        var big = ""
+        for n in 1...2500 { big += "L\(n)\n" }
+        write(big)
+        let bt = Tailer(path: file.path, pollInterval: 0.05)
+        bt.performInitialRead()
+        eq(bt.totalLines, 2500, "sparse-indexed file counts all lines")
+        eq(bt.readRange(start: 1, count: 1).first?.text, "L1", "first line via checkpoint 0")
+        eq(bt.readRange(start: 1500, count: 2).map { $0.text }, ["L1500", "L1501"],
+           "range scanned forward from checkpoint 1")
+        eq(bt.readRange(start: 2001, count: 1).first?.text, "L2001", "exact checkpoint-boundary line")
+        eq(bt.readRange(start: 2500, count: 1).first?.text, "L2500", "last line")
+
+        // --- tail-first (instant tail): numbers are local until the head count lands ---
+        var tfBody = ""
+        for n in 1...50 { tfBody += "L\(n)\n" }
+        write(tfBody)
+        // Tiny thresholds force the large-file tail-first path on a small fixture.
+        let tf = Tailer(path: file.path, pollInterval: 0.05, tailFirstThreshold: 20, tailSeekBack: 12)
+        tf.performInitialRead()
+        eq(tf.indexingComplete, false, "tail-first defers the full line count")
+        eq(tf.readRange(start: 1, count: 1).isEmpty, true, "scrollback disabled until count ready")
+        eq(tf.totalLines < 50, true, "before count, total is just the local tail")
+        // Simulate the background head count completing.
+        let head = Tailer.indexFile(path: file.path, upTo: tf.tailStart, stride: 1000)
+        tf.applyHeadCount(head.checkpoints, base: head.total)
+        eq(tf.indexingComplete, true, "count ready after head index")
+        eq(tf.totalLines, 50, "absolute total after head count")
+        eq(tf.readRange(start: 1, count: 1).first?.text, "L1", "head-region line via scrollback")
+        eq(tf.readRange(start: head.total + 1, count: 1).first?.text, "L\(head.total + 1)",
+           "first tail line at absolute number base+1")
+        eq(tf.readRange(start: 50, count: 1).first?.text, "L50", "tail-region last line")
+    }
+}

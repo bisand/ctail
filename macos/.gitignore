@@ -1,0 +1,4 @@
+.build/
+*.app/
+Package.resolved
+.DS_Store

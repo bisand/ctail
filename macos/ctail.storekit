@@ -1,0 +1,40 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "en_US",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "B1E7A0C2-CT41-4PRO-9A11-CTAILPRO0001",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "B1E7A0C2-CT41-4PRO-9A11-CTAILPRO0002",
+      "localizations" : [
+        {
+          "description" : "Unlock the AI assistant, unlimited open files, and all themes. One-time purchase — no subscription.",
+          "displayName" : "ctail Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "net.biseth.ctail.pro",
+      "referenceName" : "ctail Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}
