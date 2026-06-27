@@ -110,7 +110,9 @@ final class TabController: NSObject {
                       pollInterval: Double(settings.pollIntervalMs) / 1000.0,
                       readTimeout: Double(settings.readTimeoutSec),
                       fontSize: CGFloat(settings.fontSize),
-                      showLineNumbers: settings.showLineNumbers)
+                      showLineNumbers: settings.showLineNumbers,
+                      bufferSize: settings.bufferSize,
+                      scrollBuffer: settings.scrollBuffer)
         wire(tab)
         config.addRecentFile(path)
 
@@ -122,12 +124,24 @@ final class TabController: NSObject {
     }
 
     private func wire(_ tab: Tab) {
+        // Let the log view's sliding window page line ranges straight off disk and
+        // query the tailer for total/index state.
+        tab.logView.requestRange = { [weak tab] start, count, completion in
+            guard let tab else { completion([]); return }
+            tab.tailer.fetchRange(start: start, count: count, completion: completion)
+        }
+        tab.logView.totalLinesProvider = { [weak tab] in tab?.tailer.totalLines ?? 0 }
+        tab.logView.indexingReadyProvider = { [weak tab] in tab?.tailer.indexingComplete ?? false }
+
         tab.tailer.onLines = { [weak self, weak tab] lines in
             tab?.logView.append(lines); self?.refreshStatusIfActive(tab)
         }
         tab.tailer.onReset = { [weak tab] in tab?.logView.reset() }
         tab.tailer.onReady = { [weak self, weak tab] in self?.refreshStatusIfActive(tab) }
-        tab.tailer.onIndexed = { [weak self, weak tab] _ in self?.refreshStatusIfActive(tab) }
+        tab.tailer.onIndexed = { [weak self, weak tab] total in
+            tab?.logView.indexBecameReady(total: total)
+            self?.refreshStatusIfActive(tab)
+        }
         tab.tailer.onError = { [weak self, weak tab] msg in
             guard let self, let tab, self.activeTab?.id == tab.id else { return }
             self.statusLabel.stringValue = "⚠︎ \(msg)"

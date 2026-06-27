@@ -289,5 +289,16 @@ enum SelfTest {
         write("aa\nbb\ncc\n")
         let idx = Tailer.indexOffsets(path: file.path, upTo: 9)
         eq(idx, [0, 3, 6], "indexOffsets finds every line start")
+
+        // indexFile also reports where live tailing resumes (past last newline).
+        let indexed = Tailer.indexFile(path: file.path, upTo: 9)
+        eq(indexed.offsets, [0, 3, 6], "indexFile finds every line start")
+        eq(indexed.consumed, 9, "indexFile consumed stops past the last newline")
+
+        // A trailing partial line leaves consumed before it so it is re-read whole.
+        write("aa\nbb\npartial")
+        let partial = Tailer.indexFile(path: file.path, upTo: 12)
+        eq(partial.offsets, [0, 3, 6], "indexFile indexes the partial's start")
+        eq(partial.consumed, 6, "indexFile consumed excludes the trailing partial")
     }
 }

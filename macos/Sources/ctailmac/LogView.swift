@@ -10,13 +10,28 @@ import AppKit
 /// navigation, and a filter mode that shows only matching lines.
 final class LogView: NSView {
     private let scrollView = NSScrollView()
-    private let table = NSTableView()
-    private var lines: [LogLine] = []            // full buffer
+    private let table = LogTableView()
+    private var lines: [LogLine] = []            // the in-memory window (≤ windowCap)
     private var filtered: [LogLine] = []         // populated only in filter mode
-    private let bufferSize = 200_000             // sliding window cap, like the Go buffer
+    /// Absolute 1-based file line number of `lines.first` (1 when empty). The
+    /// window slides over the file; only `windowCap` lines are ever resident, the
+    /// rest is paged from disk on demand and evicted from the far end.
+    private var windowStart: Int64 = 1
+    private let windowCap: Int                   // configurable: settings.bufferSize
+    private let pageChunk: Int                   // configurable: settings.scrollBuffer
+    private var isPaging = false                 // serializes disk page-in requests
+    private var suppressScrollHandling = false   // ignore programmatic scroll adjustments
     private var highlighter: HighlightEngine
     private let palette: ThemeColors
     private let rowFont: NSFont
+
+    /// Pulls an absolute line range [start, start+count) from disk (the Tailer),
+    /// delivering the lines on the main queue. Drives the sliding window.
+    var requestRange: ((_ start: Int64, _ count: Int, _ completion: @escaping ([LogLine]) -> Void) -> Void)?
+    /// Total lines currently known in the file (grows as the file is tailed).
+    var totalLinesProvider: (() -> Int64)?
+    /// Whether the background offset index is ready (scrollback needs it).
+    var indexingReadyProvider: (() -> Bool)?
 
     // Search state.
     private var query = SearchQuery("", caseSensitive: false, wholeWord: false, isRegex: false)
@@ -31,10 +46,15 @@ final class LogView: NSView {
 
     private var displayed: [LogLine] { filterMode ? filtered : lines }
 
-    init(palette: ThemeColors, rules: [HighlightRule], fontSize: CGFloat = 12, showLineNumbers: Bool = true) {
+    init(palette: ThemeColors, rules: [HighlightRule], fontSize: CGFloat = 12,
+         showLineNumbers: Bool = true, bufferSize: Int = 10_000, scrollBuffer: Int = 500) {
         self.palette = palette
         self.rowFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         self.showLineNumbers = showLineNumbers
+        self.windowCap = max(200, bufferSize)
+        // Page in at most half the window per scroll so it always slides rather
+        // than wholly replacing; keep it positive even if scrollBuffer is 0.
+        self.pageChunk = max(50, min(scrollBuffer <= 0 ? 500 : scrollBuffer, max(200, bufferSize) / 2))
         self.highlighter = HighlightEngine(rules: rules, palette: palette, font: rowFont)
         super.init(frame: .zero)
         setup()
@@ -61,6 +81,7 @@ final class LogView: NSView {
         table.addTableColumn(text)
         table.dataSource = self
         table.delegate = self
+        table.keyHandler = self
 
         scrollView.documentView = table
         scrollView.hasVerticalScroller = true
@@ -82,26 +103,56 @@ final class LogView: NSView {
                                                object: scrollView.contentView)
     }
 
+    /// Take key focus when shown so Home/End/Page keys reach the table without a
+    /// click first.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { window?.makeFirstResponder(table) }
+    }
+
     // MARK: - Data feed (called from the Tailer callbacks, on the main thread)
 
     func append(_ newLines: [LogLine]) {
         guard !newLines.isEmpty else { return }
+        // Only mutate the window while following the tail. If the user has scrolled
+        // up, new lines stay on disk (reachable by paging back down) and their view
+        // is left undisturbed.
+        guard following else { return }
         lines.append(contentsOf: newLines)
-        if lines.count > bufferSize { lines.removeFirst(lines.count - bufferSize) }
+        if lines.count > windowCap { lines.removeFirst(lines.count - windowCap) }
+        windowStart = lines.first?.number ?? 1
         if filterMode || !query.isEmpty {
             // Keep the filter view / match set current as new lines stream in.
             recomputeSearch(preserveCurrent: true)
         } else {
             table.reloadData()
         }
-        if following { scrollToBottom() }
+        scrollToBottom()
     }
 
     func reset() {
         lines.removeAll(keepingCapacity: true)
         filtered.removeAll(keepingCapacity: true)
         matchRows.removeAll(); currentMatch = -1
+        windowStart = 1
+        following = true
         table.reloadData()
+    }
+
+    /// The background offset index just finished (large files). If we're tailing,
+    /// reload the visible tail from disk so the gutter shows true absolute line
+    /// numbers — the initial fast tail was numbered provisionally.
+    func indexBecameReady(total: Int64) {
+        guard following, total > 0, let requestRange else { return }
+        let count = min(windowCap, Int(total))
+        let start = total - Int64(count) + 1
+        requestRange(start, count) { [weak self] tail in
+            guard let self, self.following, !tail.isEmpty else { return }
+            self.lines = tail
+            self.windowStart = tail.first?.number ?? 1
+            self.table.reloadData()
+            self.scrollToBottom()
+        }
     }
 
     var lineCount: Int { lines.count }
@@ -130,14 +181,217 @@ final class LogView: NSView {
         table.scrollRowToVisible(n - 1)
     }
 
+    // MARK: - Keyboard navigation (Home / End / Page Up / Page Down)
+
+    /// Home: jump to the very start of the file, loading the first window from disk.
+    func jumpToStart() {
+        guard !filterMode else { scrollRowToTop(0); return }
+        let total = totalLinesProvider?() ?? Int64(lines.count)
+        guard let requestRange, (indexingReadyProvider?() ?? false), total > 0 else {
+            scrollRowToTop(0); return
+        }
+        let count = min(windowCap, Int(total))
+        isPaging = true
+        requestRange(1, count) { [weak self] head in
+            guard let self else { return }
+            defer { self.isPaging = false }
+            guard !head.isEmpty else { return }
+            self.setFollowing(false)
+            self.lines = head
+            self.windowStart = head.first?.number ?? 1
+            self.table.reloadData()
+            self.scrollRowToTop(0)
+        }
+    }
+
+    /// End: jump to the tail and resume following, loading the last window from disk.
+    func jumpToEnd() {
+        let total = totalLinesProvider?() ?? Int64(lines.count)
+        guard !filterMode, let requestRange, (indexingReadyProvider?() ?? false), total > 0 else {
+            setFollowing(true); scrollToBottom(); return
+        }
+        let count = min(windowCap, Int(total))
+        let start = total - Int64(count) + 1
+        isPaging = true
+        requestRange(start, count) { [weak self] tail in
+            guard let self else { return }
+            defer { self.isPaging = false }
+            guard !tail.isEmpty else { return }
+            self.lines = tail
+            self.windowStart = tail.first?.number ?? 1
+            self.setFollowing(true)
+            self.table.reloadData()
+            self.scrollToBottom()
+        }
+    }
+
+    func pageUpByScreen()   { goTo(topLine: currentTopLine() - Int64(viewportRows())) }
+    func pageDownByScreen() {
+        let total = totalLinesProvider?() ?? Int64(lines.count)
+        let target = currentTopLine() + Int64(viewportRows())
+        // Landing at or past EOF means we're back at the tail — follow.
+        if target + Int64(viewportRows()) - 1 >= total { jumpToEnd() } else { goTo(topLine: target) }
+    }
+
+    private func viewportRows() -> Int {
+        max(1, Int(scrollView.contentView.bounds.height / table.rowHeight))
+    }
+
+    /// Absolute file line currently at the top of the viewport.
+    private func currentTopLine() -> Int64 {
+        let topRow = max(0, Int(scrollView.contentView.bounds.minY / table.rowHeight))
+        return windowStart + Int64(min(topRow, max(0, lines.count - 1)))
+    }
+
+    /// Scrolls so `topLine` sits at the top of the viewport, loading a fresh window
+    /// from disk when the target lies outside (or too near the edge of) the one
+    /// currently resident. Disabled in filter mode (absolute lines don't map).
+    private func goTo(topLine: Int64) {
+        guard !filterMode else { return }
+        let total = totalLinesProvider?() ?? Int64(lines.count)
+        let clampedTop = min(max(1, topLine), max(1, total))
+        let windowEnd = windowStart + Int64(lines.count) - 1
+        let rows = Int64(viewportRows())
+        let haveAbove = clampedTop >= windowStart
+        let haveBelow = windowEnd >= min(total, clampedTop + rows - 1)
+
+        if haveAbove && haveBelow {                      // already resident — instant scroll
+            setFollowing(false)
+            scrollRowToTop(Int(clampedTop - windowStart))
+            return
+        }
+        guard let requestRange, (indexingReadyProvider?() ?? false) else {
+            scrollRowToTop(Int(max(0, clampedTop - windowStart)))
+            return
+        }
+        let start = max(1, min(clampedTop, max(1, total - Int64(windowCap) + 1)))
+        let count = min(windowCap, Int(total - start + 1))
+        isPaging = true
+        requestRange(start, count) { [weak self] win in
+            guard let self else { return }
+            defer { self.isPaging = false }
+            guard !win.isEmpty else { return }
+            self.setFollowing(false)
+            self.lines = win
+            self.windowStart = win.first?.number ?? start
+            self.table.reloadData()
+            self.scrollRowToTop(Int(clampedTop - self.windowStart))
+        }
+    }
+
+    private func setFollowing(_ value: Bool) {
+        guard following != value else { return }
+        following = value
+        onFollowingChanged?(value)
+    }
+
+    /// Runs a programmatic scroll without the bounds observer triggering paging.
+    private func suppressed(_ body: () -> Void) {
+        suppressScrollHandling = true
+        body()
+        suppressScrollHandling = false
+    }
+
+    /// Scrolls so `row` sits at the top of the viewport (clamped to content), with
+    /// the bounds observer suppressed so paging isn't re-triggered.
+    private func scrollRowToTop(_ row: Int) {
+        let maxY = max(0, table.bounds.height - scrollView.contentView.bounds.height)
+        let y = min(maxY, max(0, CGFloat(row) * table.rowHeight))
+        suppressed {
+            scrollView.contentView.setBoundsOrigin(NSPoint(x: scrollView.contentView.bounds.origin.x, y: y))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
     @objc private func boundsChanged() {
-        let documentHeight = table.bounds.height
+        guard !suppressScrollHandling else { return }
+        handleScroll()
+    }
+
+    /// Decides, on every scroll, whether to (a) page older lines in at the top,
+    /// (b) page newer lines in at the bottom, or (c) toggle tail-following — all
+    /// while keeping memory bounded to `windowCap`.
+    private func handleScroll() {
         let visible = scrollView.contentView.bounds
-        let atBottom = visible.maxY >= documentHeight - table.rowHeight * 1.5
-        if atBottom != following {
-            following = atBottom
+        let documentHeight = table.bounds.height
+        let rowH = table.rowHeight
+        let viewportRows = max(1, Int(visible.height / rowH))
+        let total = totalLinesProvider?() ?? Int64(lines.count)
+        let windowEnd = windowStart + Int64(lines.count) - 1
+        let atVisualBottom = visible.maxY >= documentHeight - rowH * 1.5
+        let atVisualTop = visible.minY <= rowH * Double(viewportRows)
+
+        // Prefetch older lines when nearing the top (if any remain on disk).
+        if atVisualTop, windowStart > 1, pagingAllowed { pageUp(); return }
+        // Prefetch newer lines when nearing the bottom and the window isn't at EOF.
+        if atVisualBottom, windowEnd < total, pagingAllowed { pageDown(); return }
+
+        // Follow only when the window is at the tail and we're scrolled to bottom.
+        let shouldFollow = atVisualBottom && windowEnd >= total
+        if shouldFollow != following {
+            following = shouldFollow
             onFollowingChanged?(following)
         }
+    }
+
+    private var pagingAllowed: Bool {
+        !isPaging && !filterMode && (indexingReadyProvider?() ?? false) && requestRange != nil
+    }
+
+    private func pageUp() {
+        guard windowStart > 1, let requestRange else { return }
+        isPaging = true
+        let newStart = max(1, windowStart - Int64(pageChunk))
+        let count = Int(windowStart - newStart)
+        guard count > 0 else { isPaging = false; return }
+        requestRange(newStart, count) { [weak self] older in
+            guard let self else { return }
+            defer { self.isPaging = false }
+            guard !older.isEmpty else { return }
+            self.following = false
+            self.lines.insert(contentsOf: older, at: 0)
+            self.windowStart = older.first?.number ?? newStart
+            if self.lines.count > self.windowCap {
+                self.lines.removeLast(self.lines.count - self.windowCap)   // evict the far (bottom) end
+            }
+            self.reloadKeepingPosition(rowsDeltaAboveViewport: older.count)
+        }
+    }
+
+    private func pageDown() {
+        let total = totalLinesProvider?() ?? Int64(lines.count)
+        let windowEnd = windowStart + Int64(lines.count) - 1
+        guard windowEnd < total, let requestRange else { return }
+        isPaging = true
+        let fetchStart = windowEnd + 1
+        let count = Int(min(Int64(pageChunk), total - windowEnd))
+        guard count > 0 else { isPaging = false; return }
+        requestRange(fetchStart, count) { [weak self] newer in
+            guard let self else { return }
+            defer { self.isPaging = false }
+            guard !newer.isEmpty else { return }
+            self.lines.append(contentsOf: newer)
+            var evicted = 0
+            if self.lines.count > self.windowCap {
+                evicted = self.lines.count - self.windowCap
+                self.lines.removeFirst(evicted)                            // evict the far (top) end
+                self.windowStart += Int64(evicted)
+            }
+            self.reloadKeepingPosition(rowsDeltaAboveViewport: -evicted)
+        }
+    }
+
+    /// Reloads the table while keeping the same lines under the viewport. Content
+    /// above the viewport changed by `delta` rows (positive = grew via prepend,
+    /// negative = shrank via top eviction), so shift the scroll origin to match.
+    private func reloadKeepingPosition(rowsDeltaAboveViewport delta: Int) {
+        suppressScrollHandling = true
+        var origin = scrollView.contentView.bounds.origin
+        table.reloadData()
+        origin.y = max(0, origin.y + CGFloat(delta) * table.rowHeight)
+        scrollView.contentView.setBoundsOrigin(origin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        suppressScrollHandling = false
     }
 
     // MARK: - Search (issue #9)
@@ -249,5 +503,37 @@ extension LogView: NSTableViewDelegate {
         f.drawsBackground = false
         f.isBordered = false
         return f
+    }
+}
+
+extension LogView: LogScrollKeyHandler {
+    func keyJumpToStart() { jumpToStart() }
+    func keyJumpToEnd()   { jumpToEnd() }
+    func keyPageUp()      { pageUpByScreen() }
+    func keyPageDown()    { pageDownByScreen() }
+}
+
+/// Receives the document-navigation keys the table intercepts.
+protocol LogScrollKeyHandler: AnyObject {
+    func keyJumpToStart()
+    func keyJumpToEnd()
+    func keyPageUp()
+    func keyPageDown()
+}
+
+/// NSTableView subclass that routes Home / End / Page Up / Page Down to the log
+/// view's disk-backed window navigation instead of the default (which only moves
+/// within the rows currently loaded). Other keys fall through to normal handling.
+final class LogTableView: NSTableView {
+    weak var keyHandler: LogScrollKeyHandler?
+
+    override func keyDown(with event: NSEvent) {
+        switch Int(event.keyCode) {
+        case 115: keyHandler?.keyJumpToStart()   // Home
+        case 119: keyHandler?.keyJumpToEnd()     // End
+        case 116: keyHandler?.keyPageUp()        // Page Up
+        case 121: keyHandler?.keyPageDown()      // Page Down
+        default:  super.keyDown(with: event)
+        }
     }
 }

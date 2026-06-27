@@ -68,19 +68,29 @@ final class Tailer {
             self.running = true
             self.performInitialRead()
             self.fire { self.onReady?() }
-            let t = DispatchSource.makeTimerSource(queue: self.queue)
-            t.schedule(deadline: .now() + self.pollInterval, repeating: self.pollInterval)
-            t.setEventHandler { [weak self] in self?.performPoll() }
-            self.timer = t
-            t.resume()
+            // For large files performInitialRead pauses polling until the
+            // background index is ready (so line numbers stay consistent); only
+            // start the timer here when the index is already complete.
+            if self.indexingComplete { self.startTimer() }
         }
     }
 
     func stop() {
         queue.async { [weak self] in
-            self?.timer?.cancel(); self?.timer = nil; self?.running = false
+            self?.pauseTimer(); self?.running = false
         }
     }
+
+    private func startTimer() {
+        timer?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
+        t.setEventHandler { [weak self] in self?.performPoll() }
+        timer = t
+        t.resume()
+    }
+
+    private func pauseTimer() { timer?.cancel(); timer = nil }
 
     /// Adjusts the poll cadence at runtime (issue #16: slow inactive/backgrounded
     /// tabs to keep CPU near zero, speed the active tab back up).
@@ -102,6 +112,9 @@ final class Tailer {
             self.lineNum = 0; self.offset = 0; self.fileSize = 0; self.inode = 0; self.lineOffsets = []
             self.fire { self.onReset?() }
             self.performInitialRead()
+            // Small files index synchronously above; resume polling here. (Large
+            // files re-pause and let the background index restart the timer.)
+            if self.indexingComplete, self.running { self.startTimer() }
         }
     }
 
@@ -113,12 +126,16 @@ final class Tailer {
         fileSize = st.size
 
         if st.size > tailFirstThreshold {
-            // Tail-first: read only the tail now; index the rest in the background.
+            // Tail-first: show the tail immediately, then index the whole file in
+            // the background. Live polling is paused until the index is ready so
+            // line numbers and the offset index stay consistent — a huge file is
+            // historical, and a brief delay before live updates is acceptable.
+            // The tail lines carry provisional numbers; they are renumbered from
+            // disk once indexing completes (see scheduleBackgroundIndex / onIndexed).
+            pauseTimer()
             let start = alignToLineBoundary(max(0, st.size - tailSeekBack))
-            let (lines, consumed) = readNewLines(from: start, to: st.size, appendOffsets: false)
-            // Seed the offset index with just the tail lines (renumbered later by the indexer).
-            lineOffsets = lines.isEmpty ? [] : Array(repeating: 0, count: lines.count)
-            offset = consumed
+            let (lines, _) = readNewLines(from: start, to: st.size, appendOffsets: false)
+            lineOffsets = []
             indexingComplete = false
             if !lines.isEmpty { fire { self.onLines?(lines) } }
             scheduleBackgroundIndex(targetSize: st.size)
@@ -185,27 +202,51 @@ final class Tailer {
         return out
     }
 
+    /// Async wrapper around `readRange` used by the UI's sliding window: runs the
+    /// disk read on the tailer queue and delivers the lines back on the main queue.
+    func fetchRange(start: Int64, count: Int, completion: @escaping ([LogLine]) -> Void) {
+        queue.async { [weak self] in
+            let lines = self?.readRange(start: start, count: count) ?? []
+            DispatchQueue.main.async { completion(lines) }
+        }
+    }
+
     // MARK: - Background indexing (large files)
 
     private func scheduleBackgroundIndex(targetSize: Int64) {
         ioQueue.async { [weak self] in
             guard let self else { return }
-            let offsets = Self.indexOffsets(path: self.path, upTo: targetSize)
+            let (offsets, consumed) = Self.indexFile(path: self.path, upTo: targetSize)
             self.queue.async {
-                guard !offsets.isEmpty else { self.indexingComplete = true; return }
-                self.lineOffsets = offsets
+                // Adopt the full index as authoritative and fix up the state the
+                // provisional tail read left approximate: true line count and the
+                // byte offset where live tailing resumes.
+                if !offsets.isEmpty {
+                    self.lineOffsets = offsets
+                    self.lineNum = Int64(offsets.count)
+                    self.offset = consumed
+                    self.fileSize = targetSize
+                }
                 self.indexingComplete = true
-                let total = Int64(offsets.count)
-                self.fire { self.onIndexed?(total) }
+                if self.running { self.startTimer() }   // resume live tailing
+                if !offsets.isEmpty { self.fire { self.onIndexed?(Int64(offsets.count)) } }
             }
         }
     }
 
     /// Scans a file building the byte offset of every line start. Pure + testable.
     static func indexOffsets(path: String, upTo size: Int64) -> [Int64] {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return [] }
+        indexFile(path: path, upTo: size).offsets
+    }
+
+    /// Scans a file building the byte offset of every line start, plus the byte
+    /// offset just past the last complete line (where live tailing resumes, so a
+    /// trailing partial line is re-read whole on the next poll). Pure + testable.
+    static func indexFile(path: String, upTo size: Int64) -> (offsets: [Int64], consumed: Int64) {
+        guard let fh = FileHandle(forReadingAtPath: path) else { return ([], 0) }
         defer { try? fh.close() }
         var offsets: [Int64] = [0]
+        var consumed: Int64 = 0
         var pos: Int64 = 0
         let chunkSize = 1 << 20
         while pos < size {
@@ -214,13 +255,14 @@ final class Tailer {
             while i < chunk.endIndex {
                 if chunk[i] == UInt8(ascii: "\n") {
                     let next = pos + Int64(chunk.distance(from: chunk.startIndex, to: i)) + 1
+                    consumed = next
                     if next < size { offsets.append(next) }
                 }
                 i = chunk.index(after: i)
             }
             pos += Int64(chunk.count)
         }
-        return offsets
+        return (offsets, consumed)
     }
 
     // MARK: - I/O (all under a timeout so dead mounts can't wedge the queue)
