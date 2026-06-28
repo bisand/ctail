@@ -73,7 +73,16 @@ final class PaywallWindowController: NSWindowController {
         statusLabel.alignment = .center
         statusLabel.maximumNumberOfLines = 2
 
-        let stack = NSStackView(views: [icon, headline, sub, features, buyButton, restoreButton, statusLabel])
+        var views: [NSView] = [icon, headline, sub, features, buyButton, restoreButton, statusLabel]
+        #if DEBUG
+        let devButton = NSButton(title: "Dev: unlock without purchase",
+                                 target: self, action: #selector(devUnlock))
+        devButton.bezelStyle = .rounded
+        devButton.contentTintColor = .systemOrange
+        views.append(devButton)
+        #endif
+
+        let stack = NSStackView(views: views)
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 14
@@ -121,6 +130,14 @@ final class PaywallWindowController: NSWindowController {
     }
 
     // MARK: - Actions
+
+    #if DEBUG
+    /// Dev-only: unlock Pro without going through StoreKit (never in release).
+    @objc private func devUnlock() {
+        Pro.devUnlocked = true
+        succeed()
+    }
+    #endif
 
     @objc private func buy() {
         setBusy(true)

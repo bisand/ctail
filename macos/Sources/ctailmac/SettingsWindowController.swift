@@ -27,7 +27,13 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private let aiProviderPopup = NSPopUpButton()
     private let aiEndpointField = NSTextField()
     private let aiKeyField = NSSecureTextField()
-    private let aiModelField = NSTextField()
+    private let aiModelField = NSComboBox()                 // editable: pick a listed model or type one
+    private let fetchModelsButton = NSButton(title: "Fetch", target: nil, action: nil)
+    // AI rows we show/hide per provider (CLI tools have no endpoint/key; Copilot
+    // uses OAuth, not a key).
+    private var aiEndpointRow: NSGridRow?
+    private var aiKeyRow: NSGridRow?
+    private var aiModelRow: NSGridRow?
 
     // Panes, keyed by toolbar item.
     private let paneHost = NSView()
@@ -86,6 +92,17 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         var providers = ["", "openai", "anthropic", "github", "copilot", "custom"]
         if !AIEnvironment.isSandboxed { providers += AIService.cliProviders }
         aiProviderPopup.addItems(withTitles: providers)
+        aiProviderPopup.target = self
+        aiProviderPopup.action = #selector(aiProviderChanged)
+
+        aiModelField.isEditable = true
+        aiModelField.completes = true
+        aiModelField.translatesAutoresizingMaskIntoConstraints = false
+        aiModelField.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        fetchModelsButton.target = self
+        fetchModelsButton.action = #selector(fetchModels)
+        fetchModelsButton.bezelStyle = .rounded
+        fetchModelsButton.toolTip = "List the provider's available models"
         themes.forEach {
             // Mark Pro-only themes with a lock; selecting one prompts the paywall
             // on save (the real theme name stays in representedObject).
@@ -115,12 +132,66 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
             check(disableUpdates),
             row("Check interval (h)", updateIntervalField),
         ])
+        let modelControl = NSStackView(views: [aiModelField, fetchModelsButton])
+        modelControl.orientation = .horizontal
+        modelControl.spacing = 8
         panes[Self.ai] = pane([
             row("Provider", aiProviderPopup),
             row("Endpoint", aiEndpointField),
             row("API key", aiKeyField),
-            row("Model", aiModelField),
+            row("Model", modelControl),
         ])
+        if let aiGrid = panes[Self.ai]?.subviews.first as? NSGridView {
+            aiEndpointRow = aiGrid.row(at: 1)
+            aiKeyRow = aiGrid.row(at: 2)
+            aiModelRow = aiGrid.row(at: 3)
+        }
+    }
+
+    /// Shows only the fields that apply to the selected AI provider.
+    @objc private func aiProviderChanged() {
+        updateAIFieldVisibility()
+        if let ai = panes[Self.ai] { resizeWindow(toFit: ai) }
+    }
+
+    private func updateAIFieldVisibility() {
+        let provider = aiProviderPopup.titleOfSelectedItem ?? ""
+        let isCLI = AIService.cliProviders.contains(provider)   // claude-cli / codex-cli
+        let isNone = provider.isEmpty
+        aiEndpointRow?.isHidden = isCLI || isNone               // CLI runs a local binary
+        aiKeyRow?.isHidden = isCLI || isNone || provider == "copilot"  // Copilot uses OAuth
+        aiModelRow?.isHidden = isNone
+    }
+
+    /// Fetches the provider's model list into the combo box (keeping the current
+    /// entry). Errors surface in an alert; the field stays free-text either way.
+    @objc private func fetchModels() {
+        var snapshot = settings
+        snapshot.aiProvider = aiProviderPopup.titleOfSelectedItem ?? ""
+        snapshot.aiEndpoint = aiEndpointField.stringValue
+        snapshot.aiKey = aiKeyField.stringValue
+
+        fetchModelsButton.isEnabled = false
+        fetchModelsButton.title = "…"
+        ModelCatalog.fetch(settings: snapshot) { [weak self] result in
+            guard let self else { return }
+            self.fetchModelsButton.isEnabled = true
+            self.fetchModelsButton.title = "Fetch"
+            switch result {
+            case .success(let models):
+                let current = self.aiModelField.stringValue
+                self.aiModelField.removeAllItems()
+                self.aiModelField.addItems(withObjectValues: models)
+                self.aiModelField.stringValue = current        // keep what was typed/saved
+                self.aiModelField.numberOfVisibleItems = min(12, models.count)
+            case .failure(let error):
+                let a = NSAlert()
+                a.messageText = "Couldn't list models"
+                a.informativeText = error.localizedDescription
+                a.addButton(withTitle: "OK")
+                if let win = self.window { a.beginSheetModal(for: win) } else { a.runModal() }
+            }
+        }
     }
 
     private func buildRoot() -> NSView {
@@ -262,6 +333,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         aiEndpointField.stringValue = settings.aiEndpoint
         aiKeyField.stringValue = settings.aiKey
         aiModelField.stringValue = settings.aiModel
+        updateAIFieldVisibility()
     }
 
     @objc private func saveTapped() {

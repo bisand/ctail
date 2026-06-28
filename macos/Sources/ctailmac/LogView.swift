@@ -46,6 +46,7 @@ final class LogView: NSView {
     private(set) var following = true
     var onFollowingChanged: ((Bool) -> Void)?
 
+
     private var displayed: [LogLine] { filterMode ? filtered : lines }
 
     init(palette: ThemeColors, rules: [HighlightRule], fontSize: CGFloat = 12,
@@ -73,6 +74,8 @@ final class LogView: NSView {
         table.rowHeight = ceil(rowFont.ascender - rowFont.descender + rowFont.leading) + 4
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.selectionHighlightStyle = .regular
+        table.allowsMultipleSelection = true     // shift/⌘-click + click-drag across lines
+        table.allowsEmptySelection = true
 
         let gutter = NSTableColumn(identifier: .init("gutter"))
         gutter.width = showLineNumbers ? 64 : 0
@@ -124,14 +127,44 @@ final class LogView: NSView {
         // be contiguous with what we hold. This guards against a stale `following`
         // splicing tail lines onto a scrolled-up (head) window.
         if let last = lines.last, newLines.first!.number != last.number + 1 { return }
-        lines.append(contentsOf: newLines)
-        if lines.count > windowCap { lines.removeFirst(lines.count - windowCap) }
+
         if filterMode || !query.isEmpty {
-            // Keep the filter view / match set current as new lines stream in.
-            recomputeSearch(preserveCurrent: true)
-        } else {
-            table.reloadData()
+            lines.append(contentsOf: newLines)
+            if lines.count > windowCap { lines.removeFirst(lines.count - windowCap) }
+            recomputeSearch(preserveCurrent: true)   // search owns the row selection
+            scrollToBottom()
+            return
         }
+
+        let firstNew = lines.count
+        lines.append(contentsOf: newLines)
+
+        // Frozen while the user has a selection (or is mid-drag): only add rows at
+        // the bottom — no eviction, no scroll, no reload — so the selection and the
+        // visible content stay perfectly put while new lines accumulate below. A
+        // generous cap keeps a long-held selection on a fast log from growing
+        // without bound (oldest rows fall off; NSTableView keeps the selection on
+        // the survivors).
+        if table.isDragging || hasSelection {
+            table.insertRows(at: IndexSet(integersIn: firstNew..<lines.count), withAnimation: [])
+            let hardCap = windowCap * 3
+            if lines.count > hardCap {
+                let evict = lines.count - hardCap
+                lines.removeFirst(evict)
+                table.removeRows(at: IndexSet(integersIn: 0..<evict), withAnimation: [])
+            }
+            return
+        }
+
+        // Normal tail: row-delta updates (not reloadData) so the selection survives
+        // the window sliding, then follow to the bottom.
+        var evicted = 0
+        if lines.count > windowCap { evicted = lines.count - windowCap; lines.removeFirst(evicted) }
+        table.beginUpdates()
+        if evicted > 0 { table.removeRows(at: IndexSet(integersIn: 0..<evicted), withAnimation: []) }
+        let insStart = firstNew - evicted
+        table.insertRows(at: IndexSet(integersIn: insStart..<(insStart + newLines.count)), withAnimation: [])
+        table.endUpdates()
         scrollToBottom()
     }
 
@@ -172,11 +205,36 @@ final class LogView: NSView {
         table.selectRowIndexes(IndexSet(integersIn: 0..<displayed.count), byExtendingSelection: false)
     }
 
-    /// Text of the selected rows (or all rows if none selected), newline-joined.
+    /// Whether any line is selected.
+    var hasSelection: Bool { !table.selectedRowIndexes.isEmpty }
+
+    /// Clears the selection (Esc) and resumes normal operation: trim any overflow
+    /// the frozen window accumulated, and if following, snap back to the tail.
+    func clearSelection() {
+        guard hasSelection else { return }
+        table.deselectAll(nil)
+        if lines.count > windowCap {
+            lines.removeFirst(lines.count - windowCap)
+            table.reloadData()
+        }
+        if following { scrollToBottom() }
+    }
+
+    /// Text of the selected rows (or all resident rows if none selected),
+    /// newline-joined. Used by Copy.
     func selectedText() -> String {
         let rows = table.selectedRowIndexes
         let source = rows.isEmpty ? Array(0..<displayed.count) : Array(rows)
         return source.compactMap { displayed.indices.contains($0) ? displayed[$0].text : nil }
+            .joined(separator: "\n")
+    }
+
+    /// Text of the currently selected lines, or nil when nothing is selected.
+    /// Used to feed a selection to the AI assistant.
+    func selectionText() -> String? {
+        let rows = table.selectedRowIndexes
+        guard !rows.isEmpty else { return nil }
+        return rows.compactMap { displayed.indices.contains($0) ? displayed[$0].text : nil }
             .joined(separator: "\n")
     }
 
@@ -517,6 +575,7 @@ extension LogView: LogScrollKeyHandler {
     func keyJumpToEnd()   { jumpToEnd() }
     func keyPageUp()      { pageUpByScreen() }
     func keyPageDown()    { pageDownByScreen() }
+    func keyClearSelection() { clearSelection() }
 }
 
 /// Receives the document-navigation keys the table intercepts.
@@ -525,6 +584,7 @@ protocol LogScrollKeyHandler: AnyObject {
     func keyJumpToEnd()
     func keyPageUp()
     func keyPageDown()
+    func keyClearSelection()
 }
 
 /// NSTableView subclass that routes Home / End / Page Up / Page Down to the log
@@ -533,12 +593,23 @@ protocol LogScrollKeyHandler: AnyObject {
 final class LogTableView: NSTableView {
     weak var keyHandler: LogScrollKeyHandler?
 
+    /// True while the user is mouse-dragging (NSTableView runs a nested event loop
+    /// inside mouseDown). Live appends use this to avoid disturbing the in-progress
+    /// selection.
+    private(set) var isDragging = false
+    override func mouseDown(with event: NSEvent) {
+        isDragging = true
+        super.mouseDown(with: event)   // blocks until mouse-up while drag-selecting
+        isDragging = false
+    }
+
     override func keyDown(with event: NSEvent) {
         switch Int(event.keyCode) {
         case 115: keyHandler?.keyJumpToStart()   // Home
         case 119: keyHandler?.keyJumpToEnd()     // End
         case 116: keyHandler?.keyPageUp()        // Page Up
         case 121: keyHandler?.keyPageDown()      // Page Down
+        case 53:  keyHandler?.keyClearSelection() // Esc
         default:  super.keyDown(with: event)
         }
     }

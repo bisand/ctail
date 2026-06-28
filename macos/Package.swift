@@ -7,7 +7,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "ctailmac",
-            path: "Sources/ctailmac"
+            path: "Sources/ctailmac",
+            resources: [.process("Resources/appicon.png")]
         )
     ]
 )

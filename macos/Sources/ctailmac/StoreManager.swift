@@ -25,7 +25,24 @@ enum Pro {
         }
     }
 
-    static var isUnlocked: Bool { StoreManager.shared.isPro }
+    static var isUnlocked: Bool {
+        #if DEBUG
+        if devUnlocked { return true }
+        #endif
+        return StoreManager.shared.isPro
+    }
+
+    #if DEBUG
+    /// Dev-only Pro override (never compiled into a release build). Enable via the
+    /// env var `CTAIL_PRO=1`, or persistently with the "Unlock Pro (dev)" menu item
+    /// (which toggles this UserDefaults flag).
+    static let devUnlockKey = "ctail.dev.unlockPro"
+    static var devUnlocked: Bool {
+        get { ProcessInfo.processInfo.environment["CTAIL_PRO"] == "1"
+            || UserDefaults.standard.bool(forKey: devUnlockKey) }
+        set { UserDefaults.standard.set(newValue, forKey: devUnlockKey) }
+    }
+    #endif
 
     /// Free users can keep this many files open at once; Pro is unlimited.
     static let freeTabLimit = 2

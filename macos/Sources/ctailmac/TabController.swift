@@ -100,7 +100,7 @@ final class TabController: NSObject {
 
         tabBar.onSelect = { [weak self] i in self?.activate(i) }
         tabBar.onClose = { [weak self] i in self?.close(i) }
-        tabBar.onNew = { [weak self] in NSApp.sendAction(#selector(AppActions.openFileDialog), to: nil, from: nil) }
+        tabBar.onNew = { NSApp.sendAction(#selector(AppActions.openFileDialog), to: nil, from: nil) }
         tabBar.onReorder = { [weak self] from, to in self?.reorder(from: from, to: to) }
         tabBar.onRename = { [weak self] i in self?.promptRename(i) }
         tabBar.onContext = { [weak self] i, e in self?.showContextMenu(i, e) }
@@ -234,8 +234,12 @@ final class TabController: NSObject {
         if let activePath, let i = tabs.firstIndex(where: { $0.filePath == activePath }) { activate(i) }
     }
 
-    /// Log context for the AI assistant: the active tab's recent lines.
-    func activeLogContext() -> String { activeTab?.logView.tailText(500) ?? "" }
+    /// Log context for the AI assistant: the selected lines if any, else the
+    /// active tab's recent tail.
+    func activeLogContext() -> String {
+        guard let log = activeTab?.logView else { return "" }
+        return log.selectionText() ?? log.tailText(500)
+    }
 
     func copyActiveSelection() {
         guard let text = activeTab?.logView.selectedText(), !text.isEmpty else { return }

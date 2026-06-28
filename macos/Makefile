@@ -25,15 +25,16 @@ run:
 themes:
 	python3 scripts/gen_themes.py ../internal/config/themes.go Sources/ctailmac/Themes.generated.swift
 
-## icon: generate AppIcon.icns from Resources/appicon.png
+## icon: generate AppIcon.icns from the app icon source
 icon:
-	@bash scripts/make-icns.sh Resources/appicon.png .build/AppIcon.icns
+	@bash scripts/make-icns.sh Sources/ctailmac/Resources/appicon.png .build/AppIcon.icns
 
 ## bundle: assemble a distributable ctail.app
 bundle: build icon
 	@rm -rf $(APP_DIR)
 	@mkdir -p $(CONTENTS)/MacOS $(CONTENTS)/Resources
 	@cp $(BUILD_DIR)/ctailmac $(CONTENTS)/MacOS/$(APP)
+	@cp -R $(BUILD_DIR)/*.bundle $(CONTENTS)/MacOS/ 2>/dev/null || true
 	@cp .build/AppIcon.icns $(CONTENTS)/Resources/AppIcon.icns
 	@sed -e 's/__VERSION__/$(VERSION)/' -e 's/__BUILD__/$(BUILD)/' \
 		Resources/Info.plist.in > $(CONTENTS)/Info.plist

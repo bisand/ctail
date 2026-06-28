@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         settings = config.loadSettings()
         config.ensureDefaultProfile()
         palette = resolvePalette()
+        // Set the Dock icon programmatically so it's correct however the app is
+        // launched (the unbundled dev binary otherwise shows the generic icon).
+        if let icon = Self.appIcon() { NSApp.applicationIconImage = icon }
         buildMenu()
         buildWindow()
         tabs.onTabsChanged = { [weak self] in self?.persistSession() }
@@ -193,15 +196,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     }
 
     func showAbout() {
-        let alert = NSAlert()
-        alert.messageText = "ctail"
-        alert.informativeText = "Native macOS log viewer\nVersion \(appVersion())\n© 2024–2026 André Biseth"
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        let credits = NSAttributedString(
+            string: "Fast native log tailer for huge files — syntax highlighting, search, "
+                  + "disk-backed scrollback, and an AI assistant.\n\nCopyright © 2024–2026 André Biseth",
+            attributes: [.font: NSFont.systemFont(ofSize: 11),
+                         .foregroundColor: NSColor.secondaryLabelColor])
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [
+            .applicationName: "ctail",
+            .applicationVersion: appVersion(),
+            .credits: credits,
+        ]
+        if let icon = Self.appIcon() { options[.applicationIcon] = icon }
+        NSApp.orderFrontStandardAboutPanel(options: options)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func appVersion() -> String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+    }
+
+    /// The app icon, loadable whether bundled (.icns) or run as the unbundled dev
+    /// binary (SwiftPM resource).
+    static func appIcon() -> NSImage? {
+        if let url = Bundle.module.url(forResource: "appicon", withExtension: "png"),
+           let img = NSImage(contentsOf: url) { return img }
+        return NSImage(named: "AppIcon")
     }
 
     func showAIAssistant() {
@@ -260,6 +279,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     private weak var unlockProItem: NSMenuItem?
     private weak var restoreItem: NSMenuItem?
     private weak var proActiveItem: NSMenuItem?
+
+    #if DEBUG
+    private weak var devProItem: NSMenuItem?
+    /// Dev-only: toggle the Pro override and apply it live (re-applies theme gating).
+    @objc private func toggleDevPro() {
+        Pro.devUnlocked.toggle()
+        devProItem?.state = Pro.devUnlocked ? .on : .off
+        proStatusChanged()
+        rebuildContent()
+    }
+    #endif
 
     func checkForUpdates() { runUpdateCheck(manual: true) }
 
@@ -328,6 +358,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         proActive.isEnabled = false
         proActive.isHidden = true
         unlockProItem = unlock; restoreItem = restore; proActiveItem = proActive
+        #if DEBUG
+        let devPro = appMenu.addItem(withTitle: "Unlock Pro (dev)", action: #selector(toggleDevPro), keyEquivalent: "")
+        devPro.target = self
+        devPro.state = Pro.devUnlocked ? .on : .off
+        devProItem = devPro
+        #endif
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit ctail", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
