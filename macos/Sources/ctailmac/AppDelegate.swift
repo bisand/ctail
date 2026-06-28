@@ -215,12 +215,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     }
 
-    /// The app icon, loadable whether bundled (.icns) or run as the unbundled dev
-    /// binary (SwiftPM resource).
+    /// The app icon, resolved across all build flavors:
+    ///   - App Store / Xcode app target → the `AppIcon` asset catalog
+    ///   - bundled `.app` from the Makefile → the `.icns`
+    ///   - unbundled SwiftPM dev binary → the bundled `appicon.png` resource
+    /// `Bundle.module` only exists under SwiftPM, so guard it with `SWIFT_PACKAGE`
+    /// (defined only by SwiftPM) — otherwise an Xcode app target won't compile.
     static func appIcon() -> NSImage? {
+        if let asset = NSImage(named: "AppIcon") { return asset }
+        #if SWIFT_PACKAGE
         if let url = Bundle.module.url(forResource: "appicon", withExtension: "png"),
            let img = NSImage(contentsOf: url) { return img }
-        return NSImage(named: "AppIcon")
+        #endif
+        return nil
     }
 
     func showAIAssistant() {

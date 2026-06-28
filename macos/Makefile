@@ -8,13 +8,24 @@ BUILD_DIR  := .build/$(CONFIG)
 APP_DIR    := $(APP).app
 CONTENTS   := $(APP_DIR)/Contents
 
-.PHONY: all build run bundle icon clean test
+.PHONY: all build run bundle icon clean test xcodeproj archive
 
 all: bundle
 
 ## build: compile the binary
 build:
 	swift build -c $(CONFIG)
+
+## xcodeproj: generate the App Store / TestFlight Xcode project from project.yml
+xcodeproj:
+	xcodegen generate
+	@echo "Open ctail.xcodeproj, set your Team under Signing & Capabilities, then Product ▸ Archive."
+
+## archive: build a signed App Store archive (requires DEVELOPMENT_TEAM set in project.yml)
+archive: xcodeproj
+	xcodebuild -project ctail.xcodeproj -scheme ctail -configuration Release \
+		-archivePath .build/ctail.xcarchive archive
+	@echo "Then: Xcode ▸ Window ▸ Organizer ▸ Distribute App ▸ App Store Connect (uploads to TestFlight)."
 
 ## run: build + run the unbundled binary (pass FILE=/path/to.log)
 run:

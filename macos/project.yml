@@ -1,0 +1,56 @@
+name: ctail
+# Generates ctail.xcodeproj for App Store / TestFlight distribution.
+# Run:  cd macos && xcodegen generate && open ctail.xcodeproj
+# The .xcodeproj and generated Info.plist are git-ignored; this file is the source
+# of truth. The SwiftPM package (Package.swift) stays for CLI/dev/self-test builds.
+options:
+  bundleIdPrefix: net.biseth
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.9.9"
+    CURRENT_PROJECT_VERSION: "255"
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    # Set your Apple Developer team here (or pick it in Xcode ▸ Signing & Capabilities).
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  ctail:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: Sources/ctailmac
+        excludes:
+          - "Resources/appicon.png"     # the app icon comes from the asset catalog
+      - path: Assets.xcassets
+      - path: ctail.storekit            # local StoreKit testing (Scheme ▸ Run ▸ Options)
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.biseth.ctail
+        PRODUCT_NAME: ctail
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: Resources/ctail.entitlements
+        COMBINE_HIDPI_IMAGES: YES
+    info:
+      path: Resources/Info.generated.plist
+      properties:
+        CFBundleName: ctail
+        CFBundleDisplayName: ctail
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "13.0"
+        NSHighResolutionCapable: true
+        LSApplicationCategoryType: "public.app-category.developer-tools"
+        NSHumanReadableCopyright: "Copyright © 2024–2026 André Biseth"
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: "Log File"
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            CFBundleTypeExtensions: [log, txt, csv]
