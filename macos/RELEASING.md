@@ -13,7 +13,34 @@ git-ignored and regenerated on demand.
      set price tier, name, description. (Enroll in the **Small Business Program** → 15% fee.)
 3. Set your team in `project.yml` (`DEVELOPMENT_TEAM:`), or pick it in Xcode after generating.
 
-## Build & upload
+## Build & upload — automated (GitHub Actions → TestFlight)
+The **macOS TestFlight** workflow (`.github/workflows/macos-testflight.yml`) builds,
+signs, and uploads a beta to TestFlight. Trigger it from **Actions ▸ macOS TestFlight
+▸ Run workflow** (manual). It bumps the build number to the workflow run number, so
+every run produces a unique TestFlight build.
+
+### Required repo secrets (one-time)
+Add these under **Settings ▸ Secrets and variables ▸ Actions**:
+
+| Secret | What it is / how to get it |
+|---|---|
+| `APPLE_TEAM_ID` | Your 10-char Team ID (App Store Connect ▸ Membership). |
+| `BUILD_CERTIFICATE_BASE64` | An **Apple Distribution** certificate exported from Keychain as `.p12`, then `base64 -i cert.p12 \| pbcopy`. |
+| `P12_PASSWORD` | The password you set when exporting the `.p12`. |
+| `KEYCHAIN_PASSWORD` | Any throwaway string (temp keychain password). |
+| `APP_STORE_CONNECT_KEY_ID` | App Store Connect ▸ **Users and Access ▸ Integrations ▸ App Store Connect API** ▸ key ID. |
+| `APP_STORE_CONNECT_ISSUER_ID` | The Issuer ID on that same page. |
+| `APP_STORE_CONNECT_API_KEY_BASE64` | The downloaded `AuthKey_XXXX.p8`, `base64 -i AuthKey_*.p8 \| pbcopy`. Give the key **App Manager** role. |
+
+The API key drives automatic provisioning (`-allowProvisioningUpdates`) and the upload,
+so no provisioning profile needs to be managed by hand.
+
+> First run note: this pipeline couldn't be executed end-to-end without your Apple
+> credentials, so expect to fine-tune on the first run — most likely the export
+> `method` string (`app-store` vs `app-store-connect` on newer Xcode) or the signing
+> style. The app record + IAP (below) must already exist in App Store Connect.
+
+## Build & upload — manual (Xcode, fallback)
 ```sh
 cd macos
 make xcodeproj          # xcodegen generate
