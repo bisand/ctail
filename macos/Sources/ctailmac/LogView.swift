@@ -109,10 +109,14 @@ final class LogView: NSView {
     }
 
     /// Take key focus when shown so Home/End/Page keys reach the table without a
-    /// click first.
+    /// click first, and re-sync the table — a background tab's appends went through
+    /// reloadData while off-screen, so reload to display the current buffer.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { window?.makeFirstResponder(table) }
+        guard window != nil else { return }
+        window?.makeFirstResponder(table)
+        table.reloadData()
+        if following { scrollToBottom() }
     }
 
     // MARK: - Data feed (called from the Tailer callbacks, on the main thread)
@@ -139,33 +143,29 @@ final class LogView: NSView {
         let firstNew = lines.count
         lines.append(contentsOf: newLines)
 
-        // Frozen while the user has a selection (or is mid-drag): only add rows at
-        // the bottom — no eviction, no scroll, no reload — so the selection and the
-        // visible content stay perfectly put while new lines accumulate below. A
-        // generous cap keeps a long-held selection on a fast log from growing
-        // without bound (oldest rows fall off; NSTableView keeps the selection on
-        // the survivors).
-        if table.isDragging || hasSelection {
-            table.insertRows(at: IndexSet(integersIn: firstNew..<lines.count), withAnimation: [])
+        // Frozen while the user has a selection (or is mid-drag): keep the selection
+        // and the visible content perfectly put by ONLY appending rows at the bottom
+        // — no eviction, no scroll, no reloadData (which would shift the selection).
+        // Safe to use insertRows only when the table is displayed and its row count
+        // matches the buffer; appending at `firstNew == numberOfRows` can't go out
+        // of range. A growth cap (then a reload) bounds a long-held selection.
+        if (table.isDragging || hasSelection), table.window != nil, table.numberOfRows == firstNew {
             let hardCap = windowCap * 3
-            if lines.count > hardCap {
-                let evict = lines.count - hardCap
-                lines.removeFirst(evict)
-                table.removeRows(at: IndexSet(integersIn: 0..<evict), withAnimation: [])
+            if lines.count <= hardCap {
+                table.insertRows(at: IndexSet(integersIn: firstNew..<lines.count), withAnimation: [])
+            } else {
+                lines.removeFirst(lines.count - hardCap)
+                table.reloadData()
             }
             return
         }
 
-        // Normal tail: row-delta updates (not reloadData) so the selection survives
-        // the window sliding, then follow to the bottom.
-        var evicted = 0
-        if lines.count > windowCap { evicted = lines.count - windowCap; lines.removeFirst(evicted) }
-        table.beginUpdates()
-        if evicted > 0 { table.removeRows(at: IndexSet(integersIn: 0..<evicted), withAnimation: []) }
-        let insStart = firstNew - evicted
-        table.insertRows(at: IndexSet(integersIn: insStart..<(insStart + newLines.count)), withAnimation: [])
-        table.endUpdates()
-        scrollToBottom()
+        // Default: keep the window bounded and reloadData. There's no selection to
+        // preserve here, and reloadData is always safe (off-screen background tabs,
+        // initial big tail loads, evictions of any size) — no row-delta math.
+        if lines.count > windowCap { lines.removeFirst(lines.count - windowCap) }
+        table.reloadData()
+        if following { scrollToBottom() }
     }
 
     func reset() {
@@ -540,9 +540,16 @@ extension LogView: NSTableViewDelegate {
                 attributes: [.font: rowFont, .foregroundColor: palette.gutter])
             cell.alignment = .right
         } else {
-            let attr = NSMutableAttributedString(attributedString: highlighter.render(line.text))
-            applySearchHighlight(attr, line: line, row: row)
-            cell.attributedStringValue = attr
+            let rendered = highlighter.render(line.text)
+            // Only pay for a mutable copy when there's a search overlay to layer on;
+            // the common (no-search) path uses the highlighter's result directly.
+            if query.isEmpty {
+                cell.attributedStringValue = rendered
+            } else {
+                let attr = NSMutableAttributedString(attributedString: rendered)
+                applySearchHighlight(attr, line: line, row: row)
+                cell.attributedStringValue = attr
+            }
             cell.alignment = .left
         }
         return cell

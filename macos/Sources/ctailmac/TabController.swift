@@ -45,6 +45,13 @@ final class TabController: NSObject {
         memoryTimer?.invalidate()
     }
 
+    /// Stops every tailer and releases security-scoped access. Called when this
+    /// controller is being replaced (rebuildContent) so old pollers don't linger.
+    func shutdown() {
+        memoryTimer?.invalidate()
+        for tab in tabs { tab.tailer.stop(); bookmarks.endAccess(tab.filePath) }
+    }
+
     // MARK: - Layout
 
     private func buildLayout() {
