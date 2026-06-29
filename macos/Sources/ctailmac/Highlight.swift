@@ -42,6 +42,16 @@ struct HighlightEngine {
     var rules: [HighlightRule]
     let palette: ThemeColors
     let font: NSFont
+    /// Precomputed once — `NSFontManager.convert` is costly and was previously
+    /// called per bold match, per visible row, on every reload (~4×/sec).
+    private let boldFont: NSFont
+
+    init(rules: [HighlightRule], palette: ThemeColors, font: NSFont) {
+        self.rules = rules
+        self.palette = palette
+        self.font = font
+        self.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+    }
 
     func render(_ line: String) -> NSAttributedString {
         let attr = NSMutableAttributedString(
@@ -55,7 +65,7 @@ struct HighlightEngine {
             if rule.regex.firstMatch(in: line, range: full) != nil {
                 if let fg = rule.fg { attr.addAttribute(.foregroundColor, value: fg, range: full) }
                 if let bg = rule.bg { attr.addAttribute(.backgroundColor, value: bg, range: full) }
-                if rule.bold { attr.addAttribute(.font, value: bold(font), range: full) }
+                if rule.bold { attr.addAttribute(.font, value: boldFont, range: full) }
                 break
             }
         }
@@ -66,13 +76,9 @@ struct HighlightEngine {
                 guard let r = m?.range else { return }
                 if let fg = rule.fg { attr.addAttribute(.foregroundColor, value: fg, range: r) }
                 if let bg = rule.bg { attr.addAttribute(.backgroundColor, value: bg, range: r) }
-                if rule.bold { attr.addAttribute(.font, value: bold(font), range: r) }
+                if rule.bold { attr.addAttribute(.font, value: boldFont, range: r) }
             }
         }
         return attr
-    }
-
-    private func bold(_ f: NSFont) -> NSFont {
-        NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask)
     }
 }

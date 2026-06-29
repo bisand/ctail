@@ -55,6 +55,14 @@ final class Tailer {
     private(set) var baseKnown = true       // false while the background count runs
     private var headCheckpoints: [Int64] = []   // absolute offsets for lines 1...base
     private var tailCheckpoints: [Int64] = []    // offsets for tail lines, indexed locally
+    /// The in-flight background head count, if any. Cancelled (and superseded)
+    /// whenever the file is re-read so a stale scan can't apply a wrong `base`.
+    private var headCountToken: CancelToken?
+
+    /// Largest single disk read; a big burst or a large rotated file is pumped in
+    /// chunks of this size so transient memory never exceeds one chunk. Injectable
+    /// so tests can force the chunked path on small fixtures.
+    private let maxReadChunk: Int64
 
     // --- callbacks (invoked on the main queue) ---
     var onLines: (([LogLine]) -> Void)?
@@ -64,13 +72,17 @@ final class Tailer {
     var onBaseResolved: ((Int64) -> Void)?  // background count done; arg = base (lines before tail)
 
     init(path: String, pollInterval: TimeInterval = 0.25, readTimeout: TimeInterval = 30,
-         tailFirstThreshold: Int64 = 1 * 1024 * 1024, tailSeekBack: Int64 = 512 * 1024) {
+         tailFirstThreshold: Int64 = 1 * 1024 * 1024, tailSeekBack: Int64 = 512 * 1024,
+         maxReadChunk: Int64 = 4 * 1024 * 1024) {
         self.path = path
         self.pollInterval = max(0.05, pollInterval)
         self.readTimeout = readTimeout
         self.tailFirstThreshold = tailFirstThreshold
         self.tailSeekBack = tailSeekBack
+        self.maxReadChunk = max(1, maxReadChunk)
     }
+
+    deinit { timer?.cancel(); headCountToken?.cancel() }   // stop the poll timer and any head scan
 
     /// Total lines known so far (grows as the file is tailed; absolute once based).
     var totalLines: Int64 { base + lineNum }
@@ -131,6 +143,7 @@ final class Tailer {
 
     func performInitialRead() {
         guard let st = stat() else { return }
+        headCountToken?.cancel(); headCountToken = nil   // supersede any in-flight head count
         inode = st.inode
         fileSize = st.size
         lineNum = 0; offset = 0; base = 0
@@ -144,7 +157,9 @@ final class Tailer {
             let (lines, consumed) = readNewLines(from: tailStart, to: st.size, buildTailIndex: true)
             offset = consumed
             if !lines.isEmpty { fire { self.onLines?(lines) } }
-            scheduleHeadCount(tailStart: tailStart)
+            let token = CancelToken()
+            headCountToken = token
+            scheduleHeadCount(tailStart: tailStart, token: token)
         } else {
             // Small file: read it all from the top; numbers are absolute immediately.
             tailStart = 0
@@ -168,22 +183,44 @@ final class Tailer {
 
         if rotated || st.size < fileSize {            // rotation or truncation -> re-read from 0
             resetState(newSize: st.size)
-            let (lines, consumed) = readNewLines(from: 0, to: st.size, buildTailIndex: true)
-            offset = consumed
-            if !lines.isEmpty { fire { self.onLines?(lines) } }
+            pump(from: 0, to: st.size, buildTailIndex: true)
             return
         }
 
         if wasInError { fire { self.onReady?() } }
         if st.size == offset { return }               // nothing new
 
-        let (lines, consumed) = readNewLines(from: offset, to: st.size, buildTailIndex: true)
-        offset = consumed
+        pump(from: offset, to: st.size, buildTailIndex: true)
         fileSize = st.size
-        if !lines.isEmpty { fire { self.onLines?(lines) } }
+    }
+
+    /// Reads [from, to) in bounded chunks, emitting lines per chunk so a huge gap
+    /// (a burst append, or a large rotated/truncated file re-read from 0) never
+    /// allocates more than `maxReadChunk` at once. Advances `offset` as it goes.
+    /// A line straddling a chunk boundary is re-read whole from the next chunk
+    /// (`consumed` lands on a line boundary); a single line longer than a chunk —
+    /// pathological for a log — falls back to one full read so it's never split.
+    private func pump(from: Int64, to: Int64, buildTailIndex: Bool) {
+        var cursor = from
+        while cursor < to {
+            let chunkEnd = min(to, cursor + maxReadChunk)
+            let (lines, consumed) = readNewLines(from: cursor, to: chunkEnd, buildTailIndex: buildTailIndex)
+            if consumed <= cursor {                   // no complete line in this chunk
+                if chunkEnd < to {                    // an over-long line spans past the cap — read it whole
+                    let (rest, restConsumed) = readNewLines(from: cursor, to: to, buildTailIndex: buildTailIndex)
+                    offset = restConsumed
+                    if !rest.isEmpty { fire { self.onLines?(rest) } }
+                }
+                break                                 // else: a trailing partial awaits more data
+            }
+            cursor = consumed
+            offset = consumed
+            if !lines.isEmpty { fire { self.onLines?(lines) } }
+        }
     }
 
     private func resetState(newSize: Int64) {
+        headCountToken?.cancel(); headCountToken = nil   // any in-flight head count is now stale
         lineNum = 0; offset = 0; fileSize = newSize; inode = 0
         tailStart = 0; base = 0; baseKnown = true
         headCheckpoints = []; tailCheckpoints = []
@@ -192,11 +229,20 @@ final class Tailer {
 
     // MARK: - Background head count (large files)
 
-    private func scheduleHeadCount(tailStart: Int64) {
+    private func scheduleHeadCount(tailStart: Int64, token: CancelToken) {
         ioQueue.async { [weak self] in
             guard let self else { return }
-            let result = Self.indexFile(path: self.path, upTo: tailStart, stride: self.indexStride)
-            self.queue.async { self.applyHeadCount(result.checkpoints, base: result.total) }
+            // `token.isCancelled` is a lock-guarded flag (not `queue`-owned state),
+            // so polling it from the io thread can't deadlock against a `queue`
+            // thread blocked in `withTimeout`.
+            let result = Self.indexFile(path: self.path, upTo: tailStart,
+                                        stride: self.indexStride, isCancelled: { token.isCancelled })
+            self.queue.async {
+                // Drop the result if the file was re-read meanwhile (rotation,
+                // truncation, refresh) — `headCountToken` would have been replaced.
+                guard self.headCountToken === token, !token.isCancelled else { return }
+                self.applyHeadCount(result.checkpoints, base: result.total)
+            }
         }
     }
 
@@ -280,7 +326,8 @@ final class Tailer {
     /// lines), the complete-line count, and the byte offset past the last complete
     /// line. Each 1 MB chunk read is wrapped in an autoreleasepool so the scan's
     /// transient memory stays at one chunk.
-    static func indexFile(path: String, upTo size: Int64, stride: Int = 1000)
+    static func indexFile(path: String, upTo size: Int64, stride: Int = 1000,
+                          isCancelled: () -> Bool = { false })
         -> (checkpoints: [Int64], total: Int64, consumed: Int64) {
         guard size > 0, let fh = FileHandle(forReadingAtPath: path) else { return ([0], 0, 0) }
         defer { try? fh.close() }
@@ -293,6 +340,7 @@ final class Tailer {
         let nl = UInt8(ascii: "\n")
         var stop = false
         while pos < size && !stop {
+            if isCancelled() { break }      // tab closed / file reset — abandon a now-irrelevant scan
             autoreleasepool {
                 guard let chunk = try? fh.read(upToCount: chunkSize), !chunk.isEmpty else { stop = true; return }
                 let limit = Int(min(Int64(chunk.count), size - pos))
@@ -355,26 +403,36 @@ final class Tailer {
 
     /// Pure line splitter: complete lines numbered from `startNum`, their start
     /// offsets, and the byte offset just past the last complete line.
+    ///
+    /// Scans for newlines with `memchr` (SIMD-optimized) over the buffer's raw
+    /// bytes rather than subscripting `Data` byte-by-byte — the latter is an order
+    /// of magnitude slower and this is the parse hot path (every poll + initial
+    /// read + scrollback page-in).
     static func splitLines(_ data: Data, startingAt startNum: Int64, baseOffset: Int64)
         -> (lines: [LogLine], offsets: [Int64], consumed: Int64) {
         var lines: [LogLine] = []
         var offsets: [Int64] = []
         var consumed = baseOffset
         var num = startNum
-        var lineStart = data.startIndex
         let nl = UInt8(ascii: "\n")
-        var i = data.startIndex
-        while i < data.endIndex {
-            if data[i] == nl {
-                var slice = data[lineStart..<i]
-                if slice.last == UInt8(ascii: "\r") { slice = slice.dropLast() }
+        let cr = UInt8(ascii: "\r")
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.baseAddress else { return }
+            let count = raw.count
+            var lineStart = 0
+            var p = 0
+            while p < count, let hit = memchr(base + p, Int32(nl), count - p) {
+                let nlIdx = base.distance(to: hit)
+                var end = nlIdx
+                if end > lineStart, raw[end - 1] == cr { end -= 1 }   // strip a trailing CR
                 num += 1
-                offsets.append(baseOffset + Int64(data.distance(from: data.startIndex, to: lineStart)))
+                offsets.append(baseOffset + Int64(lineStart))
+                let slice = UnsafeRawBufferPointer(rebasing: raw[lineStart..<end])
                 lines.append(LogLine(number: num, text: String(decoding: slice, as: UTF8.self)))
-                consumed = baseOffset + Int64(data.distance(from: data.startIndex, to: i)) + 1
-                lineStart = data.index(after: i)
+                consumed = baseOffset + Int64(nlIdx) + 1
+                lineStart = nlIdx + 1
+                p = nlIdx + 1
             }
-            i = data.index(after: i)
         }
         return (lines, offsets, consumed)
     }
@@ -399,4 +457,14 @@ final class Tailer {
     }
 
     private func fire(_ block: @escaping () -> Void) { DispatchQueue.main.async(execute: block) }
+}
+
+/// A thread-safe one-way "cancelled" flag. Read by the background indexer on its
+/// io thread and set from the tailer queue / deinit; the lock is held only for
+/// the flag access so it never blocks across I/O.
+final class CancelToken {
+    private let lock = NSLock()
+    private var flag = false
+    var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+    func cancel() { lock.lock(); flag = true; lock.unlock() }
 }

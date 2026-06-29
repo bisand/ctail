@@ -112,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
 
     private func installController() {
         window.backgroundColor = palette.background
+        tabs?.shutdown()        // stop the outgoing controller's tailers before replacing it
         tabs = TabController(config: config, settings: settings, palette: palette, bookmarks: bookmarks)
         tabs.onActiveFileChanged = { [weak self] path in
             self?.window.title = path.map { "ctail — \(($0 as NSString).lastPathComponent)" } ?? "ctail"

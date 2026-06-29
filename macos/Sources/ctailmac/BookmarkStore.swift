@@ -31,6 +31,9 @@ final class BookmarkStore {
     /// bookmark exists (caller proceeds; unsandboxed builds can read anyway).
     @discardableResult
     func beginAccess(_ path: String) -> Bool {
+        // Already accessing: don't resolve/start a second time — that would
+        // overwrite the stored URL and leak the first scoped-access claim.
+        if active[path] != nil { return true }
         guard let b64 = map[path], let data = Data(base64Encoded: b64) else { return false }
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope,

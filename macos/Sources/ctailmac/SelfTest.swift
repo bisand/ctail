@@ -353,5 +353,43 @@ enum SelfTest {
         eq(tf.readRange(start: head.total + 1, count: 1).first?.text, "L\(head.total + 1)",
            "first tail line at absolute number base+1")
         eq(tf.readRange(start: 50, count: 1).first?.text, "L50", "tail-region last line")
+
+        // --- chunked pump: a burst larger than maxReadChunk is read in pieces ---
+        // A tiny chunk (7 bytes) forces many lines to straddle chunk boundaries on
+        // a small fixture; every line must still be counted and readable intact.
+        write("seed\n")
+        let pumped = Tailer(path: file.path, pollInterval: 0.05, maxReadChunk: 7)
+        pumped.performInitialRead()
+        eq(pumped.totalLines, 1, "pump: initial seed line")
+        var burst = ""
+        for n in 1...200 { burst += "entry-\(n)\n" }     // each line > the 7-byte chunk
+        appendText(burst)
+        pumped.performPoll()
+        eq(pumped.totalLines, 201, "pump: all burst lines counted across chunk boundaries")
+        eq(pumped.readRange(start: 2, count: 1).first?.text, "entry-1", "pump: first burst line intact")
+        eq(pumped.readRange(start: 201, count: 1).first?.text, "entry-200", "pump: last burst line intact")
+        eq(pumped.readRange(start: 50, count: 2).map { $0.text }, ["entry-49", "entry-50"],
+           "pump: mid-burst lines intact")
+
+        // A single line longer than maxReadChunk is never split — the over-long
+        // fallback reads it whole rather than dropping or truncating it.
+        let longLine = String(repeating: "x", count: 100)   // >> 7-byte chunk
+        appendText(longLine + "\n")
+        pumped.performPoll()
+        eq(pumped.totalLines, 202, "pump: over-long line counted")
+        eq(pumped.readRange(start: 202, count: 1).first?.text, longLine, "pump: over-long line intact")
+
+        // --- head-count cancellation: a superseding read drops a stale scan ---
+        var hc = ""
+        for n in 1...50 { hc += "H\(n)\n" }
+        write(hc)
+        let cancellable = Tailer(path: file.path, pollInterval: 0.05, tailFirstThreshold: 20, tailSeekBack: 12)
+        cancellable.performInitialRead()
+        eq(cancellable.indexingComplete, false, "cancel: tail-first defers count")
+        let cancelled = CancelToken()
+        cancelled.cancel()
+        let aborted = Tailer.indexFile(path: file.path, upTo: 1_000, stride: 1000,
+                                       isCancelled: { cancelled.isCancelled })
+        eq(aborted.total, 0, "cancel: a pre-cancelled scan does no work")
     }
 }
