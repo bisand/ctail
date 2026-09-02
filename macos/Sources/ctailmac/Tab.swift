@@ -13,13 +13,13 @@ final class Tab {
 
     init(filePath: String, palette: ThemeColors, rules: [HighlightRule],
          profileName: String, pollInterval: TimeInterval, readTimeout: TimeInterval,
-         fontSize: CGFloat, showLineNumbers: Bool, bufferSize: Int, scrollBuffer: Int) {
+         fontSize: CGFloat, showLineNumbers: Bool, wordWrap: Bool, bufferSize: Int, scrollBuffer: Int) {
         self.filePath = filePath
         self.label = ""
         self.color = ""
         self.profileName = profileName
         self.logView = LogView(palette: palette, rules: rules,
-                               fontSize: fontSize, showLineNumbers: showLineNumbers,
+                               fontSize: fontSize, showLineNumbers: showLineNumbers, wordWrap: wordWrap,
                                bufferSize: bufferSize, scrollBuffer: scrollBuffer)
         self.tailer = Tailer(path: filePath, pollInterval: pollInterval, readTimeout: readTimeout)
     }

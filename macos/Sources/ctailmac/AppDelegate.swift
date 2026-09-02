@@ -166,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
                 config.saveSettings(new)
                 self.settings = new
                 self.rebuildContent()
+                self.syncViewMenu()
                 if pickedLockedTheme { self.showPaywall(feature: .themes) }
         }
         settingsWindow = controller
@@ -402,6 +403,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         // View menu.
         let viewItem = NSMenuItem(); main.addItem(viewItem)
         let viewMenu = NSMenu(title: "View")
+        let lineNums = viewMenu.addItem(withTitle: "Show Line Numbers", action: #selector(toggleLineNumbers),
+                                        keyEquivalent: "l")
+        lineNums.keyEquivalentModifierMask = [.command, .shift]
+        lineNums.target = self
+        let wrap = viewMenu.addItem(withTitle: "Word Wrap", action: #selector(toggleWordWrap), keyEquivalent: "w")
+        wrap.keyEquivalentModifierMask = [.command, .option]
+        wrap.target = self
+        lineNumbersItem = lineNums; wordWrapItem = wrap
+        viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: "Toggle Theme", action: #selector(toggleTheme), keyEquivalent: "")
         viewMenu.addItem(withTitle: "Profiles & Rules…", action: #selector(showProfiles), keyEquivalent: "")
         viewItem.submenu = viewMenu
@@ -420,6 +430,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         helpItem.submenu = helpMenu
 
         NSApp.mainMenu = main
+        syncViewMenu()
+    }
+
+    // MARK: - View toggles (line numbers / word wrap)
+
+    private var lineNumbersItem: NSMenuItem?
+    private var wordWrapItem: NSMenuItem?
+
+    /// Checkmarks mirror the persisted settings; called after any change to them.
+    private func syncViewMenu() {
+        lineNumbersItem?.state = settings.showLineNumbers ? .on : .off
+        wordWrapItem?.state = settings.wordWrap ? .on : .off
+    }
+
+    @objc private func toggleLineNumbers() {
+        let on = !settings.showLineNumbers
+        updateSettings { $0.showLineNumbers = on }
+        applyViewOptions()
+    }
+
+    @objc private func toggleWordWrap() {
+        let on = !settings.wordWrap
+        updateSettings { $0.wordWrap = on }
+        applyViewOptions()
+    }
+
+    /// Pushes the two toggles into the open tabs live (no content rebuild, so
+    /// scroll position and selection survive) and refreshes the menu state.
+    private func applyViewOptions() {
+        tabs.setViewOptions(showLineNumbers: settings.showLineNumbers, wordWrap: settings.wordWrap)
+        syncViewMenu()
     }
 
     /// Repopulate Open Recent each time it opens.

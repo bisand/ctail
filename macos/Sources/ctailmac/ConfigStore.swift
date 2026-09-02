@@ -13,9 +13,13 @@ final class ConfigStore {
         let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]; return e
     }()
 
-    /// `root` override is for tests; production uses Application Support.
+    /// `root` override is for tests; `CTAIL_CONFIG_DIR` in the environment does
+    /// the same for a dev run (so trying things out doesn't touch the real
+    /// session); production uses Application Support.
     init(root: URL? = nil) {
-        let base = root ?? FileManager.default
+        let envDir = ProcessInfo.processInfo.environment["CTAIL_CONFIG_DIR"]
+            .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+        let base = root ?? envDir ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ctail", isDirectory: true)
         dir = base

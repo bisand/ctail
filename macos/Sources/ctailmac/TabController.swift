@@ -145,6 +145,7 @@ final class TabController: NSObject {
                       readTimeout: Double(settings.readTimeoutSec),
                       fontSize: CGFloat(settings.fontSize),
                       showLineNumbers: settings.showLineNumbers,
+                      wordWrap: settings.wordWrap,
                       bufferSize: settings.bufferSize,
                       scrollBuffer: settings.scrollBuffer)
         wire(tab)
@@ -246,6 +247,17 @@ final class TabController: NSObject {
     func activeLogContext() -> String {
         guard let log = activeTab?.logView else { return "" }
         return log.selectionText() ?? log.tailText(500)
+    }
+
+    /// Applies the View-menu toggles live to every open tab (no rebuild, scroll
+    /// position kept) and remembers them for tabs opened later.
+    func setViewOptions(showLineNumbers: Bool, wordWrap: Bool) {
+        settings.showLineNumbers = showLineNumbers
+        settings.wordWrap = wordWrap
+        for tab in tabs {
+            tab.logView.setShowLineNumbers(showLineNumbers)
+            tab.logView.setWordWrap(wordWrap)
+        }
     }
 
     func copyActiveSelection() {

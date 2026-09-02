@@ -105,7 +105,7 @@ struct AppSettings: Codable, Equatable {
     var theme: String = "catppuccin"
     var themeMode: String = "dark"
     var fontSize: Int = 14
-    var showLineNumbers: Bool = false
+    var showLineNumbers: Bool = true
     var wordWrap: Bool = false
     var restoreTabs: Bool = true
     var newTabPosition: String = "end"
@@ -140,7 +140,7 @@ struct AppSettings: Codable, Equatable {
         theme = try s(.theme, "catppuccin")
         themeMode = try s(.themeMode, "dark")
         fontSize = try i(.fontSize, 14)
-        showLineNumbers = try b(.showLineNumbers, false)
+        showLineNumbers = try b(.showLineNumbers, true)
         wordWrap = try b(.wordWrap, false)
         restoreTabs = try b(.restoreTabs, true)
         newTabPosition = try s(.newTabPosition, "end")

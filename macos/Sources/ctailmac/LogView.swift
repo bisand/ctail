@@ -50,10 +50,14 @@ final class LogView: NSView {
     private var displayed: [LogLine] { filterMode ? filtered : lines }
 
     init(palette: ThemeColors, rules: [HighlightRule], fontSize: CGFloat = 12,
-         showLineNumbers: Bool = true, bufferSize: Int = 10_000, scrollBuffer: Int = 500) {
+         showLineNumbers: Bool = true, wordWrap: Bool = false,
+         bufferSize: Int = 10_000, scrollBuffer: Int = 500) {
         self.palette = palette
         self.rowFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         self.showLineNumbers = showLineNumbers
+        self.wordWrap = wordWrap
+        self.lineHeight = ceil(NSLayoutManager().defaultLineHeight(for: rowFont))
+        self.charAdvance = ("0" as NSString).size(withAttributes: [.font: rowFont]).width
         self.windowCap = max(200, bufferSize)
         // Page in at most half the window per scroll so it always slides rather
         // than wholly replacing; keep it positive even if scrollBuffer is 0.
@@ -63,34 +67,129 @@ final class LogView: NSView {
         setup()
     }
 
-    private let showLineNumbers: Bool
     required init?(coder: NSCoder) { fatalError() }
+
+    // MARK: - View options (line numbers / word wrap)
+
+    private var showLineNumbers: Bool
+    private var wordWrap: Bool
+    /// Height of one text line in `rowFont`, as the text system lays it out.
+    private let lineHeight: CGFloat
+    /// Advance of one glyph in the (monospaced) row font — the basis of the O(1)
+    /// wrapped-row estimate in `heightOfRow`.
+    private let charAdvance: CGFloat
+    private let rowPadding: CGFloat = 4
+    private let gutterColumn = NSTableColumn(identifier: .init("gutter"))
+    private let textColumn = NSTableColumn(identifier: .init("text"))
+    /// Text-column width the current wrapped row heights were computed for.
+    private var wrapWidth: CGFloat = 0
+    private var reloading = false
+
+    /// Shows/hides the line-number gutter live (View menu), keeping the same
+    /// content under the viewport.
+    func setShowLineNumbers(_ on: Bool) {
+        guard on != showLineNumbers else { return }
+        showLineNumbers = on
+        gutterColumn.isHidden = !on
+        if !on { gutterColumn.width = 0 }
+        reloadRestoring(scrollAnchor())
+    }
+
+    /// Toggles wrapping live. Wrapped rows have variable heights (see
+    /// `heightOfRow`), so the table is reloaded and the top line re-anchored.
+    func setWordWrap(_ on: Bool) {
+        guard on != wordWrap else { return }
+        wordWrap = on
+        scrollView.hasHorizontalScroller = !on
+        wrapWidth = textColumn.width
+        reloadRestoring(scrollAnchor())
+    }
+
+    /// Gutter wide enough for the largest line number we can show (a 10M-line
+    /// file needs 8 digits), never narrower than 4 digits so it doesn't jitter.
+    private func gutterWidth() -> CGFloat {
+        let maxLine = max(windowEnd, totalLinesProvider?() ?? 0, 1)
+        let digits = max(4, String(maxLine).count)
+        return ceil(CGFloat(digits) * charAdvance) + 16
+    }
+
+    /// Every table reload goes through here so the gutter can grow with the line
+    /// count before rows are laid out. `reloading` keeps the column-resize
+    /// observer from re-measuring heights mid-reload (reloadData does that itself).
+    private func reload() {
+        reloading = true
+        if showLineNumbers {
+            let w = gutterWidth()
+            if gutterColumn.width != w { gutterColumn.width = w }
+        }
+        table.reloadData()
+        reloading = false
+    }
+
+    /// Rows a line occupies when wrapped, from its column count and the cell
+    /// width. The font is monospaced and wrapping is per character, so this is
+    /// exact for ASCII; non-ASCII scalars count double (CJK/emoji) and tabs as 4,
+    /// which errs toward a spare blank line rather than clipping. O(n) over the
+    /// bytes and no text layout, so it's cheap enough to run on every reload.
+    private func wrappedRows(for text: String) -> Int {
+        let usable = textColumn.width - 8            // NSTextFieldCell's horizontal insets
+        guard usable > charAdvance else { return 1 }
+        let perRow = max(1, Int(usable / charAdvance))
+        var cols = 0
+        for b in text.utf8 {
+            if b < 0x80 { cols += (b == 0x09) ? 4 : 1 } else if b & 0xC0 != 0x80 { cols += 2 }
+        }
+        return max(1, (cols + perRow - 1) / perRow)
+    }
+
+    /// The text column autoresizes with the window; wrapped heights depend on
+    /// its width, so re-measure every row when it changes.
+    @objc private func columnResized() {
+        guard wordWrap, textColumn.width != wrapWidth else { return }
+        wrapWidth = textColumn.width
+        guard !reloading, table.numberOfRows > 0 else { return }
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<table.numberOfRows))
+        NSAnimationContext.endGrouping()
+        if following { scrollToBottom() }
+    }
+
+    /// The column autoresizes while our subviews are laid out, so check after
+    /// every layout pass too (zoom and split resizes don't go through live resize).
+    override func layout() {
+        super.layout()
+        columnResized()
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        columnResized()
+    }
 
     private func setup() {
         table.headerView = nil
         table.backgroundColor = palette.background
         table.usesAlternatingRowBackgroundColors = false
         table.gridStyleMask = []
-        table.rowHeight = ceil(rowFont.ascender - rowFont.descender + rowFont.leading) + 4
+        table.rowHeight = lineHeight + rowPadding
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.selectionHighlightStyle = .regular
         table.allowsMultipleSelection = true     // shift/⌘-click + click-drag across lines
         table.allowsEmptySelection = true
 
-        let gutter = NSTableColumn(identifier: .init("gutter"))
-        gutter.width = showLineNumbers ? 64 : 0
-        gutter.isHidden = !showLineNumbers
-        let text = NSTableColumn(identifier: .init("text"))
-        text.resizingMask = .autoresizingMask
-        table.addTableColumn(gutter)
-        table.addTableColumn(text)
+        gutterColumn.width = showLineNumbers ? gutterWidth() : 0
+        gutterColumn.isHidden = !showLineNumbers
+        textColumn.resizingMask = .autoresizingMask
+        table.addTableColumn(gutterColumn)
+        table.addTableColumn(textColumn)
         table.dataSource = self
         table.delegate = self
         table.keyHandler = self
 
         scrollView.documentView = table
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = !wordWrap
         scrollView.drawsBackground = true
         scrollView.backgroundColor = palette.background
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -106,6 +205,9 @@ final class LogView: NSView {
         NotificationCenter.default.addObserver(self, selector: #selector(boundsChanged),
                                                name: NSView.boundsDidChangeNotification,
                                                object: scrollView.contentView)
+        NotificationCenter.default.addObserver(self, selector: #selector(columnResized),
+                                               name: NSTableView.columnDidResizeNotification,
+                                               object: table)
     }
 
     /// Take key focus when shown so Home/End/Page keys reach the table without a
@@ -115,7 +217,7 @@ final class LogView: NSView {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
         window?.makeFirstResponder(table)
-        table.reloadData()
+        reload()
         if following { scrollToBottom() }
     }
 
@@ -155,7 +257,7 @@ final class LogView: NSView {
                 table.insertRows(at: IndexSet(integersIn: firstNew..<lines.count), withAnimation: [])
             } else {
                 lines.removeFirst(lines.count - hardCap)
-                table.reloadData()
+                reload()
             }
             return
         }
@@ -164,7 +266,7 @@ final class LogView: NSView {
         // preserve here, and reloadData is always safe (off-screen background tabs,
         // initial big tail loads, evictions of any size) — no row-delta math.
         if lines.count > windowCap { lines.removeFirst(lines.count - windowCap) }
-        table.reloadData()
+        reload()
         if following { scrollToBottom() }
     }
 
@@ -173,7 +275,7 @@ final class LogView: NSView {
         filtered.removeAll(keepingCapacity: true)
         matchRows.removeAll(); currentMatch = -1
         following = true
-        table.reloadData()
+        reload()
     }
 
     /// The background line count finished: the tail was shown numbered locally
@@ -186,7 +288,7 @@ final class LogView: NSView {
             lines = lines.map { LogLine(number: $0.number + base, text: $0.text) }
             filtered = filtered.map { LogLine(number: $0.number + base, text: $0.text) }
         }
-        table.reloadData()      // gutter now renders real numbers (indexingReady == true)
+        reload()      // gutter now renders real numbers (indexingReady == true)
         // reloadData can reset the scroll position; if we were following the tail,
         // stay pinned to the bottom so `following` keeps matching the viewport
         // (otherwise the window desyncs and later paging splices the wrong range).
@@ -215,7 +317,7 @@ final class LogView: NSView {
         table.deselectAll(nil)
         if lines.count > windowCap {
             lines.removeFirst(lines.count - windowCap)
-            table.reloadData()
+            reload()
         }
         if following { scrollToBottom() }
     }
@@ -267,7 +369,7 @@ final class LogView: NSView {
             guard !head.isEmpty else { return }
             self.setFollowing(false)
             self.lines = head
-            self.table.reloadData()
+            self.reload()
             self.scrollRowToTop(0)
         }
     }
@@ -287,7 +389,7 @@ final class LogView: NSView {
             guard !tail.isEmpty else { return }
             self.lines = tail
             self.setFollowing(true)
-            self.table.reloadData()
+            self.reload()
             self.scrollToBottom()
         }
     }
@@ -300,14 +402,18 @@ final class LogView: NSView {
         if target + Int64(viewportRows()) - 1 >= total { jumpToEnd() } else { goTo(topLine: target) }
     }
 
+    /// Rows that fit one screen. With wrapping, rows vary in height, so count
+    /// what's actually visible; otherwise derive it from the fixed row height
+    /// (which also holds for a not-yet-filled table).
     private func viewportRows() -> Int {
-        max(1, Int(scrollView.contentView.bounds.height / table.rowHeight))
+        let bounds = scrollView.contentView.bounds
+        return max(1, wordWrap ? table.rows(in: bounds).length : Int(bounds.height / table.rowHeight))
     }
 
     /// Absolute file line currently at the top of the viewport.
     private func currentTopLine() -> Int64 {
-        let topRow = max(0, Int(scrollView.contentView.bounds.minY / table.rowHeight))
-        return windowStart + Int64(min(topRow, max(0, lines.count - 1)))
+        let topRow = table.row(at: NSPoint(x: 0, y: scrollView.contentView.bounds.minY))
+        return windowStart + Int64(min(max(0, topRow), max(0, lines.count - 1)))
     }
 
     /// Scrolls so `topLine` sits at the top of the viewport, loading a fresh window
@@ -339,7 +445,7 @@ final class LogView: NSView {
             guard !win.isEmpty else { return }
             self.setFollowing(false)
             self.lines = win
-            self.table.reloadData()
+            self.reload()
             self.scrollRowToTop(Int(clampedTop - self.windowStart))
         }
     }
@@ -360,12 +466,45 @@ final class LogView: NSView {
     /// Scrolls so `row` sits at the top of the viewport (clamped to content), with
     /// the bounds observer suppressed so paging isn't re-triggered.
     private func scrollRowToTop(_ row: Int) {
-        let maxY = max(0, table.bounds.height - scrollView.contentView.bounds.height)
-        let y = min(maxY, max(0, CGFloat(row) * table.rowHeight))
+        let n = table.numberOfRows
+        setScrollOrigin(y: n > 0 ? table.rect(ofRow: min(max(0, row), n - 1)).minY : 0)
+    }
+
+    private func setScrollOrigin(x: CGFloat? = nil, y: CGFloat) {
+        let clip = scrollView.contentView
+        let maxY = max(0, table.bounds.height - clip.bounds.height)
+        let origin = NSPoint(x: x ?? clip.bounds.origin.x, y: min(maxY, max(0, y)))
         suppressed {
-            scrollView.contentView.setBoundsOrigin(NSPoint(x: scrollView.contentView.bounds.origin.x, y: y))
-            scrollView.reflectScrolledClipView(scrollView.contentView)
+            clip.setBoundsOrigin(origin)
+            scrollView.reflectScrolledClipView(clip)
         }
+    }
+
+    /// The absolute line at the top of the viewport plus the pixel offset into its
+    /// row — enough to put the same content back under the viewport after the
+    /// buffer or the row heights change, whether or not lines wrap.
+    private struct ScrollAnchor { let line: Int64; let offset: CGFloat; let x: CGFloat }
+
+    private func scrollAnchor() -> ScrollAnchor? {
+        let origin = scrollView.contentView.bounds.origin
+        let row = table.row(at: NSPoint(x: 0, y: origin.y))
+        guard row >= 0, row < displayed.count else { return nil }
+        return ScrollAnchor(line: displayed[row].number,
+                            offset: origin.y - table.rect(ofRow: row).minY, x: origin.x)
+    }
+
+    /// Reloads the table and puts the anchored line back at the top of the
+    /// viewport (or stays pinned to the tail when following). The bounds observer
+    /// is suppressed throughout so paging isn't re-triggered by the shuffle.
+    private func reloadRestoring(_ anchor: ScrollAnchor?) {
+        suppressScrollHandling = true
+        reload()
+        if following {
+            scrollToBottom()
+        } else if let anchor, let row = displayed.firstIndex(where: { $0.number == anchor.line }) {
+            setScrollOrigin(x: anchor.x, y: table.rect(ofRow: row).minY + anchor.offset)
+        }
+        suppressScrollHandling = false
     }
 
     @objc private func boundsChanged() {
@@ -379,11 +518,9 @@ final class LogView: NSView {
     private func handleScroll() {
         let visible = scrollView.contentView.bounds
         let documentHeight = table.bounds.height
-        let rowH = table.rowHeight
-        let viewportRows = max(1, Int(visible.height / rowH))
         let total = totalLinesProvider?() ?? Int64(lines.count)
-        let atVisualBottom = visible.maxY >= documentHeight - rowH * 1.5
-        let atVisualTop = visible.minY <= rowH * Double(viewportRows)
+        let atVisualBottom = visible.maxY >= documentHeight - table.rowHeight * 1.5
+        let atVisualTop = visible.minY <= visible.height        // within one screen of the top
 
         // Prefetch older lines when nearing the top (if any remain on disk).
         if atVisualTop, windowStart > 1, pagingAllowed { pageUp(); return }
@@ -413,11 +550,12 @@ final class LogView: NSView {
             defer { self.isPaging = false }
             guard !older.isEmpty, older.last?.number == self.windowStart - 1 else { return }   // must be contiguous
             self.following = false
+            let anchor = self.scrollAnchor()
             self.lines.insert(contentsOf: older, at: 0)
             if self.lines.count > self.windowCap {
                 self.lines.removeLast(self.lines.count - self.windowCap)   // evict the far (bottom) end
             }
-            self.reloadKeepingPosition(rowsDeltaAboveViewport: older.count)
+            self.reloadRestoring(anchor)
         }
     }
 
@@ -432,27 +570,13 @@ final class LogView: NSView {
             guard let self else { return }
             defer { self.isPaging = false }
             guard !newer.isEmpty, newer.first?.number == self.windowEnd + 1 else { return }   // must be contiguous
+            let anchor = self.scrollAnchor()
             self.lines.append(contentsOf: newer)
-            var evicted = 0
             if self.lines.count > self.windowCap {
-                evicted = self.lines.count - self.windowCap
-                self.lines.removeFirst(evicted)                            // evict the far (top) end
+                self.lines.removeFirst(self.lines.count - self.windowCap)  // evict the far (top) end
             }
-            self.reloadKeepingPosition(rowsDeltaAboveViewport: -evicted)
+            self.reloadRestoring(anchor)
         }
-    }
-
-    /// Reloads the table while keeping the same lines under the viewport. Content
-    /// above the viewport changed by `delta` rows (positive = grew via prepend,
-    /// negative = shrank via top eviction), so shift the scroll origin to match.
-    private func reloadKeepingPosition(rowsDeltaAboveViewport delta: Int) {
-        suppressScrollHandling = true
-        var origin = scrollView.contentView.bounds.origin
-        table.reloadData()
-        origin.y = max(0, origin.y + CGFloat(delta) * table.rowHeight)
-        scrollView.contentView.setBoundsOrigin(origin)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
-        suppressScrollHandling = false
     }
 
     // MARK: - Search (issue #9)
@@ -471,7 +595,7 @@ final class LogView: NSView {
         query = SearchQuery("", caseSensitive: false, wholeWord: false, isRegex: false)
         filterMode = false
         matchRows.removeAll(); currentMatch = -1
-        table.reloadData()
+        reload()
     }
 
     var searchIsValid: Bool { query.isValid }
@@ -489,7 +613,7 @@ final class LogView: NSView {
         } else {
             matchRows = displayed.enumerated().compactMap { query.matches($0.element.text) ? $0.offset : nil }
         }
-        table.reloadData()
+        reload()
 
         if let keepLine, let idx = matchRows.firstIndex(where: { displayed[$0].number == keepLine }) {
             currentMatch = idx
@@ -517,7 +641,7 @@ final class LogView: NSView {
         let row = matchRows[currentMatch]
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         table.scrollRowToVisible(row)
-        table.reloadData()
+        reload()
     }
 }
 
@@ -526,12 +650,26 @@ extension LogView: NSTableViewDataSource {
 }
 
 extension LogView: NSTableViewDelegate {
+    /// Fixed height unless wrapping, then one text line per wrapped row. Cheap
+    /// enough (no text layout) to be asked for every resident row on each reload.
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard wordWrap, row < displayed.count else { return tableView.rowHeight }
+        return CGFloat(wrappedRows(for: displayed[row].text)) * lineHeight + rowPadding
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let line = displayed[row]
         let id = tableColumn!.identifier
         let cell = (tableView.makeView(withIdentifier: id, owner: self) as? NSTextField) ?? makeCell(id)
+        // Reused cells may predate a wrap toggle, so (re)apply the mode each time.
+        // Single-line mode centres vertically; off, both columns top-align so the
+        // gutter number sits beside the first wrapped line.
+        let isText = id.rawValue == "text"
+        cell.cell?.usesSingleLineMode = !wordWrap
+        cell.lineBreakMode = (wordWrap && isText) ? .byCharWrapping : .byClipping
+        cell.maximumNumberOfLines = (wordWrap && isText) ? 0 : 1
 
-        if id.rawValue == "gutter" {
+        if !isText {
             // While the background line count runs, real numbers aren't known yet
             // — show a placeholder rather than the provisional local numbers.
             let counting = !(indexingReadyProvider?() ?? true)
@@ -541,13 +679,20 @@ extension LogView: NSTableViewDelegate {
             cell.alignment = .right
         } else {
             let rendered = highlighter.render(line.text)
-            // Only pay for a mutable copy when there's a search overlay to layer on;
-            // the common (no-search) path uses the highlighter's result directly.
-            if query.isEmpty {
+            // Only pay for a mutable copy when there's something to layer on; the
+            // common (no search, no wrap) path uses the highlighter's result directly.
+            if query.isEmpty && !wordWrap {
                 cell.attributedStringValue = rendered
             } else {
                 let attr = NSMutableAttributedString(attributedString: rendered)
                 applySearchHighlight(attr, line: line, row: row)
+                if wordWrap {
+                    // An attributed value brings its own paragraph style (word
+                    // wrapping by default), overriding the cell's lineBreakMode —
+                    // pin it to per-character so the row-height estimate is exact.
+                    attr.addAttribute(.paragraphStyle, value: Self.charWrapStyle,
+                                      range: NSRange(location: 0, length: attr.length))
+                }
                 cell.attributedStringValue = attr
             }
             cell.alignment = .left
@@ -565,12 +710,16 @@ extension LogView: NSTableViewDelegate {
         }
     }
 
+    private static let charWrapStyle: NSParagraphStyle = {
+        let p = NSMutableParagraphStyle()
+        p.lineBreakMode = .byCharWrapping
+        return p
+    }()
+
     private func makeCell(_ id: NSUserInterfaceItemIdentifier) -> NSTextField {
         let f = NSTextField(labelWithString: "")
         f.identifier = id
         f.font = rowFont
-        f.lineBreakMode = .byClipping
-        f.cell?.usesSingleLineMode = true
         f.drawsBackground = false
         f.isBordered = false
         return f
