@@ -16,8 +16,9 @@ settings:
     CURRENT_PROJECT_VERSION: "255"
     SWIFT_VERSION: "5.0"
     CODE_SIGN_STYLE: Automatic
-    # Set your Apple Developer team here (or pick it in Xcode ▸ Signing & Capabilities).
-    DEVELOPMENT_TEAM: ""
+    # Apple Developer team (matches the "Apple Distribution: André Biseth" identity).
+    # The CI workflow overrides this from the APPLE_TEAM_ID secret.
+    DEVELOPMENT_TEAM: "5SX2347529"
 
 targets:
   ctail:
