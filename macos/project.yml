@@ -4,7 +4,7 @@ name: ctail
 # The .xcodeproj and generated Info.plist are git-ignored; this file is the source
 # of truth. The SwiftPM package (Package.swift) stays for CLI/dev/self-test builds.
 options:
-  bundleIdPrefix: net.biseth
+  bundleIdPrefix: no.bogentech
   deploymentTarget:
     macOS: "13.0"
   createIntermediateGroups: true
@@ -34,7 +34,7 @@ targets:
         buildPhase: none
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.biseth.ctail
+        PRODUCT_BUNDLE_IDENTIFIER: no.bogentech.ctail
         PRODUCT_NAME: ctail
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Resources/ctail.entitlements

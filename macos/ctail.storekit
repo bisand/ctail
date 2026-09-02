@@ -23,7 +23,7 @@
           "locale" : "en_US"
         }
       ],
-      "productID" : "net.biseth.ctail.pro",
+      "productID" : "no.bogentech.ctail.pro",
       "referenceName" : "ctail Pro",
       "type" : "NonConsumable"
     }

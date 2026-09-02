@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>ctail</string>
 	<key>CFBundleIdentifier</key>
-	<string>net.biseth.ctail</string>
+	<string>no.bogentech.ctail</string>
 	<key>CFBundleExecutable</key>
 	<string>ctail</string>
 	<key>CFBundleIconFile</key>

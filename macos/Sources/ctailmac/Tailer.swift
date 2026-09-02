@@ -39,8 +39,8 @@ final class Tailer {
     /// Sparse index granularity: one checkpoint per this many lines.
     private let indexStride = 1000
 
-    private let queue = DispatchQueue(label: "net.biseth.ctail.tailer")
-    private let ioQueue = DispatchQueue(label: "net.biseth.ctail.tailer.io", attributes: .concurrent)
+    private let queue = DispatchQueue(label: "no.bogentech.ctail.tailer")
+    private let ioQueue = DispatchQueue(label: "no.bogentech.ctail.tailer.io", attributes: .concurrent)
     private var timer: DispatchSourceTimer?
 
     // --- state (only touched on `queue`, or synchronously in tests) ---

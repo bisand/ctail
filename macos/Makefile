@@ -1,6 +1,6 @@
 # ctail — native macOS app build tooling
 APP        := ctail
-BUNDLE_ID  := net.biseth.ctail
+BUNDLE_ID  := no.bogentech.ctail
 VERSION    := $(shell cat ../VERSION 2>/dev/null || echo 0.0.0)
 BUILD      := $(shell cat ../BUILD_NUMBER 2>/dev/null || echo 1)
 CONFIG     := release

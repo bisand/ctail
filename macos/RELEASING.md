@@ -8,8 +8,8 @@ git-ignored and regenerated on demand.
 ## One-time setup
 1. **Apple Developer Program** membership.
 2. In **App Store Connect**:
-   - Create the app, bundle id **`net.biseth.ctail`**.
-   - Create the in-app purchase: **Non-Consumable**, product id **`net.biseth.ctail.pro`**,
+   - Create the app, bundle id **`no.bogentech.ctail`**.
+   - Create the in-app purchase: **Non-Consumable**, product id **`no.bogentech.ctail.pro`**,
      set price tier, name, description. (Enroll in the **Small Business Program** → 15% fee.)
 3. Set your team in `project.yml` (`DEVELOPMENT_TEAM:`), or pick it in Xcode after generating.
 
@@ -66,7 +66,7 @@ the real sandbox, so the IAP must exist in App Store Connect.
 
 ## Already in place (App Store compatible)
 - App Sandbox + security-scoped bookmarks (`Resources/ctail.entitlements`).
-- IAP via StoreKit 2 (`StoreManager` / `net.biseth.ctail.pro`); IAP needs no entitlement.
+- IAP via StoreKit 2 (`StoreManager` / `no.bogentech.ctail.pro`); IAP needs no entitlement.
 - App icon as an asset catalog (`Assets.xcassets/AppIcon`), version, `LSApplicationCategoryType`,
   document types — all set in `project.yml`.
 - `appIcon()` guards `Bundle.module` with `#if SWIFT_PACKAGE` so the Xcode target compiles.

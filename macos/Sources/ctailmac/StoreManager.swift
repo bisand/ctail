@@ -58,7 +58,7 @@ enum Pro {
 
 final class StoreManager {
     static let shared = StoreManager()
-    static let proProductID = "net.biseth.ctail.pro"
+    static let proProductID = "no.bogentech.ctail.pro"
 
     private(set) var isPro = false        // main-thread only
     private(set) var product: Product?    // main-thread only
