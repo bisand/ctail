@@ -39,7 +39,9 @@
 				<string>txt</string>
 				<string>csv</string>
 			</array>
-		</dict>
+</dict>
 	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

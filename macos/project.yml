@@ -50,6 +50,8 @@ targets:
         NSHighResolutionCapable: true
         LSApplicationCategoryType: "public.app-category.developer-tools"
         NSHumanReadableCopyright: "Copyright © 2024–2026 André Biseth"
+        # Only Apple-provided TLS (URLSession); skips the export-compliance prompt on every TestFlight build.
+        ITSAppUsesNonExemptEncryption: false
         CFBundleDocumentTypes:
           - CFBundleTypeName: "Log File"
             CFBundleTypeRole: Viewer
