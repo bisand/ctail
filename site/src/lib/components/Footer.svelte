@@ -24,6 +24,7 @@
 			<a href={site.releases} class="link link-hover" rel="noopener">Releases</a>
 			<a href={site.issues} class="link link-hover" rel="noopener">Issue tracker</a>
 			<a href={site.security} class="link link-hover" rel="noopener">Security policy</a>
+			<a href="{base}/privacy/" class="link link-hover">Privacy policy</a>
 		</nav>
 		<nav>
 			<h6 class="footer-title">Docs</h6>
