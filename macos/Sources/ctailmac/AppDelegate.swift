@@ -115,6 +115,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
 
     private func installController() {
         window.backgroundColor = palette.background
+        // Match the system chrome (title bars, secondary windows, menus) to the theme
+        // mode; otherwise a light theme under a dark system appearance gets white
+        // title text on a light window and dark Settings/Profiles windows.
+        NSApp.appearance = NSAppearance(named: settings.themeMode == "light" ? .aqua : .darkAqua)
         tabs?.shutdown()        // stop the outgoing controller's tailers before replacing it
         tabs = TabController(config: config, settings: settings, palette: palette, bookmarks: bookmarks)
         tabs.onActiveFileChanged = { [weak self] path in

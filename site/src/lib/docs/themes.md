@@ -7,7 +7,9 @@ ctail ships with 21 colour themes. Every theme has a dark and a light variant.
 - **View ▸ Toggle Theme** flips between the dark and light variant of the current theme.
 - Open **ctail ▸ Settings…** (<kbd>⌘,</kbd>) and use the **Theme** and **Mode** menus to pick a different theme and variant.
 
-Theme changes apply instantly and are remembered.
+Theme changes apply instantly and are remembered. The window chrome switches between the light and dark system appearance to match.
+
+![Profiles & Rules editor in light mode](../../screenshots/profiles-light.webp)
 
 ## Built-in themes
 
