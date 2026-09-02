@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         }
         maybeAutoCheckUpdates()
         NSApp.activate(ignoringOtherApps: true)
+        #if DEBUG
+        debugShowWindows()
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
@@ -288,6 +291,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     private weak var unlockProItem: NSMenuItem?
     private weak var restoreItem: NSMenuItem?
     private weak var proActiveItem: NSMenuItem?
+
+    #if DEBUG
+    /// Dev-only: `CTAIL_DEBUG_SHOW=settings,profiles,ai,paywall,search=ERROR,about`
+    /// opens those windows shortly after launch. Used to automate screenshots
+    /// (the website), since menus can't be scripted without Accessibility access.
+    private func debugShowWindows() {
+        guard let spec = ProcessInfo.processInfo.environment["CTAIL_DEBUG_SHOW"], !spec.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in
+            for raw in spec.split(separator: ",") {
+                let parts = raw.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                switch parts.first ?? "" {
+                case "settings": showSettings()
+                case "profiles": showProfiles()
+                case "ai":       showAIAssistant(); if parts.count > 1 { aiWindow?.debugAsk(parts[1]) }
+                case "paywall":  showPaywall()
+                case "about":    showAbout()
+                case "search":   tabs.openSearch(query: parts.count > 1 ? parts[1] : nil)
+                default: break
+                }
+            }
+        }
+    }
+    #endif
 
     #if DEBUG
     private weak var devProItem: NSMenuItem?

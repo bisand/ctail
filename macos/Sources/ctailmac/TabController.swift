@@ -499,9 +499,10 @@ final class TabController: NSObject {
         return bar
     }
 
-    func openSearch() {
+    func openSearch(query: String? = nil) {
         guard activeTab != nil else { return }
         searchBar.isHidden = false
+        if let query { searchBar.field.stringValue = query }
         content.addSubview(searchBar)            // keep above the log view
         searchBar.focusField()
         runSearch(resetPosition: true)

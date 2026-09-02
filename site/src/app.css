@@ -1,0 +1,116 @@
+@import 'tailwindcss';
+@plugin 'daisyui' {
+	themes: false;
+	logs: false;
+}
+@plugin 'daisyui/theme' {
+	name: 'ctail-dark';
+	default: true;
+	prefersdark: true;
+	color-scheme: dark;
+	--color-base-100: oklch(21% 0.02 285);
+	--color-base-200: oklch(18% 0.02 285);
+	--color-base-300: oklch(25% 0.025 285);
+	--color-base-content: oklch(92% 0.015 285);
+	--color-primary: oklch(62% 0.2 300);
+	--color-primary-content: oklch(98% 0.01 300);
+	--color-secondary: oklch(75% 0.15 150);
+	--color-secondary-content: oklch(15% 0.03 150);
+	--color-accent: oklch(78% 0.13 230);
+	--color-accent-content: oklch(15% 0.03 230);
+	--color-neutral: oklch(30% 0.03 285);
+	--color-neutral-content: oklch(92% 0.015 285);
+	--color-info: oklch(78% 0.13 230);
+	--color-info-content: oklch(15% 0.03 230);
+	--color-success: oklch(75% 0.15 150);
+	--color-success-content: oklch(15% 0.03 150);
+	--color-warning: oklch(85% 0.14 85);
+	--color-warning-content: oklch(20% 0.05 85);
+	--color-error: oklch(70% 0.19 20);
+	--color-error-content: oklch(98% 0.01 20);
+	--radius-selector: 0.5rem;
+	--radius-field: 0.5rem;
+	--radius-box: 1rem;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 0;
+	--noise: 0;
+}
+@plugin 'daisyui/theme' {
+	name: 'ctail-light';
+	default: false;
+	prefersdark: false;
+	color-scheme: light;
+	--color-base-100: oklch(99% 0.005 285);
+	--color-base-200: oklch(96% 0.01 285);
+	--color-base-300: oklch(91% 0.015 285);
+	--color-base-content: oklch(22% 0.03 285);
+	--color-primary: oklch(50% 0.21 300);
+	--color-primary-content: oklch(98% 0.01 300);
+	--color-secondary: oklch(55% 0.15 150);
+	--color-secondary-content: oklch(98% 0.01 150);
+	--color-accent: oklch(55% 0.14 230);
+	--color-accent-content: oklch(98% 0.01 230);
+	--color-neutral: oklch(30% 0.03 285);
+	--color-neutral-content: oklch(96% 0.01 285);
+	--color-info: oklch(55% 0.14 230);
+	--color-info-content: oklch(98% 0.01 230);
+	--color-success: oklch(55% 0.15 150);
+	--color-success-content: oklch(98% 0.01 150);
+	--color-warning: oklch(70% 0.16 70);
+	--color-warning-content: oklch(20% 0.05 70);
+	--color-error: oklch(58% 0.21 25);
+	--color-error-content: oklch(98% 0.01 25);
+	--radius-selector: 0.5rem;
+	--radius-field: 0.5rem;
+	--radius-box: 1rem;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 0;
+	--noise: 0;
+}
+
+html {
+	scroll-behavior: smooth;
+}
+.prose-docs :where(h2) {
+	@apply mt-10 mb-3 text-2xl font-semibold scroll-mt-24;
+}
+.prose-docs :where(h3) {
+	@apply mt-8 mb-2 text-lg font-semibold scroll-mt-24;
+}
+.prose-docs :where(p) {
+	@apply my-3 leading-relaxed;
+}
+.prose-docs :where(ul) {
+	@apply my-3 list-disc pl-6 space-y-1;
+}
+.prose-docs :where(ol) {
+	@apply my-3 list-decimal pl-6 space-y-1;
+}
+.prose-docs :where(a) {
+	@apply link link-primary;
+}
+.prose-docs :where(code):not(pre code) {
+	@apply rounded bg-base-200 px-1.5 py-0.5 text-[0.9em] font-mono;
+}
+.prose-docs :where(pre) {
+	@apply my-4 overflow-x-auto rounded-box bg-base-200 p-4 text-sm font-mono;
+}
+.prose-docs :where(table) {
+	@apply table table-sm my-4;
+}
+.prose-docs :where(blockquote) {
+	@apply my-4 border-l-4 border-primary/50 pl-4 text-base-content/80;
+}
+.prose-docs :where(img) {
+	@apply my-6 rounded-box shadow-lg border border-base-300;
+}
+.prose-docs :where(kbd) {
+	@apply kbd kbd-sm;
+}
+.prose-docs :where(hr) {
+	@apply my-8 border-base-300;
+}

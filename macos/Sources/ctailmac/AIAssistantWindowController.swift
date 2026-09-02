@@ -80,6 +80,11 @@ final class AIAssistantWindowController: NSWindowController {
 
     // MARK: - Actions
 
+    #if DEBUG
+    /// Dev-only (screenshots): fill the question and submit it.
+    func debugAsk(_ question: String) { questionField.stringValue = question; ask() }
+    #endif
+
     @objc private func ask() {
         let q = questionField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
