@@ -1,6 +1,10 @@
+<script>
+	import Shot from '$lib/components/Shot.svelte';
+</script>
+
 ctail is free to use and open source. **ctail Pro** is a one-time in-app purchase on the Mac App Store that unlocks the power features. There is no subscription and no account; the purchase is tied to your Apple ID and works on every Mac you sign in to.
 
-![The ctail Pro window](../../screenshots/paywall.webp)
+<Shot src="paywall.webp" alt="The ctail Pro window" class="max-w-sm" />
 
 ## Free versus Pro
 

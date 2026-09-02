@@ -1,6 +1,10 @@
+<script>
+	import Shot from '$lib/components/Shot.svelte';
+</script>
+
 The AI assistant answers questions about the log in front of you and can write a complete [highlighting profile](../profiles/) for an unfamiliar format. It is part of [ctail Pro](../pro/) and needs a provider configured in Settings; see [AI providers](../ai-providers/).
 
-![The AI assistant explaining a web server log](../../screenshots/ai.webp)
+<Shot src="ai.webp" alt="The AI assistant explaining a web server log" />
 
 Nothing is sent anywhere until you press **Ask** or **Generate Rules Profile**. ctail never contacts an AI provider in the background.
 

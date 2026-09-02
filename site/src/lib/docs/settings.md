@@ -1,6 +1,10 @@
+<script>
+	import Shot from '$lib/components/Shot.svelte';
+</script>
+
 Open Settings with **ctail ▸ Settings…** or <kbd>⌘,</kbd>. Changes apply when you click **Save**.
 
-![The Settings window](../../screenshots/settings.webp)
+<Shot src="settings.webp" alt="The Settings window" class="max-w-md" />
 
 ## Appearance
 

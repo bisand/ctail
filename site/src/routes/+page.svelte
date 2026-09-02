@@ -56,7 +56,7 @@
 		<p class="mt-3 text-sm text-base-content/50">Free, open source (MIT). Requires {site.minMacOS} or later.</p>
 	</div>
 	<div class="mx-auto max-w-6xl px-4">
-		<Shot src="main-dark.webp" alt="ctail tailing a web server log with errors, warnings and timestamps highlighted" eager class="mx-auto max-w-5xl" />
+		<Shot src="main.webp" alt="ctail tailing a web server log with errors, warnings and timestamps highlighted" eager class="mx-auto max-w-5xl" />
 	</div>
 </section>
 

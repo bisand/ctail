@@ -5,6 +5,7 @@ export type Feature = {
 	icon: string;
 	details: string[];
 	shot?: string;
+	shotLight?: string;
 	shotAlt?: string;
 	doc: string;
 };
@@ -22,7 +23,7 @@ export const features: Feature[] = [
 			'Truncation is handled too: if a file is emptied and rewritten, the view resets instead of showing stale data.',
 			'Partial lines are buffered until the newline arrives, so you never see half-written entries.'
 		],
-		shot: 'main-dark.webp',
+		shot: 'main.webp',
 		shotAlt: 'ctail main window tailing a web server log in the dark Catppuccin theme',
 		doc: 'following-and-scrolling'
 	},
@@ -111,7 +112,8 @@ export const features: Feature[] = [
 			'The rule editor previews rules against the active theme so your colours always read well.'
 		],
 		shot: 'main-light.webp',
-		shotAlt: 'ctail in the light Catppuccin variant',
+		shotLight: 'main.webp',
+		shotAlt: 'ctail in the opposite Catppuccin variant',
 		doc: 'themes'
 	},
 	{

@@ -35,7 +35,7 @@
 						<a href="{base}/docs/{f.doc}/" class="btn btn-sm mt-6"><Icon name="book" class="h-4 w-4" /> Read the manual</a>
 					</div>
 					{#if f.shot}
-						<Shot src={f.shot} alt={f.shotAlt ?? f.title} />
+						<Shot src={f.shot} light={f.shotLight} alt={f.shotAlt ?? f.title} />
 					{/if}
 				</div>
 			</section>

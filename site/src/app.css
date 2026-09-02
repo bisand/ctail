@@ -5,7 +5,7 @@
 }
 @plugin 'daisyui/theme' {
 	name: 'ctail-dark';
-	default: true;
+	default: false;
 	prefersdark: true;
 	color-scheme: dark;
 	--color-base-100: oklch(21% 0.02 285);
@@ -39,7 +39,7 @@
 }
 @plugin 'daisyui/theme' {
 	name: 'ctail-light';
-	default: false;
+	default: true;
 	prefersdark: false;
 	color-scheme: light;
 	--color-base-100: oklch(99% 0.005 285);
@@ -114,3 +114,15 @@ html {
 .prose-docs :where(hr) {
 	@apply my-8 border-base-300;
 }
+
+/* Theme-following screenshots: show the dark or light capture to match the
+   active site theme. No data-theme attribute means "follow the system". */
+.shot-light { display: none; }
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme='ctail-dark']) .shot-dark { display: none; }
+	:root:not([data-theme='ctail-dark']) .shot-light { display: block; }
+}
+:root[data-theme='ctail-light'] .shot-dark { display: none; }
+:root[data-theme='ctail-light'] .shot-light { display: block; }
+:root[data-theme='ctail-dark'] .shot-dark { display: block; }
+:root[data-theme='ctail-dark'] .shot-light { display: none; }

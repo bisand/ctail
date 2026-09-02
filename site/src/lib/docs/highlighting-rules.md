@@ -1,6 +1,10 @@
+<script>
+	import Shot from '$lib/components/Shot.svelte';
+</script>
+
 Highlighting rules are what turn a wall of grey text into something you can read at a glance. Each rule is a regular expression paired with a style. Rules are grouped into [profiles](../profiles/); the active profile applies to every open tab.
 
-![The Profiles and Rules window](../../screenshots/profiles.webp)
+<Shot src="profiles.webp" alt="The Profiles and Rules window" />
 
 ## Anatomy of a rule
 

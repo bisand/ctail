@@ -1,6 +1,10 @@
+<script>
+	import Shot from '$lib/components/Shot.svelte';
+</script>
+
 ctail ships with 21 colour themes. Every theme has a dark and a light variant.
 
-![ctail in the light Catppuccin variant](../../screenshots/main-light.webp)
+<Shot src="main-light.webp" light="main.webp" alt="ctail in the other Catppuccin variant" caption="The variant you are not looking at right now. Toggle the site theme and it swaps." />
 
 ## Switching themes
 
@@ -9,7 +13,7 @@ ctail ships with 21 colour themes. Every theme has a dark and a light variant.
 
 Theme changes apply instantly and are remembered. The window chrome switches between the light and dark system appearance to match.
 
-![Profiles & Rules editor in light mode](../../screenshots/profiles-light.webp)
+<Shot src="profiles-light.webp" light="profiles.webp" alt="The Profiles and Rules editor in the other mode" class="max-w-lg" />
 
 ## Built-in themes
 

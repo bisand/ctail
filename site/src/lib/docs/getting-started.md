@@ -1,6 +1,10 @@
+<script>
+	import Shot from '$lib/components/Shot.svelte';
+</script>
+
 ctail (short for *colour tail*) is a native macOS log viewer. It shows the end of a file, streams new lines as they are written, and colours them with regular-expression rules so the important entries stand out.
 
-![ctail tailing a web server log](../../screenshots/main-dark.webp)
+<Shot src="main.webp" alt="ctail tailing a web server log" />
 
 ## Install
 

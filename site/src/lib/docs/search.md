@@ -1,6 +1,10 @@
+<script>
+	import Shot from '$lib/components/Shot.svelte';
+</script>
+
 Press <kbd>⌘F</kbd> or choose **Edit ▸ Find…** to open the inline search bar above the log. It works like the find widget in VS Code.
 
-![The search bar with matches for ERROR](../../screenshots/search.webp)
+<Shot src="search.webp" alt="The search bar with matches for ERROR" />
 
 ## Toggles
 
