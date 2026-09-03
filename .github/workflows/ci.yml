@@ -10,48 +10,36 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  core:
+    name: core (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          go-version: "1.23"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy -p ctail-core --all-targets -- -D warnings
+      - name: Test
+        run: cargo test -p ctail-core
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
+  macos-app:
+    name: macOS app self-tests
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v5
+      - uses: maxim-lobanov/setup-xcode@v1
         with:
-          node-version: "20"
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-      - name: Install frontend dependencies
-        run: cd frontend && npm ci
-
-      - name: Build frontend
-        run: cd frontend && npm run build
-
-      - name: Go build
-        run: go build -tags webkit2_41 ./...
-
-      - name: Go tests
-        run: go test -tags webkit2_41 ./internal/... -v -race -count=1
-
-      - name: Go vet
-        run: go vet -tags webkit2_41 ./...
+          xcode-version: latest-stable
+      - name: Self-tests
+        run: swift run ctailmac --selftest

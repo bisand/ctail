@@ -1,8 +1,13 @@
-build/bin
-build/*.deb
-build/*.rpm
+# Rust
+target/
+
+# Archived Wails app (legacy/wails)
+legacy/wails/build/bin
+legacy/wails/build/*.deb
+legacy/wails/build/*.rpm
+legacy/wails/frontend/dist
+
 node_modules
-frontend/dist
 *.log
 
 # macOS Finder metadata

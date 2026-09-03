@@ -3,7 +3,7 @@
 A proof-of-concept Swift/AppKit rewrite of ctail, built to de-risk the two hard
 parts of a full native port **before** committing to it:
 
-1. **The tail engine** — a faithful port of [`internal/tailer/tailer.go`](../internal/tailer/tailer.go):
+1. **The tail engine** — a faithful port of [`legacy/wails/internal/tailer/tailer.go`](../legacy/wails/internal/tailer/tailer.go):
    polling (network-mount safe), inode-based rotation detection, truncation
    handling, partial-line buffering, and tail-first reads for huge files.
    See [Tailer.swift](Sources/ctailmac/Tailer.swift).
@@ -54,6 +54,18 @@ Feature parity with the Wails app is implemented natively (tracked under the
 - **App Store** — sandbox entitlements + **security-scoped bookmarks** so opened
   files reopen across launches; bookmark use is best-effort so unsandboxed
   dev/direct builds still work.
+
+## Engine benchmark
+
+`scripts/tailbench/main.swift` drives `Tailer.swift` standalone and prints the
+same measurements as the Rust harness (`core/examples/tailbench.rs`), so the two
+engines can be compared on the same file:
+
+```bash
+cd scripts/tailbench
+swiftc -O ../../Sources/ctailmac/Tailer.swift main.swift -o /tmp/tailbench-swift
+/tmp/tailbench-swift --file /path/to/ctail-bench.log
+```
 
 ## Sandbox notes
 

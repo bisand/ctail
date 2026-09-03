@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Themes.generated.swift from internal/config/themes.go.
+"""Generate Themes.generated.swift from legacy/wails/internal/config/themes.go.
 
 The Go file defines 21 themes as funcs returning Theme{ Name, DisplayName,
 Dark: ThemeColors{...}, Light: ThemeColors{...} }. We parse those literal
@@ -53,7 +53,7 @@ def colors_literal(d):
     return "ThemeColors(" + ", ".join(parts) + ")"
 
 lines = [
-    "// AUTO-GENERATED from internal/config/themes.go by scripts/gen_themes.py.",
+    "// AUTO-GENERATED from legacy/wails/internal/config/themes.go by scripts/gen_themes.py.",
     "// Do not edit by hand; rerun `make themes` after changing the Go themes.",
     "import Foundation",
     "",

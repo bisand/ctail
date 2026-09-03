@@ -1,4 +1,4 @@
-// AUTO-GENERATED from internal/config/themes.go by scripts/gen_themes.py.
+// AUTO-GENERATED from legacy/wails/internal/config/themes.go by scripts/gen_themes.py.
 // Do not edit by hand; rerun `make themes` after changing the Go themes.
 import Foundation
 
