@@ -1,0 +1,4 @@
+# Git dependencies (DeniseUI) are fetched with the system git so SSH keys and
+# credential helpers apply, the same as a plain `git clone` would.
+[net]
+git-fetch-with-cli = true

@@ -4,6 +4,8 @@
 
 use crate::text::to_utf16_ranges;
 use fancy_regex::Regex;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 /// A matched range in UTF-16 code units.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,6 +87,51 @@ impl SearchMatcher {
     }
 }
 
+/// Result of a whole-file search.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SearchResult {
+    pub match_line_numbers: Vec<i64>,
+    pub total_matches: u32,
+    pub total_lines: i64,
+}
+
+/// Scans an entire file line by line (streaming, bounded memory) and returns
+/// the 1-based numbers of the lines that match. An empty or invalid query
+/// matches nothing.
+pub fn search_file(path: &Path, matcher: &SearchMatcher) -> SearchResult {
+    let mut result = SearchResult::default();
+    if matcher.is_empty() || !matcher.is_valid() {
+        return result;
+    }
+    let Ok(file) = std::fs::File::open(path) else {
+        return result;
+    };
+    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        if buf.last() != Some(&b'\n') {
+            break; // trailing partial line is not a line yet
+        }
+        result.total_lines += 1;
+        let mut end = buf.len() - 1;
+        if end > 0 && buf[end - 1] == b'\r' {
+            end -= 1;
+        }
+        if matcher.matches(&String::from_utf8_lossy(&buf[..end])) {
+            result.match_line_numbers.push(result.total_lines);
+        }
+    }
+    result.total_matches = result.match_line_numbers.len() as u32;
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +173,20 @@ mod tests {
             SearchMatcher::new("é", false, false, false).ranges("aé"),
             [TextRange { start: 1, end: 2 }]
         );
+    }
+
+    #[test]
+    fn whole_file_search() {
+        let path = std::env::temp_dir().join(format!("ctail-search-{}.log", std::process::id()));
+        std::fs::write(&path, "alpha\nERROR one\r\nbeta\nerror two\npartial ERROR").unwrap();
+        let r = search_file(&path, &SearchMatcher::new("error", false, false, false));
+        assert_eq!(r.match_line_numbers, [2, 4]);
+        assert_eq!(r.total_matches, 2);
+        assert_eq!(r.total_lines, 4, "trailing partial not counted");
+        assert_eq!(
+            search_file(&path, &SearchMatcher::new("", false, false, false)),
+            SearchResult::default()
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }

@@ -43,7 +43,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// A single log line with its 1-based number.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LogLine {
     pub number: i64,
@@ -657,12 +657,15 @@ impl Engine {
         true
     }
 
-    /// Reads `count` lines starting at 1-based absolute `start` directly from
-    /// disk, seeking to the nearest checkpoint (head or tail region) and
-    /// scanning forward. Returns nothing until the head count is known.
+    /// Reads `count` lines starting at 1-based `start` directly from disk,
+    /// seeking to the nearest checkpoint (head or tail region) and scanning
+    /// forward. While the head count is still running, only the tail region
+    /// exists and `start` is a *local* number (the same numbering `on_lines`
+    /// used); once the base is known, numbers are absolute and the head is
+    /// reachable too.
     pub fn read_range(&mut self, start: i64, count: usize) -> Vec<LogLine> {
         let total = self.total_lines();
-        if !self.base_known || start < 1 || count == 0 || start > total {
+        if start < 1 || count == 0 || start > total {
             return Vec::new();
         }
         let last_line = total.min(start + count as i64 - 1);
@@ -938,6 +941,10 @@ impl Tailer {
     /// Whether absolute line numbers / scrollback are available yet.
     pub fn indexing_complete(&self) -> bool {
         self.counters.indexing_complete()
+    }
+    /// The live counters, for callers that need them inside event callbacks.
+    pub fn counters(&self) -> Arc<Counters> {
+        self.counters.clone()
     }
 }
 

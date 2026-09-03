@@ -23,7 +23,7 @@ uniffi::setup_scaffolding!();
 pub use config::ConfigStore;
 pub use highlight::{Highlighter, LineStyle, Span};
 pub use models::{AppSettings, Profile, Rule, TabState, Theme, ThemeColors, WindowState};
-pub use search::{SearchMatcher, TextRange};
+pub use search::{search_file, SearchMatcher, SearchResult, TextRange};
 pub use tailer::{
     index_file, split_lines, CancelToken, Counters, Engine, HeadScan, IndexResult, LogLine,
     SplitResult, Tailer, TailerEvents, TailerOptions,

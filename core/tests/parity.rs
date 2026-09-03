@@ -468,14 +468,22 @@ fn tail_first_defers_count_then_resolves_absolute_numbers() {
         "tail-first defers the full line count"
     );
     assert!(
-        tf.read_range(1, 1).is_empty(),
-        "scrollback disabled until count ready"
-    );
-    assert!(
         tf.total_lines() < 50,
         "before count, total is just the local tail"
     );
     let first = rec.texts();
+    // Before the count lands the tail is readable by its local numbers.
+    let provisional = tf.read_range(1, 1);
+    assert_eq!(provisional.len(), 1, "provisional tail read");
+    assert_eq!(provisional[0].number, 1);
+    assert_eq!(
+        provisional[0].text, first[0],
+        "local line 1 is the first tail line"
+    );
+    assert!(
+        tf.read_range(tf.total_lines() + 1, 1).is_empty(),
+        "nothing past the local tail"
+    );
     assert!(
         first[0].starts_with('L') && first.last().unwrap() == "L50",
         "tail shown immediately: {first:?}"

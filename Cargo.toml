@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core"]
+members = ["core", "desktop"]
 
 [profile.release]
 debug = 1          # keep symbols for profiling the engine

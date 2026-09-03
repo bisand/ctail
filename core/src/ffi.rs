@@ -95,7 +95,7 @@ impl TailerHandle {
     }
 
     /// Reads `count` lines from 1-based `start`; `reply` is invoked on the
-    /// worker thread. Empty until indexing is complete.
+    /// worker thread. Numbers are local to the tail until indexing completes.
     pub fn fetch_range(&self, start: i64, count: u32, reply: Arc<dyn FetchReply>) {
         self.inner
             .fetch_range(start, count as usize, move |lines| reply.deliver(lines))

@@ -12,6 +12,7 @@ test: test-core test-macos
 
 test-core:
 	cargo test -p ctail-core --all-features
+	cargo build -p ctail-desktop
 
 test-macos:
 	$(MAKE) -C macos test
@@ -26,6 +27,7 @@ fmt:
 lint:
 	cargo fmt --all -- --check
 	cargo clippy -p ctail-core --all-targets --all-features -- -D warnings
+	cargo clippy -p ctail-desktop -- -D warnings
 
 clean:
 	cargo clean

@@ -1,0 +1,19 @@
+[package]
+name = "ctail-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "ctail for Linux and Windows: the Rust engine under a DeniseUI front end"
+publish = false
+
+[dependencies]
+ctail-core = { path = "../core" }
+# DeniseUI, pinned to a pushed revision until the next release carries the
+# anchors / default-font / title APIs this app uses.
+denise = { git = "https://github.com/bisand/denise", rev = "0848c4a7457015872cd6a3f876815ad655072a48", features = ["std"] }
+denise-render = { git = "https://github.com/bisand/denise", rev = "0848c4a7457015872cd6a3f876815ad655072a48" }
+denise-text = { git = "https://github.com/bisand/denise", rev = "0848c4a7457015872cd6a3f876815ad655072a48", features = ["truetype"] }
+denise-ui = { git = "https://github.com/bisand/denise", rev = "0848c4a7457015872cd6a3f876815ad655072a48", features = ["std", "truetype"] }
+denise-winit = { git = "https://github.com/bisand/denise", rev = "0848c4a7457015872cd6a3f876815ad655072a48" }
+arboard = { version = "3", default-features = false }
+rfd = "0.15"
