@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["core"]
+
+[profile.release]
+debug = 1          # keep symbols for profiling the engine
+lto = "thin"
+codegen-units = 1

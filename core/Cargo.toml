@@ -1,0 +1,18 @@
+[package]
+name = "ctail-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "ctail engine: polling log tailer with instant tail-first reads, rotation/truncation detection and a sparse line index"
+publish = false
+
+[lib]
+name = "ctail_core"
+path = "src/lib.rs"
+
+[dependencies]
+bytecount = "0.6"
+memchr = "2"
+
+[dev-dependencies]
+libc = "0.2"
