@@ -4,6 +4,7 @@
 
 use crate::fonts;
 use crate::logview::{LogRequest, LogView};
+use crate::profiles::ProfilesWindow;
 use crate::search::{SearchBar, SearchMsg};
 use crate::settings::SettingsWindow;
 use crate::theme;
@@ -114,6 +115,10 @@ pub struct App {
     pending_windows: Vec<WindowRequest>,
     /// One Settings window at a time — a second would edit a stale copy.
     settings_open: bool,
+    /// The Profiles window says here whenever the rules on disk changed.
+    profiles_tx: Sender<()>,
+    profiles_rx: Receiver<()>,
+    profiles_open: bool,
     /// Paths of tabs closed this session, newest last.
     closed: Vec<String>,
     /// The window's size, kept current so it can be saved on the way out.
@@ -224,6 +229,7 @@ impl App {
         );
 
         let (settings_tx, settings_rx) = mpsc::channel();
+        let (profiles_tx, profiles_rx) = mpsc::channel();
         let mut app = Self {
             ui,
             config,
@@ -243,6 +249,9 @@ impl App {
             settings_rx,
             pending_windows: Vec::new(),
             settings_open: false,
+            profiles_tx,
+            profiles_rx,
+            profiles_open: false,
             closed: Vec::new(),
             window: size,
             scale,
@@ -266,10 +275,13 @@ impl App {
     /// cannot be scripted from outside without accessibility permission:
     /// `CTAIL_DEBUG_SEARCH` opens the find bar on that query,
     /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode, and
-    /// `CTAIL_DEBUG_SETTINGS` opens the Settings window.
+    /// `CTAIL_DEBUG_SETTINGS` / `CTAIL_DEBUG_PROFILES` open those windows.
     fn debug_hooks(&mut self) {
         if std::env::var_os("CTAIL_DEBUG_SETTINGS").is_some() {
             self.open_settings();
+        }
+        if std::env::var_os("CTAIL_DEBUG_PROFILES").is_some() {
+            self.open_profiles();
         }
         let Ok(query) = std::env::var("CTAIL_DEBUG_SEARCH") else {
             return;
@@ -567,6 +579,38 @@ impl App {
         );
     }
 
+    fn open_profiles(&mut self) {
+        if self.profiles_open {
+            return;
+        }
+        self.profiles_open = true;
+        let tx = self.profiles_tx.clone();
+        self.pending_windows.push(
+            WindowRequest::new(ProfilesWindow::config_window(), move |size, scale| {
+                ProfilesWindow::new(size, scale, tx)
+            })
+            .with_modality(Modality::Owned),
+        );
+    }
+
+    /// Re-reads the active profile and restyles every open tab. Called when the
+    /// Profiles window saves, so an edited rule shows up without a restart.
+    fn reload_rules(&mut self) {
+        let settings = self.config.load_settings();
+        self.rules = self
+            .config
+            .load_profile(&settings.active_profile)
+            .map(|p| p.rules)
+            .unwrap_or_default();
+        let views: Vec<NodeId> = self.tabs.iter().map(|t| t.view).collect();
+        for view in views {
+            if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+                v.set_rules(&self.rules);
+            }
+            self.ui.invalidate(view);
+        }
+    }
+
     /// Takes settings back from the Settings window: persists them, then
     /// applies live everything that does not need a restart.
     fn apply_settings(&mut self, new: AppSettings) {
@@ -791,6 +835,10 @@ impl DeniseApp for App {
                                 self.open_settings();
                                 continue;
                             }
+                            KeyCode::R => {
+                                self.open_profiles();
+                                continue;
+                            }
                             // Cmd+Tab belongs to the system on macOS, so tab
                             // cycling is Ctrl+Tab everywhere.
                             KeyCode::Tab if modifiers.contains(Modifiers::CTRL) => {
@@ -834,6 +882,14 @@ impl DeniseApp for App {
         }
         if let Some(s) = saved {
             self.apply_settings(s);
+        }
+        let mut rules_changed = false;
+        while self.profiles_rx.try_recv().is_ok() {
+            self.profiles_open = false;
+            rules_changed = true;
+        }
+        if rules_changed {
+            self.reload_rules();
         }
         self.pump_engine();
         self.ui.handle(&forwarded);

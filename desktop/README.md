@@ -42,6 +42,16 @@ on macOS, Windows and Linux the same way this app does.
   rest. Ctrl/Cmd+, opens it, Escape or Cancel dismisses it, Save hands the
   edited settings back to the main window, which persists them and applies
   the theme, font size, gutter, buffer size and poll interval live.
+- `src/profiles.rs` — the Profiles & Rules window (Ctrl/Cmd+R): the profile
+  chooser with New / Rename / Delete / Set Active, the rule list with add,
+  remove and reorder, and a rule editor with a live preview of the rule
+  against a sample line. Names are asked for in a modal child window, and
+  deleting a profile asks through the platform's own message dialog. Saving
+  restyles the open tabs at once.
+- `src/widgets.rs` — the two widgets the toolkit does not have, both about
+  *arbitrary* colours rather than theme roles: a clickable colour swatch and
+  the rule preview.
+- `src/prompt.rs` — the one-field modal window the name prompts use.
 - `src/theme.rs` — ctail palette → Denise `Theme`.
 - `src/fonts.rs` — finds a monospace face and a UI face on the machine
   (SF Mono, DejaVu Sans Mono, Consolas, …), falling back to the built-in
@@ -63,7 +73,7 @@ wiring that to a "search the whole file" affordance is still to do.
 
 ## Not yet
 
-The profiles and rules editor, a menu bar (Denise has no native menus; an
+A menu bar (Denise has no native menus; an
 in-app strip or `muda` is the plan), bold/italic rule styles (needs the bold
 face registered as a second font), word wrap, the AI assistant, update checks,
 and Linux/Windows CI builds. Engine events cannot wake the event loop yet, so
@@ -80,10 +90,12 @@ CTAIL_CONFIG_DIR=/tmp/ctail-dev cargo run -p ctail-desktop   # isolated config
 # so these open things for screenshots and manual checks:
 CTAIL_DEBUG_SEARCH=ERROR CTAIL_DEBUG_SEARCH_FILTER=1 cargo run -p ctail-desktop -- some.log
 CTAIL_DEBUG_SETTINGS=1 cargo run -p ctail-desktop -- some.log
+CTAIL_DEBUG_PROFILES=1 cargo run -p ctail-desktop -- some.log
 
 # And this paints the Settings window into a PPM without needing a display at
 # all, which is the only way to see it on a machine whose screen has slept:
-cargo run -p ctail-desktop -- --snapshot /tmp/settings.ppm 2
+cargo run -p ctail-desktop -- --snapshot settings /tmp/settings.ppm 2
+cargo run -p ctail-desktop -- --snapshot profiles /tmp/profiles.ppm 2
 ```
 
 Linux needs the usual winit/softbuffer packages (X11 or Wayland development
