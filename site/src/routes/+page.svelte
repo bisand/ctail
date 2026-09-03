@@ -119,6 +119,26 @@
 				<li class="flex gap-2"><Icon name="check" class="mt-0.5 h-4 w-4 shrink-0 text-success" /> Polling with timeouts, so NFS, SMB and SSHFS mounts never hang the UI</li>
 				<li class="flex gap-2"><Icon name="check" class="mt-0.5 h-4 w-4 shrink-0 text-success" /> Inode-based rotation and truncation detection</li>
 			</ul>
+			<div class="mt-8 overflow-x-auto rounded-box border border-base-300 bg-base-200/60">
+				<table class="table table-sm">
+					<thead>
+						<tr>
+							<th>Log file</th>
+							<th class="text-right">First lines</th>
+							<th class="text-right">Full index</th>
+							<th class="text-right">Memory</th>
+						</tr>
+					</thead>
+					<tbody class="font-mono tabular-nums">
+						<tr><td class="font-sans whitespace-nowrap">172 MB · 2 M lines</td><td class="text-right">7 ms</td><td class="text-right">36 ms</td><td class="text-right">10 MB</td></tr>
+						<tr><td class="font-sans whitespace-nowrap">2 GB · 24 M lines</td><td class="text-right">3 ms</td><td class="text-right">0.4 s</td><td class="text-right">11 MB</td></tr>
+						<tr><td class="font-sans whitespace-nowrap">10 GB · 116 M lines</td><td class="text-right">3 ms</td><td class="text-right">1.9 s</td><td class="text-right">14 MB</td></tr>
+					</tbody>
+				</table>
+			</div>
+			<p class="mt-2 text-xs text-base-content/60">
+				Measured on an Apple silicon MacBook with the file not yet in the page cache. The window itself, tail already highlighted, appears about 300 ms after launch, the same as for an empty file. The whole app sat at 47 MB with the 2 GB log open, and paging any 10,000 lines of scrollback took about 1 ms.
+			</p>
 		</div>
 		<Shot src="search.webp" alt="Search bar showing ERROR matches in a large log" />
 	</div>
