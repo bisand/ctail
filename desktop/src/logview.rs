@@ -226,6 +226,12 @@ impl<M: 'static> LogView<M> {
         self.total_lines = total;
     }
 
+    /// Selects every displayed row — in filter mode, every matching one.
+    pub fn select_all(&mut self) {
+        let count = self.row_count();
+        self.selection = (count > 0).then(|| (0, count - 1));
+    }
+
     pub fn selected_text(&self) -> Option<String> {
         let (a, c) = self.selection?;
         let (lo, hi) = (a.min(c), a.max(c));

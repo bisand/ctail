@@ -48,6 +48,9 @@ on macOS, Windows and Linux the same way this app does.
   against a sample line. Names are asked for in a modal child window, and
   deleting a profile asks through the platform's own message dialog. Saving
   restyles the open tabs at once.
+- `src/tabbar.rs` — the tab strip: a tab carries a colour stripe and a close
+  cross as well as a label, and a right-click has to report *which* tab it
+  hit, so it is a widget of its own rather than the toolkit's `Tabs`.
 - `src/widgets.rs` — the two widgets the toolkit does not have, both about
   *arbitrary* colours rather than theme roles: a clickable colour swatch and
   the rule preview.
@@ -56,6 +59,15 @@ on macOS, Windows and Linux the same way this app does.
 - `src/fonts.rs` — finds a monospace face and a UI face on the machine
   (SF Mono, DejaVu Sans Mono, Consolas, …), falling back to the built-in
   bitmap font.
+
+The menu bar carries File, Edit, View and Help — the macOS app's menus, less
+the items this front end does not have yet — and right-clicking a tab offers
+rename, refresh, change file path, copy path, reveal in the file manager,
+close, and a colour. Both are the toolkit's own `MenuBar` and `open_menu`:
+under winit there is no GTK window to hang a native menu bar on, so a native
+bar would exist on Windows and macOS and simply be missing on Linux, which is
+the platform this front end is for. One bar that behaves the same everywhere
+beat two thirds of a native one.
 
 Sessions come back the way the macOS app's do: with no file named on the
 command line, the tabs from last time reopen in their saved order on the tab
@@ -73,7 +85,7 @@ wiring that to a "search the whole file" affordance is still to do.
 
 ## Not yet
 
-A menu bar (Denise has no native menus; an
+Word wrap (Denise has no native menus; an
 in-app strip or `muda` is the plan), bold/italic rule styles (needs the bold
 face registered as a second font), word wrap, the AI assistant, update checks,
 and Linux/Windows CI builds. Engine events cannot wake the event loop yet, so
@@ -96,6 +108,11 @@ CTAIL_DEBUG_PROFILES=1 cargo run -p ctail-desktop -- some.log
 # all, which is the only way to see it on a machine whose screen has slept:
 cargo run -p ctail-desktop -- --snapshot settings /tmp/settings.ppm 2
 cargo run -p ctail-desktop -- --snapshot profiles /tmp/profiles.ppm 2
+
+# The main window too, with a menu down: CTAIL_DEBUG_MENU is a title index, or
+# any other word for a tab's context menu.
+CTAIL_DEBUG_FILE=some.log CTAIL_DEBUG_MENU=0 \
+  cargo run -p ctail-desktop -- --snapshot main /tmp/main.ppm 2
 ```
 
 Linux needs the usual winit/softbuffer packages (X11 or Wayland development
@@ -103,8 +120,10 @@ libraries); Windows needs nothing beyond the MSVC toolchain.
 
 ## Dependency pin
 
-`Cargo.toml` pins DeniseUI to a pushed `main` revision because the published
-0.19 crates predate the anchors, default-font and window-title APIs used here.
-Bump the `rev` (or switch to a crates.io version) when the next release lands;
-the in-progress `painter-trait` branch renames `Canvas` to `Pen` in
-`Widget::paint`, which is a one-line change in `logview.rs`.
+`Cargo.toml` pins DeniseUI to a pushed revision. The published 0.19 crates
+predate the anchors, default-font and window-title APIs used here, and the
+menu widgets (`MenuBar`, `MenuItem`, `open_menu`, `open_menu_at` and
+`Ui::push_popup_at`) were written for this app and live on the toolkit's
+`feat/menus` branch. Bump the `rev`, or switch to a crates.io version, once a
+release carries them. The in-progress `painter-trait` branch renames `Canvas`
+to `Pen` in `Widget::paint`, which is a one-line change in each widget here.

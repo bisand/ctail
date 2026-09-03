@@ -5,8 +5,10 @@
 use crate::fonts;
 use crate::logview::{LogRequest, LogView};
 use crate::profiles::ProfilesWindow;
+use crate::prompt::PromptWindow;
 use crate::search::{SearchBar, SearchMsg};
 use crate::settings::SettingsWindow;
+use crate::tabbar::{TabBar, TabItem};
 use crate::theme;
 use ctail_core::{
     resolve_palette, AppSettings, ConfigStore, Counters, LogLine, Rule, SearchMatcher, TabState,
@@ -14,7 +16,7 @@ use ctail_core::{
 };
 use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Rect, Size};
 use denise_text::TextStyle;
-use denise_ui::widgets::{Checkbox, Label, Tabs};
+use denise_ui::widgets::{open_menu, open_menu_at, Checkbox, Label, MenuBar, MenuItem};
 use denise_ui::Anchors;
 use denise_ui::{NodeId, Ui};
 use denise_winit::{DeniseApp, Modality, WindowRequest};
@@ -25,10 +27,76 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
     SelectTab(usize),
+    CloseTab(usize),
+    TabContext(usize),
     Follow(bool),
     Log(LogRequest),
     Search(SearchMsg),
+    /// A menu-bar title was pressed.
+    Menu(usize),
+    /// A row of whichever menu is open was chosen.
+    MenuPick(usize),
 }
+
+/// What a menu row does. Kept beside the entries the popup was built from, so
+/// a row is identified by position and the popup itself stays a plain list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Action {
+    /// A heading, or a command that is not available.
+    None,
+    OpenFile,
+    OpenRecent(String),
+    ClearRecent,
+    CloseTab,
+    ReopenTab,
+    Quit,
+    Copy,
+    SelectAll,
+    Find,
+    ToggleLineNumbers,
+    ToggleTheme,
+    Profiles,
+    Settings,
+    About,
+    TabRename,
+    TabRefresh,
+    TabChangePath,
+    TabCopyPath,
+    TabReveal,
+    TabClose,
+    TabColor(String),
+}
+
+/// Shows a file in the platform's file manager. Each of the three has its own
+/// spelling of "select this one", and none of them is a library call.
+fn reveal(path: &str) {
+    let _ = if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+            .args(["-R", path])
+            .spawn()
+    } else if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{path}"))
+            .spawn()
+    } else {
+        // No portable "select the file", so the folder it is in is the answer.
+        let dir = std::path::Path::new(path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        std::process::Command::new("xdg-open").arg(dir).spawn()
+    };
+}
+
+/// The colours a tab can be marked with, matching the macOS app's set.
+const TAB_COLORS: [(&str, &str); 6] = [
+    ("Red", "#f38ba8"),
+    ("Orange", "#fab387"),
+    ("Yellow", "#f9e2af"),
+    ("Green", "#a6e3a1"),
+    ("Blue", "#89b4fa"),
+    ("Purple", "#cba6f7"),
+];
 
 enum TabEvent {
     Lines(Vec<LogLine>, bool),
@@ -72,6 +140,10 @@ impl TailerEvents for Listener {
 
 struct Tab {
     path: String,
+    /// The user's name for this tab; empty means the file name is used.
+    label: String,
+    /// Hex colour the user marked it with, or empty.
+    color: String,
     tailer: Tailer,
     tx: Sender<TabEvent>,
     rx: Receiver<TabEvent>,
@@ -80,11 +152,19 @@ struct Tab {
 }
 
 impl Tab {
-    fn name(&self) -> String {
+    fn file_name(&self) -> String {
         std::path::Path::new(&self.path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.path.clone())
+    }
+
+    fn name(&self) -> String {
+        if self.label.is_empty() {
+            self.file_name()
+        } else {
+            self.label.clone()
+        }
     }
 }
 
@@ -96,6 +176,15 @@ pub struct App {
     tabs: Vec<Tab>,
     active: usize,
     strip: NodeId,
+    menubar: NodeId,
+    /// What each row of the open menu does.
+    menu_actions: Vec<Action>,
+    /// The tab a context menu was opened on.
+    context_tab: Option<usize>,
+    /// Set while a rename prompt is open, with the tab it will rename.
+    renaming: Option<usize>,
+    prompt_tx: Sender<Option<String>>,
+    prompt_rx: Receiver<Option<String>>,
     status: NodeId,
     follow: NodeId,
     search: SearchBar,
@@ -164,14 +253,32 @@ impl App {
 
         let root = ui.root();
         let (w, h) = (size.width as i32, size.height as i32);
-        let strip_h = s(36);
+        let menu_h = s(28);
+        let strip_h = s(34);
         let status_h = s(30);
+        let menu_style = TextStyle::built_in(px(13.0));
+        let menubar = ui
+            .add(
+                root,
+                MenuBar::new(["File", "Edit", "View", "Help"], Msg::Menu).with_style(menu_style),
+                Rect::new(0, 0, w, menu_h),
+            )
+            .expect("menu bar");
+        ui.set_anchors(
+            menubar,
+            Anchors {
+                left: true,
+                top: true,
+                right: true,
+                bottom: false,
+            },
+        );
         let strip = ui
             .add(
                 root,
-                Tabs::new(Vec::<String>::new(), Msg::SelectTab)
-                    .with_style(TextStyle::built_in(px(14.0))),
-                Rect::new(0, 0, w, strip_h),
+                TabBar::new(Msg::SelectTab, Msg::CloseTab, Msg::TabContext)
+                    .with_style(TextStyle::built_in(px(13.0))),
+                Rect::new(0, menu_h, w, strip_h),
             )
             .expect("tab strip");
         ui.set_anchors(
@@ -218,7 +325,7 @@ impl App {
             },
         );
 
-        let content = Rect::new(0, strip_h, w, h - strip_h - status_h);
+        let content = Rect::new(0, menu_h + strip_h, w, h - menu_h - strip_h - status_h);
         let search = SearchBar::install(
             &mut ui,
             root,
@@ -230,6 +337,7 @@ impl App {
 
         let (settings_tx, settings_rx) = mpsc::channel();
         let (profiles_tx, profiles_rx) = mpsc::channel();
+        let (prompt_tx, prompt_rx) = mpsc::channel();
         let mut app = Self {
             ui,
             config,
@@ -238,6 +346,12 @@ impl App {
             tabs: Vec::new(),
             active: 0,
             strip,
+            menubar,
+            menu_actions: Vec::new(),
+            context_tab: None,
+            renaming: None,
+            prompt_tx,
+            prompt_rx,
             status,
             follow,
             search,
@@ -344,7 +458,15 @@ impl App {
         );
         tailer.start();
         self.config.add_recent_file(&path, 15);
+        let saved = self
+            .config
+            .load_settings()
+            .tabs
+            .into_iter()
+            .find(|t| t.file_path == path);
         self.tabs.push(Tab {
+            label: saved.as_ref().map(|t| t.label.clone()).unwrap_or_default(),
+            color: saved.as_ref().map(|t| t.color.clone()).unwrap_or_default(),
             path,
             tailer,
             tx,
@@ -374,9 +496,18 @@ impl App {
     }
 
     fn refresh_strip(&mut self) {
-        let labels: Vec<String> = self.tabs.iter().map(Tab::name).collect();
-        if let Some(strip) = self.ui.widget_mut::<Tabs<Msg>>(self.strip) {
-            strip.set_labels(labels);
+        let items: Vec<TabItem> = self
+            .tabs
+            .iter()
+            .map(|t| TabItem {
+                label: t.name(),
+                color: t.color.clone(),
+            })
+            .collect();
+        let active = self.active;
+        if let Some(strip) = self.ui.widget_mut::<TabBar<Msg>>(self.strip) {
+            strip.set_items(items);
+            strip.set_selected(active);
         }
         self.ui.invalidate(self.strip);
     }
@@ -389,7 +520,7 @@ impl App {
         for (i, tab) in self.tabs.iter().enumerate() {
             self.ui.set_visible(tab.view, i == index);
         }
-        if let Some(strip) = self.ui.widget_mut::<Tabs<Msg>>(self.strip) {
+        if let Some(strip) = self.ui.widget_mut::<TabBar<Msg>>(self.strip) {
             strip.set_selected(index);
         }
         self.ui.invalidate(self.strip);
@@ -487,6 +618,168 @@ impl App {
         self.sync_chrome();
     }
 
+    // --- menus -----------------------------------------------------------
+
+    /// The rows of one menu-bar menu, and what each of them does.
+    fn menu_entries(&self, which: usize) -> (Vec<MenuItem>, Vec<Action>) {
+        let mut rows: Vec<(MenuItem, Action)> = Vec::new();
+        match which {
+            0 => {
+                rows.push((
+                    MenuItem::new("Open…").with_shortcut("Cmd+O"),
+                    Action::OpenFile,
+                ));
+                let has_tabs = !self.tabs.is_empty();
+                rows.push((
+                    MenuItem::new("Close Tab")
+                        .with_shortcut("Cmd+W")
+                        .enabled(has_tabs),
+                    Action::CloseTab,
+                ));
+                rows.push((
+                    MenuItem::new("Reopen Closed Tab")
+                        .with_shortcut("Cmd+Shift+T")
+                        .enabled(!self.closed.is_empty()),
+                    Action::ReopenTab,
+                ));
+                let recent = self.config.recent_files();
+                rows.push((MenuItem::heading("Recent"), Action::None));
+                if recent.is_empty() {
+                    rows.push((MenuItem::new("(empty)").disabled(), Action::None));
+                } else {
+                    for path in recent.iter().take(8) {
+                        let name = std::path::Path::new(path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.clone());
+                        rows.push((MenuItem::new(name), Action::OpenRecent(path.clone())));
+                    }
+                    rows.push((MenuItem::new("Clear Recent"), Action::ClearRecent));
+                }
+                rows.push((MenuItem::new("Quit").with_shortcut("Cmd+Q"), Action::Quit));
+            }
+            1 => {
+                rows.push((MenuItem::new("Copy").with_shortcut("Cmd+C"), Action::Copy));
+                rows.push((
+                    MenuItem::new("Select All").with_shortcut("Cmd+A"),
+                    Action::SelectAll,
+                ));
+                rows.push((MenuItem::new("Find…").with_shortcut("Cmd+F"), Action::Find));
+            }
+            2 => {
+                let settings = self.config.load_settings();
+                rows.push((
+                    MenuItem::new("Show Line Numbers").checked(settings.show_line_numbers),
+                    Action::ToggleLineNumbers,
+                ));
+                rows.push((
+                    MenuItem::new("Light Theme").checked(settings.theme_mode == "light"),
+                    Action::ToggleTheme,
+                ));
+                rows.push((
+                    MenuItem::new("Profiles & Rules…").with_shortcut("Cmd+R"),
+                    Action::Profiles,
+                ));
+                rows.push((
+                    MenuItem::new("Settings…").with_shortcut("Cmd+,"),
+                    Action::Settings,
+                ));
+            }
+            _ => rows.push((MenuItem::new("About ctail"), Action::About)),
+        }
+        rows.into_iter().unzip()
+    }
+
+    /// The rows of a tab's right-click menu.
+    fn tab_menu_entries(&self) -> (Vec<MenuItem>, Vec<Action>) {
+        let reveal = if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else if cfg!(target_os = "windows") {
+            "Show in Explorer"
+        } else {
+            "Show in File Manager"
+        };
+        let mut rows = vec![
+            (MenuItem::new("Rename…"), Action::TabRename),
+            (MenuItem::new("Refresh"), Action::TabRefresh),
+            (MenuItem::new("Change File Path…"), Action::TabChangePath),
+            (MenuItem::new("Copy Path"), Action::TabCopyPath),
+            (MenuItem::new(reveal), Action::TabReveal),
+            (MenuItem::new("Close Tab"), Action::TabClose),
+            (MenuItem::heading("Colour"), Action::None),
+        ];
+        let current = self
+            .context_tab
+            .and_then(|i| self.tabs.get(i))
+            .map(|t| t.color.clone())
+            .unwrap_or_default();
+        for (name, hex) in TAB_COLORS {
+            rows.push((
+                MenuItem::new(name).checked(current == hex),
+                Action::TabColor(hex.to_string()),
+            ));
+        }
+        rows.push((
+            MenuItem::new("None").checked(current.is_empty()),
+            Action::TabColor(String::new()),
+        ));
+        rows.into_iter().unzip()
+    }
+
+    pub(crate) fn open_menu(&mut self, which: usize) {
+        self.context_tab = None;
+        let (entries, actions) = self.menu_entries(which);
+        self.menu_actions = actions;
+        if open_menu(&mut self.ui, self.menubar, which, &entries, Msg::MenuPick).is_some() {
+            if let Some(bar) = self.ui.widget_mut::<MenuBar<Msg>>(self.menubar) {
+                bar.set_open(Some(which));
+            }
+            self.ui.invalidate(self.menubar);
+        }
+    }
+
+    /// Drops the menu bar's highlight when a menu closes, however it closed.
+    fn close_menu(&mut self) {
+        self.ui.close_popup();
+        if let Some(bar) = self.ui.widget_mut::<MenuBar<Msg>>(self.menubar) {
+            if bar.open().is_some() {
+                bar.set_open(None);
+                self.ui.invalidate(self.menubar);
+            }
+        }
+    }
+
+    pub(crate) fn open_tab_menu(&mut self, index: usize) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        self.context_tab = Some(index);
+        // Anchor the popup to the tab that was clicked. The widget's items are
+        // copied out first so measuring can borrow the text engine.
+        let strip = self.ui.bounds(self.strip);
+        let bar = self
+            .ui
+            .widget::<TabBar<Msg>>(self.strip)
+            .map(|b| (b.items().to_vec(), b.style()));
+        let at = match (bar, strip) {
+            (Some((items, style)), Some(bounds)) => {
+                crate::tabbar::layout(&items, bounds, style, self.ui.text_mut())
+                    .get(index)
+                    .copied()
+            }
+            _ => None,
+        };
+        let Some(at) = at else { return };
+        let (entries, actions) = self.tab_menu_entries();
+        self.menu_actions = actions;
+        let style = TextStyle::built_in(self.menu_px());
+        open_menu_at(&mut self.ui, self.strip, at, &entries, style, Msg::MenuPick);
+    }
+
+    fn menu_px(&self) -> u16 {
+        (13.0 * self.scale + 0.5) as u16
+    }
+
     // --- session ---------------------------------------------------------
 
     /// Reopens what the last session had open, in its saved order, and lands
@@ -526,8 +819,8 @@ impl App {
                 file_path: tab.path.clone(),
                 profile_id: s.active_profile.clone(),
                 auto_scroll: true,
-                label: String::new(),
-                color: String::new(),
+                label: tab.label.clone(),
+                color: tab.color.clone(),
                 position: i as i32,
             })
             .collect();
@@ -648,6 +941,175 @@ impl App {
         self.sync_chrome();
     }
 
+    /// Carries out a chosen menu row.
+    fn run(&mut self, action: Action) {
+        match action {
+            Action::None => {}
+            Action::OpenFile => self.open_dialog(),
+            Action::OpenRecent(path) => self.open(path),
+            Action::ClearRecent => self.config.clear_recent_files(),
+            Action::CloseTab => self.close_active(),
+            Action::ReopenTab => self.reopen_closed(),
+            Action::Quit => {
+                self.persist();
+                self.exit = true;
+            }
+            Action::Copy => self.copy_selection(),
+            Action::SelectAll => {
+                if let Some(view) = self.active_view() {
+                    if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+                        v.select_all();
+                    }
+                    self.ui.invalidate(view);
+                }
+            }
+            Action::Find => self.open_search(),
+            Action::ToggleLineNumbers => {
+                let mut s = self.config.load_settings();
+                s.show_line_numbers = !s.show_line_numbers;
+                self.apply_settings(s);
+            }
+            Action::ToggleTheme => {
+                let mut s = self.config.load_settings();
+                s.theme_mode = if s.theme_mode == "light" {
+                    "dark"
+                } else {
+                    "light"
+                }
+                .into();
+                self.apply_settings(s);
+            }
+            Action::Profiles => self.open_profiles(),
+            Action::Settings => self.open_settings(),
+            Action::About => {
+                rfd::MessageDialog::new()
+                    .set_title("About ctail")
+                    .set_description(format!(
+                        "ctail {}\n\nLog viewer with real-time tailing and regex highlighting.",
+                        env!("CARGO_PKG_VERSION")
+                    ))
+                    .show();
+            }
+            Action::TabRename => {
+                let Some(index) = self.context_tab else {
+                    return;
+                };
+                let Some(tab) = self.tabs.get(index) else {
+                    return;
+                };
+                let initial = tab.name();
+                self.renaming = Some(index);
+                let tx = self.prompt_tx.clone();
+                self.pending_windows.push(
+                    WindowRequest::new(PromptWindow::config("Rename Tab"), move |size, scale| {
+                        PromptWindow::new(size, scale, "Name for this tab".into(), initial, tx)
+                    })
+                    .with_modality(Modality::Modal),
+                );
+            }
+            Action::TabRefresh => {
+                if let Some(index) = self.context_tab {
+                    if let Some(view) = self.tabs.get(index).map(|t| t.view) {
+                        if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+                            v.reset();
+                        }
+                        self.ui.invalidate(view);
+                    }
+                    if let Some(tab) = self.tabs.get(index) {
+                        tab.tailer.refresh();
+                    }
+                }
+            }
+            Action::TabChangePath => self.change_tab_path(),
+            Action::TabCopyPath => {
+                let path = self
+                    .context_tab
+                    .and_then(|i| self.tabs.get(i))
+                    .map(|t| t.path.clone());
+                if let (Some(path), Some(cb)) = (path, self.clipboard.as_mut()) {
+                    let _ = cb.set_text(path);
+                }
+            }
+            Action::TabReveal => {
+                if let Some(path) = self
+                    .context_tab
+                    .and_then(|i| self.tabs.get(i))
+                    .map(|t| t.path.clone())
+                {
+                    reveal(&path);
+                }
+            }
+            Action::TabClose => {
+                if let Some(index) = self.context_tab {
+                    self.activate(index);
+                    self.close_active();
+                }
+            }
+            Action::TabColor(hex) => {
+                if let Some(tab) = self.context_tab.and_then(|i| self.tabs.get_mut(i)) {
+                    tab.color = hex;
+                }
+                self.refresh_strip();
+                self.persist();
+            }
+        }
+    }
+
+    fn active_view(&self) -> Option<NodeId> {
+        self.tabs.get(self.active).map(|t| t.view)
+    }
+
+    fn copy_selection(&mut self) {
+        let text = self
+            .active_view()
+            .and_then(|view| self.ui.widget::<LogView<Msg>>(view))
+            .and_then(LogView::selected_text);
+        if let (Some(text), Some(cb)) = (text, self.clipboard.as_mut()) {
+            let _ = cb.set_text(text);
+        }
+    }
+
+    /// Points a tab at a different file, keeping its place, label and colour.
+    fn change_tab_path(&mut self) {
+        let Some(index) = self.context_tab else {
+            return;
+        };
+        let Some(current) = self.tabs.get(index).map(|t| t.path.clone()) else {
+            return;
+        };
+        let mut dialog = rfd::FileDialog::new().set_title("Point this tab at a different file");
+        if let Some(dir) = std::path::Path::new(&current).parent() {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(picked) = dialog.pick_file() else {
+            return;
+        };
+        let path = picked.to_string_lossy().into_owned();
+        let (tx, rx) = mpsc::channel();
+        let listener = Arc::new(Listener {
+            tx: tx.clone(),
+            counters: OnceLock::new(),
+        });
+        let tailer = Tailer::new(&path, self.tailer_options(), listener.clone());
+        let _ = listener.counters.set(tailer.counters());
+        let view = self.tabs[index].view;
+        if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+            v.reset();
+        }
+        self.ui.invalidate(view);
+        let tab = &mut self.tabs[index];
+        tab.tailer.stop();
+        tab.path = path.clone();
+        tab.tailer = tailer;
+        tab.tx = tx;
+        tab.rx = rx;
+        tab.error = None;
+        tab.tailer.start();
+        self.config.add_recent_file(&path, 15);
+        self.refresh_strip();
+        self.activate(index);
+    }
+
     fn open_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new().set_title("Open log file");
         if let Some(active) = self.tabs.get(self.active) {
@@ -744,15 +1206,19 @@ impl App {
                 }
                 self.ui.invalidate(self.follow);
             }
-            Msg::Log(LogRequest::Copy) => {
-                let text = self
-                    .tabs
-                    .get(self.active)
-                    .and_then(|t| self.ui.widget::<LogView<Msg>>(t.view))
-                    .and_then(LogView::selected_text);
-                if let (Some(text), Some(cb)) = (text, self.clipboard.as_mut()) {
-                    let _ = cb.set_text(text);
+            Msg::Log(LogRequest::Copy) => self.copy_selection(),
+            Msg::CloseTab(i) => {
+                if i < self.tabs.len() {
+                    self.activate(i);
+                    self.close_active();
                 }
+            }
+            Msg::TabContext(i) => self.open_tab_menu(i),
+            Msg::Menu(which) => self.open_menu(which),
+            Msg::MenuPick(row) => {
+                self.close_menu();
+                let action = self.menu_actions.get(row).cloned().unwrap_or(Action::None);
+                self.run(action);
             }
             Msg::Search(SearchMsg::Toggle(which)) => {
                 self.search.toggle(&mut self.ui, which);
@@ -882,6 +1348,23 @@ impl DeniseApp for App {
         }
         if let Some(s) = saved {
             self.apply_settings(s);
+        }
+        while let Ok(answer) = self.prompt_rx.try_recv() {
+            let index = self.renaming.take();
+            if let (Some(index), Some(name)) = (index, answer) {
+                if let Some(tab) = self.tabs.get_mut(index) {
+                    // A name matching the file is no name at all, so the tab
+                    // goes back to following the file if it is renamed later.
+                    tab.label = if name == tab.file_name() {
+                        String::new()
+                    } else {
+                        name
+                    };
+                }
+                self.refresh_strip();
+                self.persist();
+                self.sync_chrome();
+            }
         }
         let mut rules_changed = false;
         while self.profiles_rx.try_recv().is_ok() {

@@ -713,7 +713,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 [[package]]
 name = "denise"
 version = "0.19.0"
-source = "git+https://github.com/bisand/denise?rev=0848c4a7457015872cd6a3f876815ad655072a48#0848c4a7457015872cd6a3f876815ad655072a48"
+source = "git+https://github.com/bisand/denise?rev=611f8f1#611f8f1d67e354f49388d941a150e572f121b158"
 dependencies = [
  "thiserror 2.0.20",
 ]
@@ -721,7 +721,7 @@ dependencies = [
 [[package]]
 name = "denise-macos"
 version = "0.19.0"
-source = "git+https://github.com/bisand/denise?rev=0848c4a7457015872cd6a3f876815ad655072a48#0848c4a7457015872cd6a3f876815ad655072a48"
+source = "git+https://github.com/bisand/denise?rev=611f8f1#611f8f1d67e354f49388d941a150e572f121b158"
 dependencies = [
  "denise",
  "objc2 0.6.4",
@@ -737,7 +737,7 @@ dependencies = [
 [[package]]
 name = "denise-render"
 version = "0.19.0"
-source = "git+https://github.com/bisand/denise?rev=0848c4a7457015872cd6a3f876815ad655072a48#0848c4a7457015872cd6a3f876815ad655072a48"
+source = "git+https://github.com/bisand/denise?rev=611f8f1#611f8f1d67e354f49388d941a150e572f121b158"
 dependencies = [
  "denise",
 ]
@@ -745,7 +745,7 @@ dependencies = [
 [[package]]
 name = "denise-text"
 version = "0.19.0"
-source = "git+https://github.com/bisand/denise?rev=0848c4a7457015872cd6a3f876815ad655072a48#0848c4a7457015872cd6a3f876815ad655072a48"
+source = "git+https://github.com/bisand/denise?rev=611f8f1#611f8f1d67e354f49388d941a150e572f121b158"
 dependencies = [
  "denise",
  "denise-render",
@@ -755,7 +755,7 @@ dependencies = [
 [[package]]
 name = "denise-ui"
 version = "0.19.0"
-source = "git+https://github.com/bisand/denise?rev=0848c4a7457015872cd6a3f876815ad655072a48#0848c4a7457015872cd6a3f876815ad655072a48"
+source = "git+https://github.com/bisand/denise?rev=611f8f1#611f8f1d67e354f49388d941a150e572f121b158"
 dependencies = [
  "denise",
  "denise-render",
@@ -766,7 +766,7 @@ dependencies = [
 [[package]]
 name = "denise-winit"
 version = "0.19.0"
-source = "git+https://github.com/bisand/denise?rev=0848c4a7457015872cd6a3f876815ad655072a48#0848c4a7457015872cd6a3f876815ad655072a48"
+source = "git+https://github.com/bisand/denise?rev=611f8f1#611f8f1d67e354f49388d941a150e572f121b158"
 dependencies = [
  "denise",
  "denise-macos",

@@ -9,6 +9,7 @@ mod profiles;
 mod prompt;
 mod search;
 mod settings;
+mod tabbar;
 mod theme;
 mod widgets;
 
@@ -55,6 +56,9 @@ fn snapshot(what: &str, path: &str, scale: f32) -> std::io::Result<()> {
     use denise_winit::DeniseApp;
     use std::io::Write as _;
 
+    if what == "main" {
+        return snapshot_main(path, scale);
+    }
     let logical = match what {
         "profiles" => profiles::SIZE,
         _ => settings::SIZE,
@@ -80,6 +84,52 @@ fn snapshot(what: &str, path: &str, scale: f32) -> std::io::Result<()> {
         )
         .expect("frame");
         window.render(&mut frame, &[]);
+    }
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
+    write!(out, "P6\n{} {}\n255\n", size.width, size.height)?;
+    for word in &pixels {
+        out.write_all(&[(word >> 16) as u8, (word >> 8) as u8, *word as u8])?;
+    }
+    out.flush()?;
+    eprintln!("wrote {path} at {}x{}", size.width, size.height);
+    Ok(())
+}
+
+/// Paints the main window, with whatever `CTAIL_DEBUG_*` asked to be open, so
+/// the log surface and the menus can be checked without a display. The engine
+/// runs on its own threads, so this pumps the application until lines arrive
+/// rather than painting an empty window.
+fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
+    use denise::{BufferAge, DamageTracker, PixelFormat};
+    use denise_winit::DeniseApp;
+    use std::io::Write as _;
+
+    let size = Size::new((1200.0 * scale + 0.5) as u32, (760.0 * scale + 0.5) as u32);
+    let files: Vec<String> = std::env::var("CTAIL_DEBUG_FILE").into_iter().collect();
+    let mut app = app::App::new(size, scale, files);
+    let mut damage = DamageTracker::new(size);
+    for _ in 0..40 {
+        app.update(&[], &mut damage);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    if let Ok(which) = std::env::var("CTAIL_DEBUG_MENU") {
+        match which.parse::<usize>() {
+            Ok(i) => app.open_menu(i),
+            Err(_) => app.open_tab_menu(0),
+        }
+        app.update(&[], &mut damage);
+    }
+    let mut pixels = vec![0u32; (size.width * size.height) as usize];
+    {
+        let mut frame = denise::Frame::new(
+            &mut pixels,
+            size,
+            size.width,
+            PixelFormat::Xrgb8888,
+            BufferAge::Undefined,
+        )
+        .expect("frame");
+        app.render(&mut frame, &[]);
     }
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
     write!(out, "P6\n{} {}\n255\n", size.width, size.height)?;
