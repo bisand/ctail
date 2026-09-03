@@ -1,31 +1,28 @@
 import Foundation
+import CtailCore
 
-/// A compiled search, mirroring the SearchTab options in app.go: case-sensitive,
-/// whole-word, and regex toggles. Plain queries are escaped into a regex so match
-/// ranges (for highlighting) and boolean matching share one code path.
+/// A compiled search (case-sensitive, whole-word and regex toggles), backed by
+/// the engine's matcher (core/src/search.rs). Plain queries are escaped into a
+/// regex so match ranges and boolean matching share one code path.
 struct SearchQuery {
-    let regex: NSRegularExpression?
+    private let core: CoreSearchMatcher
     let isEmpty: Bool
 
     init(_ text: String, caseSensitive: Bool, wholeWord: Bool, isRegex: Bool) {
         isEmpty = text.isEmpty
-        if text.isEmpty { regex = nil; return }
-        var pattern = isRegex ? text : NSRegularExpression.escapedPattern(for: text)
-        if wholeWord { pattern = "\\b" + pattern + "\\b" }
-        let opts: NSRegularExpression.Options = caseSensitive ? [] : [.caseInsensitive]
-        regex = try? NSRegularExpression(pattern: pattern, options: opts)
+        core = CoreSearchMatcher(text: text, caseSensitive: caseSensitive, wholeWord: wholeWord, isRegex: isRegex)
     }
 
-    var isValid: Bool { isEmpty || regex != nil }
+    var isValid: Bool { core.isValid() }
 
-    func matches(_ s: String) -> Bool {
-        guard let regex else { return false }
-        return regex.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil
-    }
+    func matches(_ s: String) -> Bool { core.matches(line: s) }
 
     func ranges(in s: String) -> [NSRange] {
-        guard let regex else { return [] }
-        let full = NSRange(location: 0, length: (s as NSString).length)
-        return regex.matches(in: s, range: full).map { $0.range }
+        core.ranges(line: s).map { NSRange(location: Int($0.start), length: Int($0.end - $0.start)) }
+    }
+
+    /// Indices of the matching lines — one engine call for a whole window.
+    func matchingIndices(_ lines: [String]) -> [Int] {
+        isEmpty ? [] : core.matchingIndices(lines: lines).map { Int($0) }
     }
 }

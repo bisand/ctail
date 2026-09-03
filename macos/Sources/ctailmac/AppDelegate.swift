@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         // Restore saved geometry, else center.
         let w = settings.window
         if w.width > 0 && w.height > 0 && (w.x != 0 || w.y != 0) {
-            window.setFrame(NSRect(x: w.x, y: w.y, width: w.width, height: w.height), display: false)
+            window.setFrame(NSRect(x: Int(w.x), y: Int(w.y), width: Int(w.width), height: Int(w.height)), display: false)
         } else {
             window.center()
         }
@@ -107,8 +107,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         updateSettings {
             $0.tabs = states
             $0.lastActiveTabPath = activePath
-            $0.window = WindowState(x: Int(frame.origin.x), y: Int(frame.origin.y),
-                                    width: Int(frame.width), height: Int(frame.height),
+            $0.window = WindowState(x: Int32(frame.origin.x), y: Int32(frame.origin.y),
+                                    width: Int32(frame.width), height: Int32(frame.height),
                                     maximised: self.window.isZoomed)
         }
     }

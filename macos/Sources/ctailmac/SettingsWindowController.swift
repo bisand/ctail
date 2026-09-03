@@ -361,6 +361,12 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
     @objc private func cancelTapped() { close() }
 
+    /// Int32 flavour for the engine's settings fields.
+    private func intOr(_ field: NSTextField, _ fallback: Int32, min lo: Int32, max hi: Int32) -> Int32 {
+        Int32(intOr(field, Int(fallback), min: Int(lo), max: Int(hi)))
+    }
+
+
     private func intOr(_ field: NSTextField, _ fallback: Int, min lo: Int, max hi: Int) -> Int {
         guard let v = Int(field.stringValue.trimmingCharacters(in: .whitespaces)) else { return fallback }
         return Swift.max(lo, Swift.min(hi, v))

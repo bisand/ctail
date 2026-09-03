@@ -36,9 +36,9 @@ run: core
 	swift build
 	./.build/debug/ctailmac $(FILE)
 
-## themes: regenerate Themes.generated.swift from the Go theme source
+## themes: regenerate core/src/themes_generated.rs from the Go theme source
 themes:
-	python3 scripts/gen_themes.py ../legacy/wails/internal/config/themes.go Sources/ctailmac/Themes.generated.swift
+	python3 scripts/gen_themes.py ../legacy/wails/internal/config/themes.go ../core/src/themes_generated.rs
 
 ## icon: generate AppIcon.icns from the app icon source
 icon:

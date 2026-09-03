@@ -3,11 +3,17 @@
 A proof-of-concept Swift/AppKit rewrite of ctail, built to de-risk the two hard
 parts of a full native port **before** committing to it:
 
-1. **The tail engine** — now the Rust crate in [`core/`](../core/), reached
-   through [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings.
-   [Tailer.swift](Sources/ctailmac/Tailer.swift) is a thin wrapper that keeps
-   the closure-callback surface the UI uses and hops callbacks to the main queue.
-   The engine it replaced (a port of the Go tailer) is kept at
+1. **The engine** — now the Rust crate in [`core/`](../core/), reached
+   through [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings: the tailer,
+   the data model (settings, profiles, rules, themes) and its JSON persistence,
+   the theme catalogue, regex highlighting and search. The Swift files of the
+   same names ([Tailer.swift](Sources/ctailmac/Tailer.swift),
+   [ConfigStore.swift](Sources/ctailmac/ConfigStore.swift),
+   [Highlight.swift](Sources/ctailmac/Highlight.swift),
+   [SearchQuery.swift](Sources/ctailmac/SearchQuery.swift),
+   [Theme.swift](Sources/ctailmac/Theme.swift)) are thin wrappers that keep the
+   surface the UI uses and add the AppKit bits (main-queue callbacks, NSColor,
+   NSAttributedString). The Swift tailer they replaced is kept at
    [scripts/tailbench/LegacyTailer.swift](scripts/tailbench/LegacyTailer.swift)
    as the benchmark reference.
 2. **The virtualized log view** — `NSTableView`-backed so only visible rows are
@@ -63,7 +69,9 @@ Feature parity with the Wails app is implemented natively (tracked under the
 
 - **Engine** — (Rust, `core/`) polling tailer with inode rotation + truncation
   detection, partial-line buffering, tail-first + background line indexing,
-  windowed range reads, read timeouts.
+  windowed range reads, read timeouts; settings/profile/theme persistence with
+  the Go app's JSON keys; regex highlighting (`fancy-regex`: linear-time for
+  plain patterns, lookaround/backreferences still accepted) and search.
 - **UI** — virtualized `NSTableView` log surface, multi-tab interface (drag
   reorder, rename, color, Ctrl+Tab, reopen-closed), VS Code-style search
   (case/word/regex + filter mode), all 21 themes + custom themes, profiles &

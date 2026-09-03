@@ -115,11 +115,11 @@ final class TabController: NSObject {
 
     // MARK: - Tab lifecycle
 
-    private func rules(for profileName: String) -> [HighlightRule] {
+    private func rules(for profileName: String) -> [Rule] {
         let profile = config.loadProfile(profileName)
             ?? config.loadProfile(settings.activeProfile)
             ?? Defaults.commonLogsProfile()
-        return HighlightRule.compile(profile)
+        return profile.rules
     }
 
     /// Opens (or focuses) a file. Returns nil when blocked by the free-tier tab
@@ -146,8 +146,8 @@ final class TabController: NSObject {
                       fontSize: CGFloat(settings.fontSize),
                       showLineNumbers: settings.showLineNumbers,
                       wordWrap: settings.wordWrap,
-                      bufferSize: settings.bufferSize,
-                      scrollBuffer: settings.scrollBuffer)
+                      bufferSize: Int(settings.bufferSize),
+                      scrollBuffer: Int(settings.scrollBuffer))
         wire(tab)
         config.addRecentFile(path)
 

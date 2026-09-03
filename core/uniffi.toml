@@ -1,4 +1,7 @@
 [bindings.swift]
 module_name = "CtailCore"
 ffi_module_name = "CtailCoreFFI"
-generate_immutable_records = true
+# Records are mutated by the UI (settings, profiles).
+generate_immutable_records = false
+# Rules/profiles are also exchanged as JSON with the AI assistant.
+generate_codable_conformance = true

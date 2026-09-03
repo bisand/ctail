@@ -49,7 +49,7 @@ final class LogView: NSView {
 
     private var displayed: [LogLine] { filterMode ? filtered : lines }
 
-    init(palette: ThemeColors, rules: [HighlightRule], fontSize: CGFloat = 12,
+    init(palette: ThemeColors, rules: [Rule], fontSize: CGFloat = 12,
          showLineNumbers: Bool = true, wordWrap: Bool = false,
          bufferSize: Int = 10_000, scrollBuffer: Int = 500) {
         self.palette = palette
@@ -606,12 +606,13 @@ final class LogView: NSView {
             ? displayed[matchRows[currentMatch]].number : nil
 
         if filterMode {
-            filtered = lines.filter { query.matches($0.text) }
+            let keep = query.matchingIndices(lines.map { $0.text })
+            filtered = keep.map { lines[$0] }
             matchRows = Array(0..<filtered.count)
         } else if query.isEmpty {
             matchRows = []
         } else {
-            matchRows = displayed.enumerated().compactMap { query.matches($0.element.text) ? $0.offset : nil }
+            matchRows = query.matchingIndices(displayed.map { $0.text })
         }
         reload()
 

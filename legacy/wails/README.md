@@ -15,6 +15,6 @@ make dev      # wails dev
 make test     # go test ./internal/...
 ```
 
-The macOS app still reads its theme catalogue from
-`internal/config/themes.go` via `make -C macos themes`, so that file stays the
-source of truth until themes move into `core/`.
+The engine's built-in theme catalogue (`core/src/themes_generated.rs`) is still
+generated from `internal/config/themes.go` via `make -C macos themes`, so that
+file stays the source of truth for the palettes.

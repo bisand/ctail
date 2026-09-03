@@ -283,7 +283,7 @@ final class ProfilesWindowController: NSWindowController {
     private func updatePreview() {
         guard profile.rules.indices.contains(selectedRule) else { preview.stringValue = ""; return }
         let sample = "2026-06-21 12:00:00 INFO ERROR WARN DEBUG sample log line 42"
-        let rules = HighlightRule.compile(Profile(name: "", rules: [profile.rules[selectedRule]]))
+        let rules = [profile.rules[selectedRule]]
         let engine = HighlightEngine(rules: rules, palette: palette,
                                      font: .monospacedSystemFont(ofSize: 12, weight: .regular))
         preview.attributedStringValue = engine.render(sample)

@@ -64,11 +64,10 @@ enum SelfTest {
 
         // lenient decode
         let json = #"{"bufferSize": 500, "theme": "dracula", "unknownKey": true}"#
-        if let d = try? JSONDecoder().decode(AppSettings.self, from: Data(json.utf8)) {
-            eq(d.bufferSize, 500, "lenient bufferSize")
-            eq(d.theme, "dracula", "lenient theme")
-            eq(d.fontSize, 14, "lenient default fontSize")
-        } else { check(false, "lenient decode threw") }
+        let d = AppSettings.fromJSON(json)
+        eq(d.bufferSize, 500, "lenient bufferSize")
+        eq(d.theme, "dracula", "lenient theme")
+        eq(d.fontSize, 14, "lenient default fontSize")
 
         // profile CRUD
         store.ensureDefaultProfile()

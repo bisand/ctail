@@ -2,7 +2,13 @@
 //! foreign side sees plain records, one object per tailer, and two callback
 //! protocols. Callbacks run on the tailer's worker thread.
 
+use crate::config;
+use crate::highlight::{self, LineStyle};
+use crate::models::{self, AppSettings, Profile, Rule, Theme, ThemeColors};
+use crate::search::{self, TextRange};
 use crate::tailer::{LogLine, Tailer, TailerEvents, TailerOptions};
+use crate::themes;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -103,5 +109,186 @@ impl TailerHandle {
     /// Whether absolute line numbers / scrollback are available yet.
     pub fn indexing_complete(&self) -> bool {
         self.inner.indexing_complete()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Model helpers
+// ---------------------------------------------------------------------------
+
+#[uniffi::export]
+pub fn default_settings() -> AppSettings {
+    AppSettings::default()
+}
+
+/// The built-in "Common Logs" profile.
+#[uniffi::export]
+pub fn default_profile() -> Profile {
+    models::default_profile()
+}
+
+/// Lenient settings parse (unknown keys ignored, missing keys defaulted).
+#[uniffi::export]
+pub fn settings_from_json(json: String) -> AppSettings {
+    models::settings_from_json(&json)
+}
+
+/// Profile name -> file-name-safe stem.
+#[uniffi::export]
+pub fn sanitize_profile_name(name: String) -> String {
+    config::sanitize_name(&name)
+}
+
+// ---------------------------------------------------------------------------
+// Config store
+// ---------------------------------------------------------------------------
+
+/// Settings/profile persistence; see the crate's `config` module.
+#[derive(uniffi::Object)]
+pub struct CoreConfigStore {
+    inner: config::ConfigStore,
+}
+
+#[uniffi::export]
+impl CoreConfigStore {
+    /// `root` overrides the directory; otherwise `CTAIL_CONFIG_DIR`, then the
+    /// platform default.
+    #[uniffi::constructor]
+    pub fn new(root: Option<String>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: config::ConfigStore::new(root.map(PathBuf::from)),
+        })
+    }
+    pub fn dir(&self) -> String {
+        self.inner.dir().to_string_lossy().into_owned()
+    }
+    pub fn themes_dir(&self) -> String {
+        self.inner.themes_dir().to_string_lossy().into_owned()
+    }
+    pub fn load_settings(&self) -> AppSettings {
+        self.inner.load_settings()
+    }
+    pub fn save_settings(&self, settings: AppSettings) -> bool {
+        self.inner.save_settings(&settings)
+    }
+    pub fn recent_files(&self) -> Vec<String> {
+        self.inner.recent_files()
+    }
+    pub fn add_recent_file(&self, path: String, max: u32) {
+        self.inner.add_recent_file(&path, max as usize)
+    }
+    pub fn clear_recent_files(&self) {
+        self.inner.clear_recent_files()
+    }
+    pub fn list_profiles(&self) -> Vec<String> {
+        self.inner.list_profiles()
+    }
+    pub fn load_profile(&self, name: String) -> Option<Profile> {
+        self.inner.load_profile(&name)
+    }
+    pub fn save_profile(&self, profile: Profile) -> bool {
+        self.inner.save_profile(&profile)
+    }
+    pub fn delete_profile(&self, name: String) {
+        self.inner.delete_profile(&name)
+    }
+    pub fn rename_profile(&self, old: String, new: String) -> bool {
+        self.inner.rename_profile(&old, &new)
+    }
+    pub fn ensure_default_profile(&self) {
+        self.inner.ensure_default_profile()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Themes
+// ---------------------------------------------------------------------------
+
+#[uniffi::export]
+pub fn built_in_themes() -> Vec<Theme> {
+    themes::built_in_themes()
+}
+
+/// Built-ins plus custom `*.json` themes from `custom_dir`.
+#[uniffi::export]
+pub fn all_themes(custom_dir: Option<String>) -> Vec<Theme> {
+    themes::all_themes(custom_dir.as_deref().map(Path::new))
+}
+
+/// Theme name + "dark"/"light" -> palette (Catppuccin dark for unknown names).
+#[uniffi::export]
+pub fn resolve_palette(name: String, mode: String, custom_dir: Option<String>) -> ThemeColors {
+    themes::resolve_palette(&name, &mode, custom_dir.as_deref().map(Path::new))
+}
+
+// ---------------------------------------------------------------------------
+// Highlighting
+// ---------------------------------------------------------------------------
+
+/// A compiled rule set; see the crate's `highlight` module.
+#[derive(uniffi::Object)]
+pub struct CoreHighlighter {
+    inner: highlight::Highlighter,
+}
+
+#[uniffi::export]
+impl CoreHighlighter {
+    #[uniffi::constructor]
+    pub fn new(rules: Vec<Rule>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: highlight::Highlighter::new(&rules),
+        })
+    }
+    /// Compiled rules in index order (what `LineStyle` indices refer to).
+    pub fn rules(&self) -> Vec<Rule> {
+        self.inner.rules()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+    pub fn apply(&self, line: String) -> LineStyle {
+        self.inner.apply(&line)
+    }
+}
+
+/// `None` if the pattern compiles, else the error message.
+#[uniffi::export]
+pub fn validate_pattern(pattern: String) -> Option<String> {
+    highlight::validate_pattern(&pattern)
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/// A compiled search query; see the crate's `search` module.
+#[derive(uniffi::Object)]
+pub struct CoreSearchMatcher {
+    inner: search::SearchMatcher,
+}
+
+#[uniffi::export]
+impl CoreSearchMatcher {
+    #[uniffi::constructor]
+    pub fn new(text: String, case_sensitive: bool, whole_word: bool, is_regex: bool) -> Arc<Self> {
+        Arc::new(Self {
+            inner: search::SearchMatcher::new(&text, case_sensitive, whole_word, is_regex),
+        })
+    }
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+    pub fn is_valid(&self) -> bool {
+        self.inner.is_valid()
+    }
+    pub fn matches(&self, line: String) -> bool {
+        self.inner.matches(&line)
+    }
+    pub fn ranges(&self, line: String) -> Vec<TextRange> {
+        self.inner.ranges(&line)
+    }
+    /// Indices of the matching lines, for filtering a whole window in one call.
+    pub fn matching_indices(&self, lines: Vec<String>) -> Vec<u32> {
+        self.inner.matching_indices(&lines)
     }
 }

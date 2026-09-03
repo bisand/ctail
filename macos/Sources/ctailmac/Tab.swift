@@ -11,7 +11,7 @@ final class Tab {
     let tailer: Tailer
     let logView: LogView
 
-    init(filePath: String, palette: ThemeColors, rules: [HighlightRule],
+    init(filePath: String, palette: ThemeColors, rules: [Rule],
          profileName: String, pollInterval: TimeInterval, readTimeout: TimeInterval,
          fontSize: CGFloat, showLineNumbers: Bool, wordWrap: Bool, bufferSize: Int, scrollBuffer: Int) {
         self.filePath = filePath
@@ -30,6 +30,6 @@ final class Tab {
 
     func toState(position: Int) -> TabState {
         TabState(filePath: filePath, profileId: profileName, autoScroll: logView.following,
-                 label: label, color: color, position: position)
+                 label: label, color: color, position: Int32(position))
     }
 }

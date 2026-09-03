@@ -8,14 +8,16 @@ and an optional AI assistant. Website and user docs: see [`site/`](site/).
 
 | Path | What it is |
 |------|------------|
-| [`core/`](core/) | **Rust engine crate** (`ctail-core`). Platform-neutral: the tail engine today; highlighting, search and config next. Exposed to Swift through [UniFFI](https://mozilla.github.io/uniffi-rs/) (`--features ffi`). |
+| [`core/`](core/) | **Rust engine crate** (`ctail-core`). Platform-neutral: tail engine, data model + config persistence, theme catalogue, regex highlighting, search. Exposed to Swift through [UniFFI](https://mozilla.github.io/uniffi-rs/) (`--features ffi`). |
 | [`macos/`](macos/) | **Native macOS app** (Swift / AppKit) on top of `core/`. The shipping product; see [`macos/README.md`](macos/README.md). |
 | [`site/`](site/) | Website (SvelteKit), deployed by `.github/workflows/site.yml`. |
 | [`docs/`](docs/) | Feature documentation (highlighting rules, AI assistant, custom themes). |
 | [`legacy/wails/`](legacy/wails/) | **Archived** original cross-platform app (Go + Svelte via Wails). Not built by CI; kept for reference. See [`legacy/wails/README.md`](legacy/wails/README.md). |
 
-The plan: keep the UI native per platform and move everything that isn't UI
-into `core/`, so Linux and Windows front ends can share one tested engine.
+The plan: keep the UI native per platform and everything that isn't UI in
+`core/`, so Linux and Windows front ends can share one tested engine. The
+macOS app is there today; what remains in Swift is AppKit, StoreKit, the
+sandbox bookmarks and the AI/update HTTP clients.
 
 ## Quick start
 
