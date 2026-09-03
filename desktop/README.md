@@ -96,10 +96,17 @@ unbroken token as a sentence. A wrapped line stays one line for everything
 else — one number in the gutter, one row to select, one entry in the match
 list — and the view scrolls a wrapped row at a time.
 
+Help → Check for Updates… asks GitHub through the engine's `update` module
+and says so either way; on launch the check runs quietly when the setting
+allows and the interval has passed (the time of the last one is kept beside
+the settings, in `last-update-check`), and only speaks up when there is
+something to download.
+
 ## Not yet
 
-Bold/italic rule styles (needs the bold face registered as a second font),
-the AI assistant, update checks, and Linux/Windows CI builds. Engine events cannot wake the event loop yet, so
+Bold/italic rule styles (needs the bold face registered as a second font)
+and the AI assistant's window — the assistant itself (providers, prompts,
+Copilot sign-in) is in the engine's `ai` module, waiting for a window. Engine events cannot wake the event loop yet, so
 the app polls its channels every 100 ms while a file is open — a waker in
 `denise-winit` would remove that.
 

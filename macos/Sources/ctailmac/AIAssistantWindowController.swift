@@ -111,43 +111,29 @@ final class AIAssistantWindowController: NSWindowController {
     }
 
     /// Extracts the JSON rule array from a model response (tolerating prose/fences).
-    private func parseRules(_ text: String) -> [Rule]? {
-        guard let start = text.firstIndex(of: "["), let end = text.lastIndex(of: "]") else { return nil }
-        let json = String(text[start...end])
-        return try? JSONDecoder().decode([Rule].self, from: Data(json.utf8))
-    }
+    private func parseRules(_ text: String) -> [Rule]? { AIPrompts.extractRules(text) }
 
+    /// One turn with the provider. Copilot without a sign-in is not a failure
+    /// but a detour: sign in, then ask the same question again.
     private func run(messages: [AIMessage], busy: String, onText: @escaping (String) -> Void) {
         setBusy(true, busy)
-        ensureClient { [weak self] result in
+        AIService.chat(settings: settings, messages: messages) { [weak self] result in
             guard let self else { return }
             switch result {
-            case .failure(let e): self.fail(e)
-            case .success(let client):
-                client.chat(messages) { [weak self] r in
-                    guard let self else { return }
-                    self.setBusy(false, "")
-                    switch r {
-                    case .success(let text): onText(text)
-                    case .failure(let e): self.fail(e)
-                    }
+            case .success(let text):
+                self.setBusy(false, "")
+                onText(text)
+            case .failure(let e):
+                if case AIError.needsCopilotAuth = e {
+                    self.startCopilotSignIn { self.run(messages: messages, busy: busy, onText: onText) }
+                } else {
+                    self.fail(e)
                 }
             }
         }
     }
 
-    /// Resolves a chat backend, kicking off Copilot sign-in if needed.
-    private func ensureClient(_ completion: @escaping (Result<any ChatBackend, Error>) -> Void) {
-        AIService.makeClient(settings: settings) { [weak self] result in
-            if case .failure(let e) = result, case AIError.needsCopilotAuth = e {
-                self?.startCopilotSignIn(then: completion)
-            } else {
-                completion(result)
-            }
-        }
-    }
-
-    private func startCopilotSignIn(then completion: @escaping (Result<any ChatBackend, Error>) -> Void) {
+    private func startCopilotSignIn(then retry: @escaping () -> Void) {
         setBusy(true, "Requesting Copilot device code…")
         CopilotAuth.requestDeviceCode { [weak self] result in
             guard let self else { return }
@@ -156,12 +142,12 @@ final class AIAssistantWindowController: NSWindowController {
             case .success(let dc):
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(dc.userCode, forType: .string)
-                self.answerView.string = "To use Copilot:\n\n1. Your code (copied to clipboard): \(dc.userCode)\n2. A browser is opening \(dc.verificationURI)\n3. Enter the code, then return here.\n\nWaiting for authorization…"
-                if let url = URL(string: dc.verificationURI) { NSWorkspace.shared.open(url) }
+                self.answerView.string = "To use Copilot:\n\n1. Your code (copied to clipboard): \(dc.userCode)\n2. A browser is opening \(dc.verificationUri)\n3. Enter the code, then return here.\n\nWaiting for authorization…"
+                if let url = URL(string: dc.verificationUri) { NSWorkspace.shared.open(url) }
                 CopilotAuth.pollForToken(deviceCode: dc.deviceCode, interval: dc.interval) { [weak self] tokenResult in
                     switch tokenResult {
                     case .failure(let e): self?.fail(e)
-                    case .success: AIService.makeClient(settings: self?.settings ?? AppSettings(), completion: completion)
+                    case .success: retry()
                     }
                 }
             }

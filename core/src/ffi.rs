@@ -2,6 +2,7 @@
 //! foreign side sees plain records, one object per tailer, and two callback
 //! protocols. Callbacks run on the tailer's worker thread.
 
+use crate::ai::{self, copilot, AiError, AiMessage};
 use crate::config;
 use crate::filesearch::{self, FileSearchEvents, FileSearchQuery, FileSearchStatus};
 use crate::highlight::{self, LineStyle};
@@ -9,6 +10,7 @@ use crate::models::{self, AppSettings, Profile, Rule, Theme, ThemeColors};
 use crate::search::{self, TextRange};
 use crate::tailer::{LogLine, Tailer, TailerEvents, TailerOptions};
 use crate::themes;
+use crate::update::{self, UpdateCheck};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -342,4 +344,117 @@ impl CoreFileSearch {
     pub fn step(&self, query: FileSearchQuery, forward: bool, from: Option<i64>) -> Option<i64> {
         self.inner.step(&query, forward, from)
     }
+}
+
+// --- the update check -----------------------------------------------------------
+
+/// Asks GitHub whether a newer release than `current` exists. Blocks on the
+/// network: call it off the main thread.
+#[uniffi::export]
+pub fn check_for_update(current: String) -> UpdateCheck {
+    update::check_for_update(&current)
+}
+
+/// Positive when `a` is newer than `b`, negative when older, zero when equal.
+#[uniffi::export]
+pub fn compare_versions(a: String, b: String) -> i32 {
+    update::compare_versions(&a, &b)
+}
+
+// --- the AI assistant -----------------------------------------------------------
+//
+// Every call that talks to a provider blocks; the front end runs it on a
+// thread of its own. The Copilot OAuth token is the front end's to keep and
+// hand back in.
+
+#[uniffi::export]
+pub fn ai_api_providers() -> Vec<String> {
+    ai::API_PROVIDERS.iter().map(|p| p.to_string()).collect()
+}
+
+#[uniffi::export]
+pub fn ai_cli_providers() -> Vec<String> {
+    ai::CLI_PROVIDERS.iter().map(|p| p.to_string()).collect()
+}
+
+#[uniffi::export]
+pub fn ai_default_endpoint(provider: String) -> String {
+    ai::default_endpoint(&provider)
+}
+
+#[uniffi::export]
+pub fn ai_default_model(provider: String) -> String {
+    ai::default_model(&provider)
+}
+
+/// Inside the App Sandbox, where the CLI providers cannot run.
+#[uniffi::export]
+pub fn ai_is_sandboxed() -> bool {
+    ai::is_sandboxed()
+}
+
+#[uniffi::export]
+pub fn ai_log_messages(log_content: String, question: String) -> Vec<AiMessage> {
+    ai::log_messages(&log_content, &question)
+}
+
+#[uniffi::export]
+pub fn ai_rule_gen_messages(log_content: String) -> Vec<AiMessage> {
+    ai::rule_gen_messages(&log_content)
+}
+
+/// The rules in a model's answer, wherever in the prose it put them.
+#[uniffi::export]
+pub fn ai_extract_rules(text: String) -> Option<Vec<Rule>> {
+    ai::extract_rules(&text)
+}
+
+#[uniffi::export]
+pub fn ai_completions_url(endpoint: String) -> String {
+    ai::completions_url(&endpoint)
+}
+
+#[uniffi::export]
+pub fn ai_messages_url(endpoint: String) -> String {
+    ai::messages_url(&endpoint)
+}
+
+#[uniffi::export]
+pub fn ai_combined_prompt(messages: Vec<AiMessage>) -> String {
+    ai::combined_prompt(&messages)
+}
+
+/// One turn with the provider chosen in `settings`.
+#[uniffi::export]
+pub fn ai_chat(
+    settings: AppSettings,
+    copilot_oauth: Option<String>,
+    messages: Vec<AiMessage>,
+) -> Result<String, AiError> {
+    ai::chat(&settings, copilot_oauth.as_deref(), &messages)
+}
+
+/// The provider's models, for a picker.
+#[uniffi::export]
+pub fn ai_list_models(
+    settings: AppSettings,
+    copilot_oauth: Option<String>,
+) -> Result<Vec<String>, AiError> {
+    ai::list_models(&settings, copilot_oauth.as_deref())
+}
+
+#[uniffi::export]
+pub fn copilot_request_device_code() -> Result<copilot::CopilotDeviceCode, AiError> {
+    copilot::request_device_code()
+}
+
+/// Blocks until the user has authorised at github.com, or the code expires.
+#[uniffi::export]
+pub fn copilot_poll_for_token(device_code: String, interval: u32) -> Result<String, AiError> {
+    copilot::poll_for_token(&device_code, interval)
+}
+
+#[uniffi::export]
+pub fn copilot_exchange_token(oauth: String) -> Result<String, AiError> {
+    copilot::exchange_token(&oauth)
 }

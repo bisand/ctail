@@ -17,6 +17,9 @@ typealias Theme = CtailCore.Theme
 typealias ThemeColors = CtailCore.ThemeColors
 typealias FileSearchQuery = CtailCore.FileSearchQuery
 typealias FileSearchStatus = CtailCore.FileSearchStatus
+typealias AIMessage = CtailCore.AiMessage
+typealias UpdateCheck = CtailCore.UpdateCheck
+typealias CopilotDeviceCode = CtailCore.CopilotDeviceCode
 
 extension AppSettings {
     /// All defaults (matches `AppSettings::default()` in the engine).

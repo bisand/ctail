@@ -68,6 +68,36 @@ impl ConfigStore {
         self.dir.join("settings.json")
     }
 
+    // --- the automatic update check -----------------------------------------
+
+    fn update_stamp_path(&self) -> PathBuf {
+        self.dir.join("last-update-check")
+    }
+
+    /// When the last automatic update check ran, in seconds since the epoch;
+    /// 0 when it never has. Kept beside the settings rather than in them, so
+    /// a check leaves the settings file — and its modification time — alone.
+    pub fn last_update_check(&self) -> i64 {
+        fs::read_to_string(self.update_stamp_path())
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    pub fn set_last_update_check(&self, seconds: i64) {
+        let _ = fs::write(self.update_stamp_path(), seconds.to_string());
+    }
+
+    /// Whether an automatic check is due at `now` under `settings`: enabled,
+    /// and the interval has passed since the last one.
+    pub fn update_check_due(&self, settings: &AppSettings, now: i64) -> bool {
+        if settings.disable_update_check {
+            return false;
+        }
+        let interval = i64::from(settings.update_check_interval_hours.max(1)) * 3600;
+        now - self.last_update_check() >= interval
+    }
+
     pub fn load_settings(&self) -> AppSettings {
         fs::read_to_string(self.settings_path())
             .ok()

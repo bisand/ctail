@@ -1,4 +1,5 @@
 import Foundation
+import CtailCore
 
 // Lightweight in-process test harness. XCTest/Testing aren't available under the
 // Command Line Tools toolchain (they ship with full Xcode), so tests run via
@@ -216,6 +217,8 @@ enum SelfTest {
     }
 
     static func updatesSuite() {
+        // The comparison and the parsing are the engine's; this checks the
+        // Swift face gives the same answers, and the launch-time gate.
         let c = UpdateChecker.compareVersions
         check(c("1.0.1", "1.0.0") > 0, "patch newer")
         check(c("1.0.0", "1.0.1") < 0, "patch older")
@@ -226,47 +229,62 @@ enum SelfTest {
         check(c("0.9.9+255", "0.9.9") == 0, "build suffix ignored")
     }
 
-    // MARK: - AI suite (network-free parts)
+    // MARK: - AI suite (network-free parts, through the engine)
 
     static func aiSuite() {
         // Endpoint resolution per provider/base.
-        eq(AIClient(endpoint: "https://api.openai.com", apiKey: "", model: "x").completionsURL,
+        eq(aiCompletionsUrl(endpoint: "https://api.openai.com"),
            "https://api.openai.com/v1/chat/completions", "openai endpoint")
-        eq(AIClient(endpoint: "https://api.githubcopilot.com", apiKey: "", model: "x").completionsURL,
+        eq(aiCompletionsUrl(endpoint: "https://api.githubcopilot.com"),
            "https://api.githubcopilot.com/chat/completions", "copilot endpoint")
-        eq(AIClient(endpoint: "http://localhost:11434/v1", apiKey: "", model: "x").completionsURL,
+        eq(aiCompletionsUrl(endpoint: "http://localhost:11434/v1"),
            "http://localhost:11434/v1/chat/completions", "ollama /v1 endpoint")
-        eq(AIClient(endpoint: "https://x/v1/chat/completions", apiKey: "", model: "x").completionsURL,
+        eq(aiCompletionsUrl(endpoint: "https://x/v1/chat/completions"),
            "https://x/v1/chat/completions", "already-full endpoint untouched")
         eq(AIService.defaultEndpoint(for: "openai"), "https://api.openai.com", "default openai endpoint")
 
         // Anthropic provider: endpoint/model defaults + /v1/messages URL building.
         eq(AIService.defaultEndpoint(for: "anthropic"), "https://api.anthropic.com", "default anthropic endpoint")
         eq(AIService.defaultModel(for: "anthropic"), "claude-sonnet-4-6", "default anthropic model")
-        eq(AnthropicClient(endpoint: "https://api.anthropic.com", apiKey: "", model: "x").messagesURL,
-           "https://api.anthropic.com/v1/messages", "anthropic messages URL")
-        eq(AnthropicClient(endpoint: "https://proxy/v1", apiKey: "", model: "x").messagesURL,
-           "https://proxy/v1/messages", "anthropic /v1 endpoint")
-        eq(AnthropicClient(endpoint: "https://proxy/v1/messages", apiKey: "", model: "x").messagesURL,
-           "https://proxy/v1/messages", "anthropic already-full endpoint untouched")
+        eq(aiMessagesUrl(endpoint: "https://api.anthropic.com"), "https://api.anthropic.com/v1/messages", "anthropic messages URL")
+        eq(aiMessagesUrl(endpoint: "https://proxy/v1"), "https://proxy/v1/messages", "anthropic /v1 endpoint")
+        eq(aiMessagesUrl(endpoint: "https://proxy/v1/messages"), "https://proxy/v1/messages", "anthropic already-full endpoint untouched")
 
-        // CLI backend: prompt flattening (system first, then turns) + arg shapes.
-        let prompt = CLIChatBackend.combinedPrompt(
-            [AIMessage(role: "system", content: "SYS"), AIMessage(role: "user", content: "USER")])
+        // The CLI providers exist and are hidden only in the sandbox.
+        eq(AIService.cliProviders, ["claude-cli", "codex-cli"], "cli providers")
+        check(AIService.apiProviders.contains("copilot"), "api providers")
+
+        // CLI backend: prompt flattening (system first, then turns).
+        let prompt = aiCombinedPrompt(messages: [AIMessage(role: "system", content: "SYS"),
+                                                 AIMessage(role: "user", content: "USER")])
         eq(prompt, "SYS\n\nUSER", "CLI prompt flattens system then user")
-        eq(CLIChatBackend.Tool.claude.args(model: "claude-x"), ["-p", "--model", "claude-x"], "claude CLI args")
-        eq(CLIChatBackend.Tool.codex.args(model: ""), ["exec"], "codex CLI args without model")
 
-        // Rule-array JSON (what generate-rules returns) decodes into [Rule].
-        let json = #"""
+        // The prompts carry the log and the question.
+        let asked = AIPrompts.logMessages(logContent: "LOG", question: "Q?")
+        eq(asked.count, 2, "system + user")
+        eq(asked[0].role, "system", "system first")
+        check(asked[1].content.contains("LOG") && asked[1].content.hasSuffix("Question: Q?"), "user turn carries log and question")
+
+        // Rule-array JSON (what generate-rules returns) decodes into [Rule],
+        // wherever the model wrapped it.
+        let answer = """
+        Sure:
+        ```json
         [{"id":"err","name":"Error","pattern":"(?i)ERROR","matchType":"line","foreground":"#ff0000","background":"","bold":true,"italic":false,"enabled":true,"priority":100}]
-        """#
-        let rules = try? JSONDecoder().decode([Rule].self, from: Data(json.utf8))
+        ```
+        """
+        let rules = AIPrompts.extractRules(answer)
         eq(rules?.count, 1, "rule array decodes")
         eq(rules?.first?.matchType, "line", "rule field decoded")
+        eq(AIPrompts.extractRules("no rules here")?.count, nil, "no array, no rules")
 
-        // Copilot editor headers are present.
-        check(CopilotAuth.editorHeaders["Copilot-Integration-Id"] == "vscode-chat", "copilot integration header")
+        // The engine's errors arrive as the window's.
+        if case .needsCopilotAuth = AIError(CtailCore.AiError.NeedsCopilotAuth(message: "x")) {
+            check(true, "copilot auth error maps")
+        } else {
+            check(false, "copilot auth error maps")
+        }
+        eq(AIError(CtailCore.AiError.Message(message: "boom")).errorDescription, "boom", "message error maps")
     }
 
     // MARK: - Bookmarks suite (graceful no-bookmark behavior)

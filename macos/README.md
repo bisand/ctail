@@ -76,7 +76,12 @@ Feature parity with the Wails app is implemented natively (tracked under the
   debounced, cancellable scan on its own thread, and the match stepping that
   goes with it), so the counter is the file's count and ↓ reaches matches the
   window has never held; the Linux and Windows front end drives the same
-  object.
+  object. The update check and the AI assistant's providers (prompts, the
+  OpenAI-compatible and Anthropic request shapes, Copilot's device-flow
+  sign-in, model listing, the CLI tools) are the engine's too — `update.rs`
+  and `ai.rs`, over `ureq` — and the Swift files of those names are the
+  main-queue trampolines over them. The Copilot token stays in the defaults
+  on this side; that is the one thing about the assistant that is macOS's.
 - **UI** — virtualized `NSTableView` log surface, multi-tab interface (drag
   reorder, rename, color, Ctrl+Tab, reopen-closed), VS Code-style search
   (case/word/regex + filter mode), all 21 themes + custom themes, profiles &

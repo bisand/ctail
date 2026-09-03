@@ -11,9 +11,9 @@ use crate::settings::SettingsWindow;
 use crate::tabbar::{TabBar, TabItem};
 use crate::theme;
 use ctail_core::{
-    resolve_palette, AppSettings, ConfigStore, Counters, FileSearch, FileSearchEvents,
-    FileSearchQuery, FileSearchStatus, LogLine, Rule, SearchMatcher, TabState, Tailer,
-    TailerEvents, TailerOptions,
+    check_for_update, resolve_palette, AppSettings, ConfigStore, Counters, FileSearch,
+    FileSearchEvents, FileSearchQuery, FileSearchStatus, LogLine, Rule, SearchMatcher, TabState,
+    Tailer, TailerEvents, TailerOptions, UpdateCheck,
 };
 use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Rect, Size};
 use denise_text::TextStyle;
@@ -59,6 +59,7 @@ enum Action {
     ToggleTheme,
     Profiles,
     Settings,
+    CheckUpdates,
     About,
     TabRename,
     TabRefresh,
@@ -89,6 +90,22 @@ fn reveal(path: &str) {
         std::process::Command::new("xdg-open").arg(dir).spawn()
     };
 }
+
+/// Opens a web page in the default browser.
+fn open_url(url: &str) {
+    let _ = if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(url).spawn()
+    } else if cfg!(target_os = "windows") {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", url])
+            .spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(url).spawn()
+    };
+}
+
+/// The version this binary is, for the update check.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The colours a tab can be marked with, matching the macOS app's set.
 const TAB_COLORS: [(&str, &str); 6] = [
@@ -212,6 +229,10 @@ pub struct App {
     /// A tap on the shoulder when a scan finishes; the count is read back from
     /// `file_search`, which holds it.
     scans: Receiver<()>,
+    /// Answers from update checks, with whether the reader asked for one:
+    /// a quiet launch-time check only speaks up when there is an update.
+    updates_tx: Sender<(UpdateCheck, bool)>,
+    updates_rx: Receiver<(UpdateCheck, bool)>,
     /// Height of the status strip, so a resize can recompute the log area.
     status_h: i32,
     content: Rect,
@@ -358,6 +379,7 @@ impl App {
         let (profiles_tx, profiles_rx) = mpsc::channel();
         let (prompt_tx, prompt_rx) = mpsc::channel();
         let (scan_tx, scans) = mpsc::channel();
+        let (updates_tx, updates_rx) = mpsc::channel();
         let file_search = FileSearch::new(Arc::new(ScanNotice(Mutex::new(scan_tx))));
         let mut app = Self {
             ui,
@@ -380,6 +402,8 @@ impl App {
             search_empty: true,
             file_search,
             scans,
+            updates_tx,
+            updates_rx,
             status_h,
             content,
             settings_tx,
@@ -405,6 +429,7 @@ impl App {
             }
         }
         app.debug_hooks();
+        app.maybe_check_for_updates();
         app
     }
 
@@ -811,7 +836,10 @@ impl App {
                     Action::Settings,
                 ));
             }
-            _ => rows.push((MenuItem::new("About ctail"), Action::About)),
+            _ => {
+                rows.push((MenuItem::new("Check for Updates…"), Action::CheckUpdates));
+                rows.push((MenuItem::new("About ctail"), Action::About));
+            }
         }
         rows.into_iter().unzip()
     }
@@ -1068,6 +1096,62 @@ impl App {
         self.sync_chrome();
     }
 
+    // --- the update check ----------------------------------------------
+
+    /// Asks GitHub on a thread of its own; the answer comes back through
+    /// `updates_rx` on a later frame. `manual` is whether the reader asked.
+    fn check_for_updates(&self, manual: bool) {
+        let tx = self.updates_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send((check_for_update(VERSION), manual));
+        });
+    }
+
+    /// The launch-time check, when the setting allows and the interval has
+    /// passed. Quiet unless there is something to say.
+    fn maybe_check_for_updates(&self) {
+        let settings = self.config.load_settings();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        if self.config.update_check_due(&settings, now) {
+            self.config.set_last_update_check(now);
+            self.check_for_updates(false);
+        }
+    }
+
+    fn show_update_check(&self, check: UpdateCheck, manual: bool) {
+        if let Some(error) = check.error {
+            if manual {
+                rfd::MessageDialog::new()
+                    .set_level(rfd::MessageLevel::Warning)
+                    .set_title("Update check failed")
+                    .set_description(error)
+                    .show();
+            }
+            return;
+        }
+        if check.update_available {
+            let notes: String = check.notes.chars().take(500).collect();
+            let answer = rfd::MessageDialog::new()
+                .set_title(format!("Update available: {}", check.latest))
+                .set_description(format!("You have {}.\n\n{notes}", check.current))
+                .set_buttons(rfd::MessageButtons::OkCancelCustom(
+                    "Download".into(),
+                    "Later".into(),
+                ))
+                .show();
+            if answer == rfd::MessageDialogResult::Custom("Download".into()) {
+                open_url(&check.url);
+            }
+        } else if manual {
+            rfd::MessageDialog::new()
+                .set_title("You're up to date")
+                .set_description(format!("ctail {} is the latest version.", check.current))
+                .show();
+        }
+    }
+
     /// Carries out a chosen menu row.
     fn run(&mut self, action: Action) {
         match action {
@@ -1113,6 +1197,7 @@ impl App {
             }
             Action::Profiles => self.open_profiles(),
             Action::Settings => self.open_settings(),
+            Action::CheckUpdates => self.check_for_updates(true),
             Action::About => {
                 rfd::MessageDialog::new()
                     .set_title("About ctail")
@@ -1527,6 +1612,10 @@ impl DeniseApp for App {
         // back rather than being handed it.
         if self.scans.try_iter().count() > 0 {
             self.refresh_counter();
+        }
+        let answers: Vec<(UpdateCheck, bool)> = self.updates_rx.try_iter().collect();
+        for (check, manual) in answers {
+            self.show_update_check(check, manual);
         }
         self.ui.handle(&forwarded);
         // The field reports on submit, not per keystroke, so typing is noticed
