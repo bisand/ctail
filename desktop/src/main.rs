@@ -5,6 +5,7 @@
 mod app;
 mod fonts;
 mod logview;
+mod search;
 mod theme;
 
 use denise::Size;

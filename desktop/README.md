@@ -24,7 +24,15 @@ on macOS, Windows and Linux the same way this app does.
   engine's head count lands), highlight spans from the engine's `Highlighter`,
   follow mode that pauses on scroll-up and resumes on End, row selection by
   click/drag with Ctrl/Cmd+C copy, PageUp/PageDown/Home/End, and scrollback
-  fetched from the engine when the window reaches its top.
+  fetched from the engine when the window reaches its top. It also carries the
+  search: match highlighting, the current match picked out, and filter mode.
+- `src/search.rs` — the find bar (Ctrl/Cmd+F): query field, the Aa / W / .*
+  toggles, a filter toggle that hides non-matching lines, a match counter, and
+  prev/next/close. Enter and ↓ step forward, Shift+Enter and ↑ back, Escape
+  closes. Typing searches live. The counter reads as "where you are": until a
+  match has been stepped to it counts from the first one at or after the top
+  of the view, so the first ↓ goes to a match near what is on screen rather
+  than to the oldest one in the buffer.
 - `src/app.rs` — tabs (one `LogView` node each), engine callbacks funnelled
   through channels into the UI thread, status line, follow toggle, Ctrl/Cmd+O
   open (native dialog via `rfd`), Ctrl/Cmd+W close, Ctrl/Cmd+Q quit.
@@ -37,20 +45,28 @@ Settings, profiles, recent files and themes come from the same config store
 (`~/.config/ctail`, `%APPDATA%\ctail`, `~/Library/Application Support/ctail`) as
 the other front ends, so a profile edited on the Mac renders identically here.
 
+Search covers the window of lines held in memory, which is what the macOS app
+searches too. The engine can scan a whole file (`ctail_core::search_file`);
+wiring that to a "search the whole file" affordance is still to do.
+
 ## Not yet
 
-Search bar and filter, settings and profile editors, a menu bar (Denise has no
-native menus; an in-app strip or `muda` is the plan), bold/italic rule styles
-(needs the bold face registered as a second font), word wrap, the AI
-assistant, update checks, and Linux/Windows CI builds. Engine events cannot
-wake the event loop yet, so the app polls its channels every 100 ms while a
-file is open — a waker in `denise-winit` would remove that.
+Settings and profile editors, a menu bar (Denise has no native menus; an
+in-app strip or `muda` is the plan), bold/italic rule styles (needs the bold
+face registered as a second font), word wrap, the AI assistant, update checks,
+and Linux/Windows CI builds. Engine events cannot wake the event loop yet, so
+the app polls its channels every 100 ms while a file is open — a waker in
+`denise-winit` would remove that.
 
 ## Run
 
 ```bash
 cargo run -p ctail-desktop -- /path/to/some.log
 CTAIL_CONFIG_DIR=/tmp/ctail-dev cargo run -p ctail-desktop   # isolated config
+
+# The window cannot be scripted from outside without accessibility permission,
+# so these open the find bar for screenshots and manual checks:
+CTAIL_DEBUG_SEARCH=ERROR CTAIL_DEBUG_SEARCH_FILTER=1 cargo run -p ctail-desktop -- some.log
 ```
 
 Linux needs the usual winit/softbuffer packages (X11 or Wayland development

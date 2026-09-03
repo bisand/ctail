@@ -4,9 +4,11 @@
 
 use crate::fonts;
 use crate::logview::{LogRequest, LogView};
+use crate::search::{SearchBar, SearchMsg};
 use crate::theme;
 use ctail_core::{
-    resolve_palette, ConfigStore, Counters, LogLine, Rule, Tailer, TailerEvents, TailerOptions,
+    resolve_palette, ConfigStore, Counters, LogLine, Rule, SearchMatcher, Tailer, TailerEvents,
+    TailerOptions,
 };
 use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Rect, Size};
 use denise_text::TextStyle;
@@ -23,6 +25,7 @@ pub enum Msg {
     SelectTab(usize),
     Follow(bool),
     Log(LogRequest),
+    Search(SearchMsg),
 }
 
 enum TabEvent {
@@ -93,6 +96,14 @@ pub struct App {
     strip: NodeId,
     status: NodeId,
     follow: NodeId,
+    search: SearchBar,
+    /// Validity and emptiness of the query the views are showing, so stepping
+    /// through matches keeps reporting "bad regex" rather than a technically
+    /// true "No results".
+    search_valid: bool,
+    search_empty: bool,
+    /// Height of the status strip, so a resize can recompute the log area.
+    status_h: i32,
     content: Rect,
     title: String,
     started: Instant,
@@ -188,6 +199,16 @@ impl App {
             },
         );
 
+        let content = Rect::new(0, strip_h, w, h - strip_h - status_h);
+        let search = SearchBar::install(
+            &mut ui,
+            root,
+            content,
+            scale,
+            Msg::Search,
+            Msg::Search(SearchMsg::Next),
+        );
+
         let mut app = Self {
             ui,
             config,
@@ -198,7 +219,11 @@ impl App {
             strip,
             status,
             follow,
-            content: Rect::new(0, strip_h, w, h - strip_h - status_h),
+            search,
+            search_valid: true,
+            search_empty: true,
+            status_h,
+            content,
             title: "ctail".into(),
             started: Instant::now(),
             clipboard: arboard::Clipboard::new().ok(),
@@ -207,7 +232,28 @@ impl App {
         for f in files {
             app.open(f);
         }
+        app.debug_hooks();
         app
+    }
+
+    /// Development affordances, driven by the environment because this window
+    /// cannot be scripted from outside without accessibility permission:
+    /// `CTAIL_DEBUG_SEARCH` opens the find bar on that query, and
+    /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode.
+    fn debug_hooks(&mut self) {
+        let Ok(query) = std::env::var("CTAIL_DEBUG_SEARCH") else {
+            return;
+        };
+        if query.is_empty() {
+            return;
+        }
+        if std::env::var_os("CTAIL_DEBUG_SEARCH_FILTER").is_some() {
+            self.search
+                .toggle(&mut self.ui, crate::search::Toggle::Filter);
+        }
+        self.search.open(&mut self.ui);
+        self.search.set_query(&mut self.ui, &query);
+        self.apply_search();
     }
 
     fn tailer_options(&self) -> TailerOptions {
@@ -307,6 +353,94 @@ impl App {
         let view = self.tabs[index].view;
         self.ui.focus(Some(view));
         self.title = format!("ctail — {}", self.tabs[index].name());
+        if self.search.is_open() {
+            self.apply_search();
+        }
+        self.sync_chrome();
+    }
+
+    // --- search ---------------------------------------------------------
+
+    fn open_search(&mut self) {
+        self.search.open(&mut self.ui);
+        self.apply_search(); // a query left in the field applies again at once
+    }
+
+    fn close_search(&mut self) {
+        self.search.close(&mut self.ui);
+        // Every view, not just the active one: a hidden tab must not come back
+        // still filtered by a search the user has closed.
+        let views: Vec<NodeId> = self.tabs.iter().map(|t| t.view).collect();
+        for view in views {
+            if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+                v.set_search(None, false);
+            }
+            self.ui.invalidate(view);
+        }
+        if let Some(tab) = self.tabs.get(self.active) {
+            let view = tab.view;
+            self.ui.focus(Some(view));
+        }
+        self.sync_chrome();
+    }
+
+    /// Compiles what is in the field and hands it to the active view.
+    fn apply_search(&mut self) {
+        let text = self.search.query(&self.ui);
+        let matcher = SearchMatcher::new(
+            &text,
+            self.search.case_sensitive,
+            self.search.whole_word,
+            self.search.is_regex,
+        );
+        self.search_valid = matcher.is_valid();
+        self.search_empty = matcher.is_empty();
+        let usable = (!self.search_empty && self.search_valid).then(|| Arc::new(matcher));
+        let filter = self.search.filter;
+        if let Some(tab) = self.tabs.get(self.active) {
+            let view = tab.view;
+            if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+                v.set_search(usable, filter);
+            }
+            self.ui.invalidate(view);
+        }
+        self.refresh_counter();
+        self.sync_chrome();
+    }
+
+    /// Reads the live match count out of the active view. Lines arriving while
+    /// the bar is open change it without anyone pressing anything.
+    fn refresh_counter(&mut self) {
+        let status = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| self.ui.widget::<LogView<Msg>>(t.view))
+            .map(|v| v.search_status())
+            .unwrap_or_default();
+        self.search.set_counter(
+            &mut self.ui,
+            status.current,
+            status.total,
+            self.search_valid,
+            self.search_empty,
+        );
+    }
+
+    fn step_search(&mut self, forward: bool) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let view = tab.view;
+        let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) else {
+            return;
+        };
+        if forward {
+            v.next_match();
+        } else {
+            v.prev_match();
+        }
+        self.ui.invalidate(view);
+        self.refresh_counter();
         self.sync_chrome();
     }
 
@@ -381,6 +515,9 @@ impl App {
             }
         }
         if chrome_dirty {
+            if self.search.is_open() {
+                self.refresh_counter();
+            }
             self.sync_chrome();
         }
     }
@@ -413,6 +550,13 @@ impl App {
                     let _ = cb.set_text(text);
                 }
             }
+            Msg::Search(SearchMsg::Toggle(which)) => {
+                self.search.toggle(&mut self.ui, which);
+                self.apply_search();
+            }
+            Msg::Search(SearchMsg::Next) => self.step_search(true),
+            Msg::Search(SearchMsg::Prev) => self.step_search(false),
+            Msg::Search(SearchMsg::Close) => self.close_search(),
             Msg::Log(LogRequest::Older) => {
                 let Some(tab) = self.tabs.get(self.active) else {
                     return;
@@ -439,29 +583,82 @@ impl App {
 
 impl DeniseApp for App {
     fn update(&mut self, events: &[InputEvent], damage: &mut DamageTracker) {
+        // Shortcuts are taken here rather than in a widget, and the ones that
+        // act are not passed on: Escape closing the find bar must not also
+        // clear the log's selection underneath it.
+        let mut forwarded: Vec<InputEvent> = Vec::with_capacity(events.len());
         for event in events {
             match event {
-                InputEvent::CloseRequested => self.exit = true,
+                InputEvent::CloseRequested => {
+                    self.exit = true;
+                    continue;
+                }
+                InputEvent::SurfaceResized { size, .. } => {
+                    self.content.width = size.width as i32;
+                    self.content.height =
+                        (size.height as i32 - self.content.y - self.status_h).max(1);
+                }
                 InputEvent::Key {
                     code,
                     state: ElementState::Down,
                     modifiers,
                     ..
-                } if modifiers.contains(Modifiers::SUPER)
-                    || modifiers.contains(Modifiers::CTRL) =>
-                {
-                    match code {
-                        KeyCode::O => self.open_dialog(),
-                        KeyCode::W => self.close_active(),
-                        KeyCode::Q => self.exit = true,
-                        _ => {}
+                } => {
+                    let cmd =
+                        modifiers.contains(Modifiers::SUPER) || modifiers.contains(Modifiers::CTRL);
+                    if cmd {
+                        match code {
+                            KeyCode::O => {
+                                self.open_dialog();
+                                continue;
+                            }
+                            KeyCode::W => {
+                                self.close_active();
+                                continue;
+                            }
+                            KeyCode::Q => {
+                                self.exit = true;
+                                continue;
+                            }
+                            KeyCode::F => {
+                                self.open_search();
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if self.search.is_open() {
+                        match code {
+                            KeyCode::Escape => {
+                                self.close_search();
+                                continue;
+                            }
+                            // Enter alone is the field's own submit message.
+                            KeyCode::Enter if modifiers.contains(Modifiers::SHIFT) => {
+                                self.step_search(false);
+                                continue;
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 _ => {}
             }
+            forwarded.push(event.clone());
         }
         self.pump_engine();
-        self.ui.handle(events);
+        self.ui.handle(&forwarded);
+        // The field reports on submit, not per keystroke, so typing is noticed
+        // by comparing what is in it.
+        if self.search.is_open() {
+            if self.search.take_text_change(&self.ui).is_some() {
+                self.apply_search();
+            } else {
+                // The count moves on its own — lines arrive, the view scrolls —
+                // so the bar reads it back rather than being told once.
+                self.refresh_counter();
+            }
+        }
         self.ui.tick(self.started.elapsed().as_millis() as u64);
         let messages: Vec<Msg> = self.ui.drain_messages().collect();
         for m in messages {
