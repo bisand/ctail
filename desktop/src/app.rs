@@ -5,17 +5,18 @@
 use crate::fonts;
 use crate::logview::{LogRequest, LogView};
 use crate::search::{SearchBar, SearchMsg};
+use crate::settings::SettingsWindow;
 use crate::theme;
 use ctail_core::{
-    resolve_palette, ConfigStore, Counters, LogLine, Rule, SearchMatcher, Tailer, TailerEvents,
-    TailerOptions,
+    resolve_palette, AppSettings, ConfigStore, Counters, LogLine, Rule, SearchMatcher, TabState,
+    Tailer, TailerEvents, TailerOptions,
 };
 use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Rect, Size};
 use denise_text::TextStyle;
 use denise_ui::widgets::{Checkbox, Label, Tabs};
 use denise_ui::Anchors;
 use denise_ui::{NodeId, Ui};
-use denise_winit::DeniseApp;
+use denise_winit::{DeniseApp, Modality, WindowRequest};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -105,6 +106,19 @@ pub struct App {
     /// Height of the status strip, so a resize can recompute the log area.
     status_h: i32,
     content: Rect,
+    /// The Settings window reports through here: `Some` when it saved,
+    /// `None` when it was dismissed. Either way it has closed.
+    settings_tx: Sender<Option<AppSettings>>,
+    settings_rx: Receiver<Option<AppSettings>>,
+    /// Windows asked for this frame; the backend takes them after `update`.
+    pending_windows: Vec<WindowRequest>,
+    /// One Settings window at a time — a second would edit a stale copy.
+    settings_open: bool,
+    /// Paths of tabs closed this session, newest last.
+    closed: Vec<String>,
+    /// The window's size, kept current so it can be saved on the way out.
+    window: Size,
+    scale: f32,
     title: String,
     started: Instant,
     clipboard: Option<arboard::Clipboard>,
@@ -209,6 +223,7 @@ impl App {
             Msg::Search(SearchMsg::Next),
         );
 
+        let (settings_tx, settings_rx) = mpsc::channel();
         let mut app = Self {
             ui,
             config,
@@ -224,13 +239,24 @@ impl App {
             search_empty: true,
             status_h,
             content,
+            settings_tx,
+            settings_rx,
+            pending_windows: Vec::new(),
+            settings_open: false,
+            closed: Vec::new(),
+            window: size,
+            scale,
             title: "ctail".into(),
             started: Instant::now(),
             clipboard: arboard::Clipboard::new().ok(),
             exit: false,
         };
-        for f in files {
-            app.open(f);
+        if files.is_empty() {
+            app.restore_session(&settings);
+        } else {
+            for f in files {
+                app.open(f);
+            }
         }
         app.debug_hooks();
         app
@@ -238,9 +264,13 @@ impl App {
 
     /// Development affordances, driven by the environment because this window
     /// cannot be scripted from outside without accessibility permission:
-    /// `CTAIL_DEBUG_SEARCH` opens the find bar on that query, and
-    /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode.
+    /// `CTAIL_DEBUG_SEARCH` opens the find bar on that query,
+    /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode, and
+    /// `CTAIL_DEBUG_SETTINGS` opens the Settings window.
     fn debug_hooks(&mut self) {
+        if std::env::var_os("CTAIL_DEBUG_SETTINGS").is_some() {
+            self.open_settings();
+        }
         let Ok(query) = std::env::var("CTAIL_DEBUG_SEARCH") else {
             return;
         };
@@ -320,6 +350,7 @@ impl App {
         }
         let tab = self.tabs.remove(self.active);
         tab.tailer.stop();
+        self.closed.push(tab.path.clone());
         self.ui.remove(tab.view);
         self.refresh_strip();
         if !self.tabs.is_empty() {
@@ -441,6 +472,135 @@ impl App {
         }
         self.ui.invalidate(view);
         self.refresh_counter();
+        self.sync_chrome();
+    }
+
+    // --- session ---------------------------------------------------------
+
+    /// Reopens what the last session had open, in its saved order, and lands
+    /// on the tab that was active. Missing files are skipped rather than
+    /// reported: a log that has been rotated away is not an error worth a
+    /// dialog on startup.
+    fn restore_session(&mut self, settings: &AppSettings) {
+        if !settings.restore_tabs {
+            return;
+        }
+        let mut saved = settings.tabs.clone();
+        saved.sort_by_key(|t| t.position);
+        for tab in &saved {
+            if std::path::Path::new(&tab.file_path).is_file() {
+                self.open(tab.file_path.clone());
+            }
+        }
+        if let Some(i) = self
+            .tabs
+            .iter()
+            .position(|t| t.path == settings.last_active_tab_path)
+        {
+            self.activate(i);
+        }
+    }
+
+    /// Saves the window, the open tabs and their order on the way out.
+    fn persist(&mut self) {
+        let mut s = self.config.load_settings();
+        s.window.width = self.window.width as i32;
+        s.window.height = self.window.height as i32;
+        s.tabs = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, tab)| TabState {
+                file_path: tab.path.clone(),
+                profile_id: s.active_profile.clone(),
+                auto_scroll: true,
+                label: String::new(),
+                color: String::new(),
+                position: i as i32,
+            })
+            .collect();
+        s.last_active_tab_path = self
+            .tabs
+            .get(self.active)
+            .map(|t| t.path.clone())
+            .unwrap_or_default();
+        self.config.save_settings(&s);
+    }
+
+    // --- tabs ------------------------------------------------------------
+
+    fn cycle_tab(&mut self, forward: bool) {
+        if self.tabs.len() < 2 {
+            return;
+        }
+        let n = self.tabs.len();
+        let next = if forward {
+            (self.active + 1) % n
+        } else {
+            (self.active + n - 1) % n
+        };
+        self.activate(next);
+    }
+
+    fn reopen_closed(&mut self) {
+        while let Some(path) = self.closed.pop() {
+            if std::path::Path::new(&path).is_file() {
+                self.open(path);
+                return;
+            }
+        }
+    }
+
+    // --- settings --------------------------------------------------------
+
+    fn open_settings(&mut self) {
+        if self.settings_open {
+            return;
+        }
+        self.settings_open = true;
+        let tx = self.settings_tx.clone();
+        self.pending_windows.push(
+            WindowRequest::new(SettingsWindow::config(), move |size, scale| {
+                SettingsWindow::new(size, scale, tx)
+            })
+            .with_modality(Modality::Owned),
+        );
+    }
+
+    /// Takes settings back from the Settings window: persists them, then
+    /// applies live everything that does not need a restart.
+    fn apply_settings(&mut self, new: AppSettings) {
+        let old = self.config.load_settings();
+        self.config.save_settings(&new);
+
+        if new.theme != old.theme || new.theme_mode != old.theme_mode {
+            let palette =
+                resolve_palette(&new.theme, &new.theme_mode, Some(self.config.themes_dir()));
+            let metrics = self.ui.theme().metrics;
+            let mut theme = theme::from_palette(&new.theme, &new.theme_mode, &palette);
+            theme.metrics = metrics;
+            self.ui.set_theme(theme);
+        }
+        if new.font_size != old.font_size {
+            self.mono.size_px = (new.font_size.max(6) as f32 * self.scale + 0.5) as u16;
+        }
+        let cap = new.buffer_size.clamp(200, 1_000_000) as usize;
+        let views: Vec<NodeId> = self.tabs.iter().map(|t| t.view).collect();
+        for view in views {
+            if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+                v.set_style(self.mono);
+                v.set_cap(cap);
+                v.set_show_line_numbers(new.show_line_numbers);
+            }
+            self.ui.invalidate(view);
+        }
+        if new.poll_interval_ms != old.poll_interval_ms {
+            let poll = Duration::from_millis(new.poll_interval_ms.clamp(100, 60_000) as u64);
+            for tab in &self.tabs {
+                tab.tailer.set_poll_interval(poll);
+            }
+        }
+        self.ui.invalidate_all();
         self.sync_chrome();
     }
 
@@ -590,10 +750,12 @@ impl DeniseApp for App {
         for event in events {
             match event {
                 InputEvent::CloseRequested => {
+                    self.persist();
                     self.exit = true;
                     continue;
                 }
                 InputEvent::SurfaceResized { size, .. } => {
+                    self.window = *size;
                     self.content.width = size.width as i32;
                     self.content.height =
                         (size.height as i32 - self.content.y - self.status_h).max(1);
@@ -617,11 +779,26 @@ impl DeniseApp for App {
                                 continue;
                             }
                             KeyCode::Q => {
+                                self.persist();
                                 self.exit = true;
                                 continue;
                             }
                             KeyCode::F => {
                                 self.open_search();
+                                continue;
+                            }
+                            KeyCode::Comma => {
+                                self.open_settings();
+                                continue;
+                            }
+                            // Cmd+Tab belongs to the system on macOS, so tab
+                            // cycling is Ctrl+Tab everywhere.
+                            KeyCode::Tab if modifiers.contains(Modifiers::CTRL) => {
+                                self.cycle_tab(!modifiers.contains(Modifiers::SHIFT));
+                                continue;
+                            }
+                            KeyCode::T if modifiers.contains(Modifiers::SHIFT) => {
+                                self.reopen_closed();
                                 continue;
                             }
                             _ => {}
@@ -645,6 +822,18 @@ impl DeniseApp for App {
                 _ => {}
             }
             forwarded.push(event.clone());
+        }
+        // The Settings window hands its result back through a channel; it may
+        // have closed itself by the time this runs.
+        let mut saved = None;
+        while let Ok(result) = self.settings_rx.try_recv() {
+            self.settings_open = false;
+            if result.is_some() {
+                saved = result;
+            }
+        }
+        if let Some(s) = saved {
+            self.apply_settings(s);
         }
         self.pump_engine();
         self.ui.handle(&forwarded);
@@ -679,6 +868,12 @@ impl DeniseApp for App {
     fn render(&mut self, frame: &mut Frame<'_>, _damage: &[Rect]) {
         self.ui.paint(frame);
         self.ui.presented();
+    }
+
+    fn take_windows(&mut self) -> Vec<WindowRequest> {
+        // A window that has been handed over is gone from here; the flag is
+        // cleared when its settings arrive or when the user is done with it.
+        std::mem::take(&mut self.pending_windows)
     }
 
     fn exit_requested(&self) -> bool {

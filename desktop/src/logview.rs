@@ -57,6 +57,7 @@ pub struct LogView<M> {
     /// Rows that fit, discovered while painting (the one place that knows the
     /// row height) and read back by scrolling.
     visible: Cell<usize>,
+    show_numbers: bool,
     waiting_older: bool,
 
     // --- search ---
@@ -93,6 +94,7 @@ impl<M: 'static> LogView<M> {
             highlighter: Arc::new(Highlighter::new(&[])),
             styles: Vec::new(),
             visible: Cell::new(0),
+            show_numbers: true,
             waiting_older: false,
             matcher: None,
             filter: false,
@@ -115,6 +117,21 @@ impl<M: 'static> LogView<M> {
                 bg: (!r.background.is_empty()).then(|| crate::theme::hex(&r.background)),
             })
             .collect();
+    }
+
+    /// Font and size for the log rows.
+    pub fn set_style(&mut self, style: TextStyle) {
+        self.style = style;
+    }
+
+    /// How many lines the window keeps while following.
+    pub fn set_cap(&mut self, cap: usize) {
+        self.cap = cap.max(200);
+    }
+
+    /// Whether the gutter is drawn.
+    pub fn set_show_line_numbers(&mut self, show: bool) {
+        self.show_numbers = show;
     }
 
     pub fn following(&self) -> bool {
@@ -462,7 +479,11 @@ impl<M: 'static> Widget<M> for LogView<M> {
         };
         let digits = self.total_lines.max(1).to_string().len().max(4);
         let zero_w = ctx.text.measure_line(style, "0").max(1);
-        let gutter_w = zero_w * digits as i32 + zero_w;
+        let gutter_w = if self.show_numbers {
+            zero_w * digits as i32 + zero_w
+        } else {
+            zero_w / 2
+        };
         let text_x = bounds.x + gutter_w;
         let muted = theme
             .color(Role::Base300)
@@ -493,19 +514,21 @@ impl<M: 'static> Widget<M> for LogView<M> {
             let base_fg = line_style.and_then(|s| s.fg).unwrap_or(fg);
 
             // Gutter number, right-aligned, a placeholder while provisional.
-            let num = if self.provisional {
-                "·".repeat(digits.min(3))
-            } else {
-                line.number.to_string()
-            };
-            let num_w = ctx.text.measure_line(style, &num);
-            ctx.text.draw_line(
-                &mut pen,
-                style,
-                Point::new(text_x - zero_w - num_w, row.y + 1 + metrics.ascent),
-                &num,
-                muted,
-            );
+            if self.show_numbers {
+                let num = if self.provisional {
+                    "·".repeat(digits.min(3))
+                } else {
+                    line.number.to_string()
+                };
+                let num_w = ctx.text.measure_line(style, &num);
+                ctx.text.draw_line(
+                    &mut pen,
+                    style,
+                    Point::new(text_x - zero_w - num_w, row.y + 1 + metrics.ascent),
+                    &num,
+                    muted,
+                );
+            }
 
             // Runs first: each character takes the highest-priority rule span
             // covering it. Backgrounds are laid down before any glyph so a
