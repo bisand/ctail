@@ -8,9 +8,9 @@ publish = false
 
 [dependencies]
 ctail-core = { path = "../core" }
-# DeniseUI, pinned to a pushed revision: the published 0.19 crates predate the
-# anchors, default-font and window-title APIs, and the menu widgets on
-# `feat/menus` were written for this app. Move to a release when one carries them.
+# DeniseUI, pinned to a revision of `main`: the published 0.19 crates predate the
+# anchors, default-font, window-title and menu APIs this app is written against.
+# Move to a release when one carries them.
 denise = { git = "https://github.com/bisand/denise", rev = "611f8f1", features = ["std"] }
 denise-render = { git = "https://github.com/bisand/denise", rev = "611f8f1" }
 denise-text = { git = "https://github.com/bisand/denise", rev = "611f8f1", features = ["truetype"] }

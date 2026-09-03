@@ -83,12 +83,17 @@ Search covers the window of lines held in memory, which is what the macOS app
 searches too. The engine can scan a whole file (`ctail_core::search_file`);
 wiring that to a "search the whole file" affordance is still to do.
 
+Word wrap (⌥⌘W / Ctrl+Alt+W, or the setting) breaks long lines to the width
+instead of running them off the edge: after the last space that fits, or
+mid-character when no space does, because a log line is as likely to be one
+unbroken token as a sentence. A wrapped line stays one line for everything
+else — one number in the gutter, one row to select, one entry in the match
+list — and the view scrolls a wrapped row at a time.
+
 ## Not yet
 
-Word wrap (Denise has no native menus; an
-in-app strip or `muda` is the plan), bold/italic rule styles (needs the bold
-face registered as a second font), word wrap, the AI assistant, update checks,
-and Linux/Windows CI builds. Engine events cannot wake the event loop yet, so
+Bold/italic rule styles (needs the bold face registered as a second font),
+the AI assistant, update checks, and Linux/Windows CI builds. Engine events cannot wake the event loop yet, so
 the app polls its channels every 100 ms while a file is open — a waker in
 `denise-winit` would remove that.
 

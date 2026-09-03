@@ -54,6 +54,7 @@ enum Action {
     SelectAll,
     Find,
     ToggleLineNumbers,
+    ToggleWordWrap,
     ToggleTheme,
     Profiles,
     Settings,
@@ -434,18 +435,14 @@ impl App {
         });
         let tailer = Tailer::new(&path, self.tailer_options(), listener.clone());
         let _ = listener.counters.set(tailer.counters());
-        let cap = self
-            .config
-            .load_settings()
-            .buffer_size
-            .clamp(200, 1_000_000) as usize;
+        let settings = self.config.load_settings();
+        let cap = settings.buffer_size.clamp(200, 1_000_000) as usize;
+        let mut log = LogView::new(Msg::Log, self.mono, &self.rules, cap);
+        log.set_show_line_numbers(settings.show_line_numbers);
+        log.set_word_wrap(settings.word_wrap);
         let view = self
             .ui
-            .add(
-                self.ui.root(),
-                LogView::new(Msg::Log, self.mono, &self.rules, cap),
-                self.content,
-            )
+            .add(self.ui.root(), log, self.content)
             .expect("log view");
         self.ui.set_anchors(
             view,
@@ -669,8 +666,16 @@ impl App {
             2 => {
                 let settings = self.config.load_settings();
                 rows.push((
-                    MenuItem::new("Show Line Numbers").checked(settings.show_line_numbers),
+                    MenuItem::new("Show Line Numbers")
+                        .with_shortcut("Cmd+Shift+L")
+                        .checked(settings.show_line_numbers),
                     Action::ToggleLineNumbers,
+                ));
+                rows.push((
+                    MenuItem::new("Word Wrap")
+                        .with_shortcut("Cmd+Alt+W")
+                        .checked(settings.word_wrap),
+                    Action::ToggleWordWrap,
                 ));
                 rows.push((
                     MenuItem::new("Light Theme").checked(settings.theme_mode == "light"),
@@ -928,6 +933,7 @@ impl App {
                 v.set_style(self.mono);
                 v.set_cap(cap);
                 v.set_show_line_numbers(new.show_line_numbers);
+                v.set_word_wrap(new.word_wrap);
             }
             self.ui.invalidate(view);
         }
@@ -967,6 +973,11 @@ impl App {
             Action::ToggleLineNumbers => {
                 let mut s = self.config.load_settings();
                 s.show_line_numbers = !s.show_line_numbers;
+                self.apply_settings(s);
+            }
+            Action::ToggleWordWrap => {
+                let mut s = self.config.load_settings();
+                s.word_wrap = !s.word_wrap;
                 self.apply_settings(s);
             }
             Action::ToggleTheme => {
@@ -1284,8 +1295,19 @@ impl DeniseApp for App {
                                 self.open_dialog();
                                 continue;
                             }
+                            // ⌥⌘W / Ctrl+Alt+W: the view toggle sits on the
+                            // same letter as Close Tab, so it has to be
+                            // matched first.
+                            KeyCode::W if modifiers.contains(Modifiers::ALT) => {
+                                self.run(Action::ToggleWordWrap);
+                                continue;
+                            }
                             KeyCode::W => {
                                 self.close_active();
+                                continue;
+                            }
+                            KeyCode::L if modifiers.contains(Modifiers::SHIFT) => {
+                                self.run(Action::ToggleLineNumbers);
                                 continue;
                             }
                             KeyCode::Q => {

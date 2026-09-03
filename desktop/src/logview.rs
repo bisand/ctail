@@ -10,8 +10,8 @@ use denise::{
 use denise_render::Canvas;
 use denise_text::{TextEngine, TextStyle};
 use denise_ui::widget::{Event, EventCtx, Handled, PaintCtx, Widget};
-use std::cell::Cell;
-use std::collections::VecDeque;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 /// What the view asks the app for.
@@ -48,6 +48,11 @@ pub struct LogView<M> {
     cap: usize,
     /// Index of the first visible row within the displayed sequence.
     top: usize,
+    /// Which wrapped segment of that row the view starts at. Always 0 without
+    /// word wrap, which is what makes the two modes share every other index.
+    top_seg: usize,
+    /// Long lines are broken to fit the width instead of running off it.
+    wrap: bool,
     follow: bool,
     total_lines: i64,
     selection: Option<(usize, usize)>, // (anchor, cursor) as displayed rows
@@ -57,6 +62,17 @@ pub struct LogView<M> {
     /// Rows that fit, discovered while painting (the one place that knows the
     /// row height) and read back by scrolling.
     visible: Cell<usize>,
+    /// Width available to text, and the rows painted last frame as
+    /// (row, y within the widget, height) — both learnt while painting, and
+    /// read back by scrolling and by hit-testing, which have no other way to
+    /// know how tall a wrapped line turned out.
+    wrap_width: Cell<i32>,
+    painted: RefCell<Vec<(usize, i32, i32)>>,
+    /// Where "scrolled all the way down" is, as (row, segment).
+    bottom: Cell<(usize, usize)>,
+    /// Character advances, memoised: wrapping walks a line character by
+    /// character, and a log is written in the same few dozen of them.
+    advances: RefCell<HashMap<char, i32>>,
     show_numbers: bool,
     waiting_older: bool,
 
@@ -87,6 +103,8 @@ impl<M: 'static> LogView<M> {
             provisional: false,
             cap: cap.max(200),
             top: 0,
+            top_seg: 0,
+            wrap: false,
             follow: true,
             total_lines: 0,
             selection: None,
@@ -94,6 +112,10 @@ impl<M: 'static> LogView<M> {
             highlighter: Arc::new(Highlighter::new(&[])),
             styles: Vec::new(),
             visible: Cell::new(0),
+            wrap_width: Cell::new(0),
+            painted: RefCell::new(Vec::new()),
+            bottom: Cell::new((0, 0)),
+            advances: RefCell::new(HashMap::new()),
             show_numbers: true,
             waiting_older: false,
             matcher: None,
@@ -122,6 +144,18 @@ impl<M: 'static> LogView<M> {
     /// Font and size for the log rows.
     pub fn set_style(&mut self, style: TextStyle) {
         self.style = style;
+        self.advances.borrow_mut().clear();
+    }
+
+    /// Whether long lines are broken to fit the width.
+    pub fn set_word_wrap(&mut self, wrap: bool) {
+        if wrap == self.wrap {
+            return;
+        }
+        self.wrap = wrap;
+        // A segment offset means nothing in the other mode, and the line the
+        // reader was on is the thing worth keeping.
+        self.top_seg = 0;
     }
 
     /// How many lines the window keeps while following.
@@ -156,6 +190,7 @@ impl<M: 'static> LogView<M> {
     pub fn reset(&mut self) {
         self.lines.clear();
         self.top = 0;
+        self.top_seg = 0;
         self.selection = None;
         self.provisional = false;
         self.total_lines = 0;
@@ -258,6 +293,7 @@ impl<M: 'static> LogView<M> {
             // Row indices mean something different on each side of this.
             self.selection = None;
             self.top = 0;
+            self.top_seg = 0;
             self.follow = false;
         }
         // Deliberately no scroll: a query is typed a character at a time, and
@@ -351,7 +387,10 @@ impl<M: 'static> LogView<M> {
                 .iter()
                 .position(|&row| self.line_at(row).is_some_and(|l| l.number == number))
         });
-        self.top = self.top.min(self.max_top());
+        if self.top > self.max_top() {
+            self.top = self.max_top();
+            self.top_seg = self.max_top_seg();
+        }
     }
 
     /// Index into `matches` of the first match at or after the top of the
@@ -381,6 +420,7 @@ impl<M: 'static> LogView<M> {
         let rows = self.visible_rows();
         if self.follow || row < self.top || row >= self.top + rows {
             self.top = row.saturating_sub(rows / 2).min(self.max_top());
+            self.top_seg = 0;
             self.follow = false;
         }
     }
@@ -403,7 +443,142 @@ impl<M: 'static> LogView<M> {
         }
     }
 
+    // --- wrapping ---------------------------------------------------------
+
+    /// Advance of one character, measured once and remembered.
+    fn advance(&self, text: &mut TextEngine, ch: char) -> i32 {
+        if let Some(&w) = self.advances.borrow().get(&ch) {
+            return w;
+        }
+        let mut buf = [0u8; 4];
+        let w = text.measure_line(self.style, ch.encode_utf8(&mut buf));
+        self.advances.borrow_mut().insert(ch, w);
+        w
+    }
+
+    /// The byte ranges `line` breaks into to fit `width`.
+    ///
+    /// Greedy, breaking after the last space that fits, and mid-character when
+    /// no space fits — a log line is as likely to be one unbroken token as a
+    /// sentence, and a stack frame that runs off the edge is exactly what word
+    /// wrap was turned on to see. Always at least one range, so an empty line
+    /// still occupies a row.
+    fn segments(&self, text: &mut TextEngine, line: &str, width: i32) -> Vec<(usize, usize)> {
+        if !self.wrap || width <= 0 || line.is_empty() {
+            return vec![(0, line.len())];
+        }
+        let mut out = Vec::new();
+        let mut start = 0;
+        let mut x = 0; // width of line[start..i]
+        let mut since = 0; // width since the last space
+        let mut last_space: Option<usize> = None;
+        for (i, ch) in line.char_indices() {
+            let w = self.advance(text, ch);
+            if x + w > width && i > start {
+                match last_space.filter(|&b| b > start) {
+                    Some(b) => {
+                        out.push((start, b));
+                        start = b;
+                        x = since;
+                    }
+                    None => {
+                        out.push((start, i));
+                        start = i;
+                        x = 0;
+                    }
+                }
+                last_space = None;
+                since = 0;
+            }
+            x += w;
+            since += w;
+            if ch == ' ' || ch == '\t' {
+                last_space = Some(i + ch.len_utf8());
+                since = 0;
+            }
+        }
+        out.push((start, line.len()));
+        out
+    }
+
+    /// How many rows the displayed row `row` occupies.
+    fn seg_count(&self, text: &mut TextEngine, row: usize, width: i32) -> usize {
+        if !self.wrap {
+            return 1;
+        }
+        match self.line_at(row) {
+            Some(line) => self.segments(text, &line.text, width).len().max(1),
+            None => 1,
+        }
+    }
+
+    /// The (row, segment) that puts the end of the file at the bottom of a view
+    /// `rows` rows tall.
+    fn bottom_anchor(&self, text: &mut TextEngine, width: i32, rows: usize) -> (usize, usize) {
+        let count = self.row_count();
+        if !self.wrap || count == 0 {
+            return (count.saturating_sub(rows), 0);
+        }
+        let mut left = rows.max(1);
+        let mut row = count - 1;
+        loop {
+            let segs = self.seg_count(text, row, width);
+            if segs >= left {
+                return (row, segs - left);
+            }
+            left -= segs;
+            if row == 0 {
+                return (0, 0);
+            }
+            row -= 1;
+        }
+    }
+
+    /// Moves the viewport `delta` visual rows, stopping at either end.
+    fn walk_rows(&self, text: &mut TextEngine, delta: i64) -> (usize, usize) {
+        if !self.wrap {
+            let top = (self.top as i64 + delta).clamp(0, self.max_top() as i64) as usize;
+            return (top, 0);
+        }
+        let width = self.wrap_width.get();
+        let (mut row, mut seg) = (self.top, self.top_seg);
+        let count = self.row_count();
+        let mut left = delta;
+        while left > 0 {
+            let segs = self.seg_count(text, row, width);
+            if seg + 1 < segs {
+                seg += 1;
+            } else if row + 1 < count {
+                row += 1;
+                seg = 0;
+            } else {
+                break;
+            }
+            left -= 1;
+        }
+        while left < 0 {
+            if seg > 0 {
+                seg -= 1;
+            } else if row > 0 {
+                row -= 1;
+                seg = self.seg_count(text, row, width) - 1;
+            } else {
+                break;
+            }
+            left += 1;
+        }
+        let (max_row, max_seg) = (self.max_top(), self.max_top_seg());
+        if (row, seg) > (max_row, max_seg) {
+            (max_row, max_seg)
+        } else {
+            (row, seg)
+        }
+    }
+
     fn shift_indices(&mut self, by: usize) {
+        if by > self.top {
+            self.top_seg = 0;
+        }
         self.top = self.top.saturating_sub(by);
         self.selection = match self.selection {
             Some((a, c)) if a >= by && c >= by => Some((a - by, c - by)),
@@ -417,20 +592,39 @@ impl<M: 'static> LogView<M> {
 
     fn scroll_to_bottom(&mut self) {
         self.top = self.max_top();
+        self.top_seg = self.max_top_seg();
     }
 
+    /// The topmost row of the bottom-most view. Without wrapping that is
+    /// arithmetic; with it, only paint knows how tall the last lines are, so
+    /// the answer comes from there.
     fn max_top(&self) -> usize {
-        self.row_count().saturating_sub(self.visible_rows())
+        if self.wrap {
+            self.bottom.get().0.min(self.row_count().saturating_sub(1))
+        } else {
+            self.row_count().saturating_sub(self.visible_rows())
+        }
+    }
+
+    fn max_top_seg(&self) -> usize {
+        if self.wrap && self.bottom.get().0 < self.row_count() {
+            self.bottom.get().1
+        } else {
+            0
+        }
     }
 
     fn scroll_rows(&mut self, delta: i64, ctx: &mut EventCtx<'_, M>) {
         if self.follow {
-            self.top = self.max_top(); // where paint has been showing us
+            // Where paint has been showing us.
+            self.top = self.max_top();
+            self.top_seg = self.max_top_seg();
         }
         let was_top = self.top;
-        let new_top = (self.top as i64 + delta).clamp(0, self.max_top() as i64) as usize;
+        let (new_top, new_seg) = self.walk_rows(ctx.text, delta);
         self.top = new_top;
-        let at_bottom = new_top >= self.max_top();
+        self.top_seg = new_seg;
+        let at_bottom = (new_top, new_seg) >= (self.max_top(), self.max_top_seg());
         if delta < 0 && self.follow && !at_bottom {
             self.follow = false;
             ctx.emit((self.to_message)(LogRequest::Follow(false)));
@@ -444,17 +638,18 @@ impl<M: 'static> LogView<M> {
         }
     }
 
-    fn row_at(&self, bounds: Rect, row_h: i32, p: Point) -> Option<usize> {
-        if !bounds.contains(p) || row_h <= 0 {
+    /// Which row a point is on, from the layout paint left behind — with
+    /// wrapping a row is as tall as the line needed, so nothing else knows.
+    fn row_at(&self, bounds: Rect, p: Point) -> Option<usize> {
+        if !bounds.contains(p) {
             return None;
         }
-        let top = if self.follow {
-            self.max_top()
-        } else {
-            self.top
-        };
-        let row = ((p.y - bounds.y) / row_h) as usize + top;
-        (row < self.row_count()).then_some(row)
+        let y = p.y - bounds.y;
+        self.painted
+            .borrow()
+            .iter()
+            .find(|&&(_, ry, h)| y >= ry && y < ry + h)
+            .map(|&(row, _, _)| row)
     }
 }
 
@@ -476,13 +671,6 @@ impl<M: 'static> Widget<M> for LogView<M> {
         let row_h = metrics.line_height().max(1) + 2;
         let rows = (bounds.height / row_h).max(1) as usize;
         self.visible.set(rows);
-        // Following pins the window to its end at the row count paint actually
-        // has; `top` is only authoritative once the user has scrolled away.
-        let top = if self.follow {
-            self.row_count().saturating_sub(rows)
-        } else {
-            self.top
-        };
         let digits = self.total_lines.max(1).to_string().len().max(4);
         let zero_w = ctx.text.measure_line(style, "0").max(1);
         let gutter_w = if self.show_numbers {
@@ -491,6 +679,19 @@ impl<M: 'static> Widget<M> for LogView<M> {
             zero_w / 2
         };
         let text_x = bounds.x + gutter_w;
+        let wrap_w = (bounds.width - gutter_w - zero_w / 2).max(zero_w);
+        self.wrap_width.set(wrap_w);
+        // Following pins the window to its end at the row count paint actually
+        // has; `top` is only authoritative once the user has scrolled away.
+        // The anchor is worked out either way, because it is also where
+        // scrolling has to stop and nothing outside paint can measure it.
+        let bottom = self.bottom_anchor(ctx.text, wrap_w, rows);
+        self.bottom.set(bottom);
+        let (top, top_seg) = if self.follow {
+            bottom
+        } else {
+            (self.top, self.top_seg)
+        };
         let muted = theme
             .color(Role::Base300)
             .mix(theme.color(Role::BaseContent), 128);
@@ -504,23 +705,34 @@ impl<M: 'static> Widget<M> for LogView<M> {
             .map(|(a, c)| (a.min(c), a.max(c)))
             .unwrap_or((usize::MAX, usize::MAX));
 
-        for i in 0..rows {
-            let index = top + i;
+        let mut painted = self.painted.borrow_mut();
+        painted.clear();
+        let mut y = bounds.y;
+        let mut index = top;
+        // The first line is entered part-way through when the view starts
+        // inside a wrapped line.
+        let mut skip = top_seg;
+        while y < bounds.y + bounds.height {
             let Some(line) = self.line_at(index) else {
                 break;
             };
-            let row = Rect::new(bounds.x, bounds.y + i as i32 * row_h, bounds.width, row_h);
+            let segs = self.segments(ctx.text, &line.text, wrap_w);
+            let shown = segs.len().saturating_sub(skip).max(1);
+            let height = shown as i32 * row_h;
+            let row = Rect::new(bounds.x, y, bounds.width, height);
+            painted.push((index, y - bounds.y, height));
             let mut pen = canvas.with_clip(row);
             let styled = self.highlighter.apply(&line.text);
             let line_style =
                 (styled.line_rule >= 0).then(|| &self.styles[styled.line_rule as usize]);
             if let Some(bg) = line_style.and_then(|s| s.bg) {
-                pen.fill_rect(Rect::new(text_x, row.y, row.width - gutter_w, row_h), bg);
+                pen.fill_rect(Rect::new(text_x, row.y, row.width - gutter_w, height), bg);
             }
             let base_fg = line_style.and_then(|s| s.fg).unwrap_or(fg);
 
-            // Gutter number, right-aligned, a placeholder while provisional.
-            if self.show_numbers {
+            // Gutter number, right-aligned on the line's first row, a
+            // placeholder while provisional.
+            if self.show_numbers && skip == 0 {
                 let num = if self.provisional {
                     "·".repeat(digits.min(3))
                 } else {
@@ -540,41 +752,59 @@ impl<M: 'static> Widget<M> for LogView<M> {
             // covering it. Backgrounds are laid down before any glyph so a
             // search hit can tint over them without tinting the text.
             let runs = split_runs(&line.text, &styled.spans);
-            let mut placed = Vec::with_capacity(runs.len());
-            let mut x = text_x;
-            for (text, rule) in runs {
-                let w = ctx.text.measure_line(style, text);
-                placed.push((x, w, text, rule));
-                x += w;
-            }
-            for &(x, w, _, rule) in &placed {
-                if let Some(bg) = rule.and_then(|r| self.styles[r as usize].bg) {
-                    pen.fill_rect(Rect::new(x, row.y, w, row_h), bg);
+            let hits = self
+                .matcher
+                .as_ref()
+                .map(|m| byte_ranges(&line.text, &m.ranges(&line.text)))
+                .unwrap_or_default();
+            let tint = if Some(index) == current_row {
+                hit_current
+            } else {
+                hit
+            };
+            for (k, &(from, to)) in segs.iter().skip(skip).enumerate() {
+                let sy = row.y + k as i32 * row_h;
+                let mut placed = Vec::with_capacity(runs.len());
+                let mut x = text_x;
+                for &(rs, re, rule) in &runs {
+                    let (a, b) = (rs.max(from), re.min(to));
+                    if b <= a {
+                        continue;
+                    }
+                    let text = &line.text[a..b];
+                    let w = ctx.text.measure_line(style, text);
+                    placed.push((x, w, text, rule));
+                    x += w;
                 }
-            }
-            if let Some(m) = &self.matcher {
-                let tint = if Some(index) == current_row {
-                    hit_current
-                } else {
-                    hit
-                };
-                for (start, end) in byte_ranges(&line.text, &m.ranges(&line.text)) {
-                    let x = text_x + measure_prefix(ctx.text, style, &line.text[..start]);
-                    let w = ctx.text.measure_line(style, &line.text[start..end]);
-                    pen.fill_rect(Rect::new(x, row.y, w.max(1), row_h), tint);
+                for &(x, w, _, rule) in &placed {
+                    if let Some(bg) = rule.and_then(|r| self.styles[r as usize].bg) {
+                        pen.fill_rect(Rect::new(x, sy, w, row_h), bg);
+                    }
                 }
-            }
-            let baseline = row.y + 1 + metrics.ascent;
-            for &(x, _, text, rule) in &placed {
-                let color = rule
-                    .and_then(|r| self.styles[r as usize].fg)
-                    .unwrap_or(base_fg);
-                ctx.text
-                    .draw_line(&mut pen, style, Point::new(x, baseline), text, color);
+                for &(start, end) in &hits {
+                    let (a, b) = (start.max(from), end.min(to));
+                    if b <= a {
+                        continue;
+                    }
+                    let x = text_x + measure_prefix(ctx.text, style, &line.text[from..a]);
+                    let w = ctx.text.measure_line(style, &line.text[a..b]);
+                    pen.fill_rect(Rect::new(x, sy, w.max(1), row_h), tint);
+                }
+                let baseline = sy + 1 + metrics.ascent;
+                for &(x, _, text, rule) in &placed {
+                    let color = rule
+                        .and_then(|r| self.styles[r as usize].fg)
+                        .unwrap_or(base_fg);
+                    ctx.text
+                        .draw_line(&mut pen, style, Point::new(x, baseline), text, color);
+                }
             }
             if index >= lo && index <= hi {
                 pen.fill_rect(row, sel);
             }
+            y += height;
+            index += 1;
+            skip = 0;
         }
     }
 
@@ -610,7 +840,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 match state {
                     ElementState::Down => {
                         ctx.request_focus();
-                        if let Some(row) = self.row_at(bounds, row_h, *position) {
+                        if let Some(row) = self.row_at(bounds, *position) {
                             self.selection = Some((row, row));
                             self.dragging = true;
                         } else {
@@ -622,8 +852,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 Handled::Yes
             }
             InputEvent::PointerMoved { position } if self.dragging => {
-                if let (Some((a, _)), Some(row)) =
-                    (self.selection, self.row_at(bounds, row_h, *position))
+                if let (Some((a, _)), Some(row)) = (self.selection, self.row_at(bounds, *position))
                 {
                     self.selection = Some((a, row));
                     return Handled::Yes;
@@ -706,11 +935,13 @@ fn byte_at(table: &[(u32, usize)], off: u32) -> usize {
     }
 }
 
-/// Splits `text` into (run, rule) pieces by UTF-16 span boundaries; where spans
-/// overlap the later one (higher priority) wins, matching the paint order.
-fn split_runs<'a>(text: &'a str, spans: &[ctail_core::Span]) -> Vec<(&'a str, Option<u32>)> {
+/// Splits `text` into (start, end, rule) byte ranges by UTF-16 span
+/// boundaries; where spans overlap the later one (higher priority) wins,
+/// matching the paint order. Ranges rather than slices, because a wrapped line
+/// draws each of them in pieces.
+fn split_runs(text: &str, spans: &[ctail_core::Span]) -> Vec<(usize, usize, Option<u32>)> {
     if spans.is_empty() {
-        return vec![(text, None)];
+        return vec![(0, text.len(), None)];
     }
     let table = u16_table(text);
     // Per-character rule; later spans overwrite earlier ones.
@@ -730,10 +961,122 @@ fn split_runs<'a>(text: &'a str, spans: &[ctail_core::Span]) -> Vec<(&'a str, Op
     for i in 1..=per_char.len() {
         let next = per_char.get(i).copied().flatten();
         if i == per_char.len() || next != current {
-            runs.push((&text[table[run_start].1..table[i].1], current));
+            runs.push((table[run_start].1, table[i].1, current));
             run_start = i;
             current = next;
         }
     }
     runs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use denise_text::TextEngine;
+
+    /// A view over `texts`, wrapping on, measured with the built-in font.
+    fn view(texts: &[&str]) -> (LogView<()>, TextEngine, TextStyle) {
+        let style = TextStyle::built_in(12);
+        let mut v = LogView::new(|_| (), style, &[], 200);
+        v.set_word_wrap(true);
+        v.append(
+            texts
+                .iter()
+                .enumerate()
+                .map(|(i, t)| LogLine {
+                    number: i as i64 + 1,
+                    text: (*t).into(),
+                })
+                .collect(),
+            false,
+        );
+        (v, TextEngine::new(), style)
+    }
+
+    /// Width of `n` characters of the built-in font, which is fixed-width.
+    fn cols(text: &mut TextEngine, style: TextStyle, n: i32) -> i32 {
+        text.measure_line(style, "0") * n
+    }
+
+    #[test]
+    fn breaks_after_the_last_space_that_fits() {
+        let (v, mut text, style) = view(&["alpha beta gamma"]);
+        let w = cols(&mut text, style, 11);
+        let segs = v.segments(&mut text, "alpha beta gamma", w);
+        let pieces: Vec<&str> = segs
+            .iter()
+            .map(|&(a, b)| &"alpha beta gamma"[a..b])
+            .collect();
+        assert_eq!(pieces, vec!["alpha beta ", "gamma"]);
+    }
+
+    #[test]
+    fn breaks_inside_a_word_that_never_fits() {
+        let line = "aaaaaaaaaa";
+        let (v, mut text, style) = view(&[line]);
+        let w = cols(&mut text, style, 4);
+        let segs = v.segments(&mut text, line, w);
+        assert_eq!(segs.len(), 3);
+        assert_eq!(&line[segs[0].0..segs[0].1], "aaaa");
+        // Every byte of the line is accounted for exactly once, in order.
+        assert_eq!(segs[0].0, 0);
+        assert_eq!(segs.last().unwrap().1, line.len());
+        assert!(segs.windows(2).all(|p| p[0].1 == p[1].0));
+    }
+
+    #[test]
+    fn an_empty_line_still_takes_one_row() {
+        let (v, mut text, style) = view(&[""]);
+        let w = cols(&mut text, style, 10);
+        assert_eq!(v.segments(&mut text, "", w), vec![(0, 0)]);
+    }
+
+    #[test]
+    fn wrapping_off_never_breaks() {
+        let style = TextStyle::built_in(12);
+        let v: LogView<()> = LogView::new(|_| (), style, &[], 200);
+        let mut text = TextEngine::new();
+        let line = "a b c d e f g h i j k l m n o p";
+        assert_eq!(v.segments(&mut text, line, 8), vec![(0, line.len())]);
+    }
+
+    #[test]
+    fn the_bottom_anchor_leaves_the_last_row_at_the_bottom() {
+        // Rows are [one] [two ] [three ] [four] [five]: the middle line wraps
+        // into three, so a three-row view starts on the second of them.
+        let (v, mut text, style) = view(&["one", "two three four", "five"]);
+        let w = cols(&mut text, style, 7);
+        assert_eq!(v.seg_count(&mut text, 1, w), 3);
+        assert_eq!(v.bottom_anchor(&mut text, w, 3), (1, 1));
+        assert_eq!(v.bottom_anchor(&mut text, w, 4), (1, 0));
+        assert_eq!(v.bottom_anchor(&mut text, w, 5), (0, 0));
+        // Taller than the content: the top of the file, not a negative row.
+        assert_eq!(v.bottom_anchor(&mut text, w, 99), (0, 0));
+    }
+
+    #[test]
+    fn scrolling_steps_through_a_wrapped_line_a_row_at_a_time() {
+        let (mut v, mut text, style) = view(&["one", "two three four", "five"]);
+        let w = cols(&mut text, style, 7);
+        v.wrap_width.set(w);
+        v.follow = false;
+        // A one-row view, so every row of the file can be scrolled to.
+        v.bottom.set(v.bottom_anchor(&mut text, w, 1));
+        assert_eq!(v.bottom.get(), (2, 0));
+
+        v.top = 0;
+        v.top_seg = 0;
+        assert_eq!(v.walk_rows(&mut text, 1), (1, 0));
+        v.top = 1;
+        assert_eq!(v.walk_rows(&mut text, 1), (1, 1));
+        assert_eq!(v.walk_rows(&mut text, 2), (1, 2));
+        assert_eq!(v.walk_rows(&mut text, 3), (2, 0));
+        // Clamped at the bottom anchor, never past the end.
+        assert_eq!(v.walk_rows(&mut text, 50), (2, 0));
+        // And back up again, through the same rows.
+        v.top_seg = 1;
+        assert_eq!(v.walk_rows(&mut text, -1), (1, 0));
+        assert_eq!(v.walk_rows(&mut text, -2), (0, 0));
+        assert_eq!(v.walk_rows(&mut text, -50), (0, 0));
+    }
 }
