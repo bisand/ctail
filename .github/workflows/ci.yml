@@ -30,6 +30,24 @@ jobs:
       - name: Test
         run: cargo test -p ctail-core --all-features
 
+  desktop:
+    name: desktop (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy -p ctail-desktop --all-targets -- -D warnings
+      - name: Test
+        run: cargo test -p ctail-desktop
+
   macos-app:
     name: macOS app self-tests
     runs-on: macos-latest

@@ -45,6 +45,9 @@ final class LogView: NSView {
     /// user scrolls up, re-enables when they return to the bottom.
     private(set) var following = true
     var onFollowingChanged: ((Bool) -> Void)?
+    /// Absolute file line at the top of the viewport — where the whole-file
+    /// search measures "nearest match" from.
+    var topLine: Int64 { currentTopLine() }
 
 
     private var displayed: [LogLine] { filterMode ? filtered : lines }
@@ -419,7 +422,7 @@ final class LogView: NSView {
     /// Scrolls so `topLine` sits at the top of the viewport, loading a fresh window
     /// from disk when the target lies outside (or too near the edge of) the one
     /// currently resident. Disabled in filter mode (absolute lines don't map).
-    private func goTo(topLine: Int64) {
+    private func goTo(topLine: Int64, then landed: (() -> Void)? = nil) {
         guard !filterMode else { return }
         let total = totalLinesProvider?() ?? Int64(lines.count)
         let clampedTop = min(max(1, topLine), max(1, total))
@@ -430,10 +433,12 @@ final class LogView: NSView {
         if haveAbove && haveBelow {                      // already resident — instant scroll
             setFollowing(false)
             scrollRowToTop(Int(clampedTop - windowStart))
+            landed?()
             return
         }
         guard let requestRange, (indexingReadyProvider?() ?? false) else {
             scrollRowToTop(Int(max(0, clampedTop - windowStart)))
+            landed?()
             return
         }
         let start = max(1, min(clampedTop, max(1, total - Int64(windowCap) + 1)))
@@ -447,6 +452,28 @@ final class LogView: NSView {
             self.lines = win
             self.reload()
             self.scrollRowToTop(Int(clampedTop - self.windowStart))
+            landed?()
+        }
+    }
+
+    /// Puts the line numbered `number` in the middle of the view — paging the
+    /// part of the file around it in from disk when it is not resident — and
+    /// makes it the current match if it is one. For the whole-file search,
+    /// whose matches are mostly lines the window has never held. Following
+    /// stops, as for any scroll away from the tail; End brings it back.
+    func reveal(line number: Int64) {
+        guard !filterMode else { return }
+        let half = Int64(viewportRows() / 2)
+        goTo(topLine: max(1, number - half)) { [weak self] in
+            guard let self, let row = self.lines.firstIndex(where: { $0.number == number }) else { return }
+            if !self.query.isEmpty {
+                // The window may be a new one; the match rows are indices into it.
+                self.recomputeSearch(preserveCurrent: false, focus: false)
+                self.currentMatch = self.matchRows.firstIndex(of: row) ?? -1
+            }
+            self.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            self.reload()
+            self.scrollRowToTop(max(0, row - Int(half)))
         }
     }
 
@@ -601,7 +628,7 @@ final class LogView: NSView {
     var searchIsValid: Bool { query.isValid }
 
     @discardableResult
-    private func recomputeSearch(preserveCurrent: Bool) -> SearchResult {
+    private func recomputeSearch(preserveCurrent: Bool, focus: Bool = true) -> SearchResult {
         let keepLine = preserveCurrent && currentMatch >= 0 && currentMatch < matchRows.count
             ? displayed[matchRows[currentMatch]].number : nil
 
@@ -621,7 +648,7 @@ final class LogView: NSView {
         } else {
             currentMatch = matchRows.isEmpty ? -1 : 0
         }
-        focusCurrentMatch()
+        if focus { focusCurrentMatch() }
         return SearchResult(total: matchRows.count, current: currentMatch < 0 ? 0 : currentMatch + 1)
     }
 

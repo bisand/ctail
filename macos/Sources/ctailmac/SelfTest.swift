@@ -28,6 +28,7 @@ enum SelfTest {
             ("ConfigStore", configStoreSuite),
             ("Themes", themesSuite),
             ("Search", searchSuite),
+            ("FileSearch", fileSearchSuite),
             ("Updates", updatesSuite),
             ("AI", aiSuite),
             ("Bookmarks", bookmarksSuite),
@@ -166,6 +167,53 @@ enum SelfTest {
     }
 
     // MARK: - Updates suite
+
+    /// Runs the main run loop until `cond` holds or `timeout` elapses, for
+    /// suites that wait on the engine's threads.
+    @discardableResult
+    static func pumpMain(_ timeout: TimeInterval = 5, until cond: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !cond() && Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        return cond()
+    }
+
+    // MARK: - FileSearch suite (end-to-end through the FFI)
+
+    static func fileSearchSuite() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ctail-filesearch-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("scan.log")
+        try? Data("one\nerror two\nthree\nerror four\n".utf8).write(to: file)
+
+        let search = FileSearch()
+        var answered: FileSearchQuery?
+        search.onResult = { query, _ in answered = query }
+        let query = FileSearchQuery(path: file.path, text: "error",
+                                    caseSensitive: false, wholeWord: false, isRegex: false)
+        search.request(query)
+        eq(search.status(query), .scanning, "scanning until the typing settles")
+        check(pumpMain { answered == query }, "the scan answers on the main queue")
+        eq(search.status(query), .ready(current: 0, total: 2), "two matches, none stepped to")
+        eq(search.matches(query), [2, 4], "matching lines")
+
+        eq(search.step(query, forward: true, from: nil), 2, "first step")
+        eq(search.step(query, forward: true, from: nil), 4, "second step")
+        eq(search.step(query, forward: true, from: nil), 2, "wraps at the end")
+        eq(search.step(query, forward: false, from: nil), 4, "and back at the start")
+        eq(search.status(query), .ready(current: 2, total: 2), "the counter follows the step")
+
+        let other = FileSearchQuery(path: file.path, text: "three",
+                                    caseSensitive: false, wholeWord: false, isRegex: false)
+        eq(search.status(other), .idle, "an answer belongs to its own query")
+        eq(search.step(other, forward: true, from: nil), nil, "no stepping through someone else's answer")
+
+        search.clear()
+        eq(search.status(query), .idle, "cleared")
+    }
 
     static func updatesSuite() {
         let c = UpdateChecker.compareVersions

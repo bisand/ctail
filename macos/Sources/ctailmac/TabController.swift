@@ -8,6 +8,15 @@ final class TabController: NSObject {
     private let tabBar: TabBarView
     private let content = NSView()
     private lazy var searchBar = makeSearchBar()
+    /// The engine's scan of the file on disk: behind the counter, and behind
+    /// ↑/↓ once it has answered.
+    private lazy var fileSearch: FileSearch = {
+        let search = FileSearch()
+        search.onResult = { [weak self] _, _ in self?.refreshSearchCounter() }
+        return search
+    }()
+    /// What the active view's own matching last reported.
+    private var windowSearch = LogView.SearchResult(total: 0, current: 0)
     private let statusLabel = NSTextField(labelWithString: "")
     private let memoryLabel = NSTextField(labelWithString: "")
     private let followCheck = NSButton(checkboxWithTitle: "Follow", target: nil, action: nil)
@@ -510,22 +519,56 @@ final class TabController: NSObject {
 
     private func closeSearch() {
         searchBar.isHidden = true
+        fileSearch.clear()
         activeTab?.logView.clearSearch()
         refreshStatus()
     }
 
-    private func runSearch(resetPosition: Bool) {
-        guard let log = activeTab?.logView else { return }
-        let r = log.search(text: searchBar.queryText, caseSensitive: searchBar.caseSensitive,
-                           wholeWord: searchBar.wholeWord, isRegex: searchBar.isRegex,
-                           filter: searchBar.filterMode)
-        searchBar.setCounter(total: r.total, current: r.current, valid: log.searchIsValid)
+    /// What the whole-file search should be answering, if anything. Nothing in
+    /// filter mode: filtering shows the lines the window holds, and counting
+    /// matches the view cannot show would answer a question nobody asked.
+    private var fileQuery: FileSearchQuery? {
+        guard !searchBar.isHidden, !searchBar.filterMode, !searchBar.queryText.isEmpty,
+              let tab = activeTab, tab.logView.searchIsValid else { return nil }
+        return FileSearchQuery(path: tab.filePath, text: searchBar.queryText,
+                               caseSensitive: searchBar.caseSensitive, wholeWord: searchBar.wholeWord,
+                               isRegex: searchBar.isRegex)
     }
 
+    private func runSearch(resetPosition: Bool) {
+        guard let log = activeTab?.logView else { return }
+        windowSearch = log.search(text: searchBar.queryText, caseSensitive: searchBar.caseSensitive,
+                                  wholeWord: searchBar.wholeWord, isRegex: searchBar.isRegex,
+                                  filter: searchBar.filterMode)
+        if let query = fileQuery { fileSearch.request(query) } else { fileSearch.clear() }
+        refreshSearchCounter()
+    }
+
+    /// The file's count once the scan has answered; the window's, marked as
+    /// partial, while it is still running.
+    private func refreshSearchCounter() {
+        guard let log = activeTab?.logView else { return }
+        if let query = fileQuery, case .ready(let current, let total) = fileSearch.status(query) {
+            searchBar.setCounter(total: Int(total), current: Int(current), valid: true)
+        } else if fileQuery != nil {
+            searchBar.setCounterScanning(windowTotal: windowSearch.total)
+        } else {
+            searchBar.setCounter(total: windowSearch.total, current: windowSearch.current,
+                                 valid: log.searchIsValid)
+        }
+    }
+
+    /// Over the whole file once it has been scanned, and over the window in
+    /// memory until then, so ↓ answers straight away on a file too big to have
+    /// finished scanning.
     private func stepSearch(forward: Bool) {
         guard let log = activeTab?.logView else { return }
-        let r = forward ? log.nextMatch() : log.prevMatch()
-        searchBar.setCounter(total: r.total, current: r.current, valid: log.searchIsValid)
+        if let query = fileQuery, let line = fileSearch.step(query, forward: forward, from: log.topLine) {
+            log.reveal(line: line)
+        } else {
+            windowSearch = forward ? log.nextMatch() : log.prevMatch()
+        }
+        refreshSearchCounter()
     }
 
     // MARK: - Keyboard (Ctrl+Tab / Ctrl+Shift+Tab + Cmd+F)

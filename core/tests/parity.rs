@@ -35,6 +35,17 @@ impl Drop for TempDir {
     }
 }
 
+/// Rotates a log the way logrotate does: the old file is moved aside and the
+/// path is free for a new one. Deleting it instead would not do on Linux,
+/// where ext4 hands the freed inode straight to the next file created, and a
+/// recreate inside the same clock tick gets the old birth time too — the
+/// engine would be right to call that the same file, because by every fact
+/// the file system offers, it is.
+fn rotate(file: &Path) {
+    let aside = file.with_extension("log.1");
+    fs::rename(file, aside).unwrap();
+}
+
 fn write(path: &Path, s: &str) {
     fs::write(path, s).unwrap();
 }
@@ -233,7 +244,7 @@ fn initial_read_append_partial_truncate_rotate() {
     );
 
     // Rotation (different inode) -> treated like truncation/reset.
-    fs::remove_file(&file).unwrap();
+    rotate(&file);
     write(&file, "rotated\n");
     t.perform_poll();
     assert_eq!(t.total_lines(), 1, "rotation re-reads new inode");
@@ -241,7 +252,7 @@ fn initial_read_append_partial_truncate_rotate() {
 
     // A second rotation with a *larger* file must still be detected (the Swift
     // engine lost the inode after the first reset and only saw shrinks).
-    fs::remove_file(&file).unwrap();
+    rotate(&file);
     write(&file, "rotated-again-1\nrotated-again-2\n");
     t.perform_poll();
     assert_eq!(
@@ -564,7 +575,7 @@ fn rotation_into_large_file_reopens_tail_first() {
     for n in 1..=50 {
         body.push_str(&format!("R{n}\n"));
     }
-    fs::remove_file(&file).unwrap();
+    rotate(&file);
     write(&file, &body);
     let scan = t
         .perform_poll()

@@ -98,6 +98,13 @@ final class SearchBar: NSView {
         counter.stringValue = total == 0 ? (queryText.isEmpty ? "" : "No results") : "\(current)/\(total)"
     }
 
+    /// The file is still being scanned: the window's own count, marked as not
+    /// the whole story yet.
+    func setCounterScanning(windowTotal: Int) {
+        counter.textColor = palette.muted
+        counter.stringValue = windowTotal == 0 ? "scanning…" : "\(windowTotal)+…"
+    }
+
     func focusField() { window?.makeFirstResponder(field) }
 
     @objc private func fieldChanged() { onChange?() }

@@ -351,26 +351,58 @@ impl Counters {
 #[derive(Clone, Copy, Debug)]
 struct Stat {
     size: i64,
-    /// Inode on Unix; creation time on Windows. Changes when the path is
-    /// replaced by a new file (rotation).
+    /// Which file is at the path: changes when the path is replaced by a new
+    /// file (rotation). Never 0 for a file that exists, so 0 can mean "not
+    /// yet known".
     identity: u64,
 }
 
-fn stat_path(path: &Path) -> Option<Stat> {
-    let md = std::fs::metadata(path).ok()?;
+/// What a stat found: the file, or why not. Gone and unreachable are kept
+/// apart because they mean different things later: a path that answered "no
+/// such file" has been unlinked, and whatever is found there next is a
+/// different file, however alike its metadata.
+#[derive(Clone, Copy, Debug)]
+enum Probe {
+    Found(Stat),
+    Gone,
+    Unreachable,
+}
+
+fn probe_path(path: &Path) -> Probe {
+    let md = match std::fs::metadata(path) {
+        Ok(md) => md,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Probe::Gone,
+        Err(_) => return Probe::Unreachable,
+    };
+    // The file's birth time, where the file system records one (ext4, APFS
+    // and tmpfs do; NFS and older file systems do not, and answer 0 here).
+    let birth = md
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos() as u64);
     #[cfg(unix)]
     let identity = {
         use std::os::unix::fs::MetadataExt;
-        md.ino()
+        // The inode alone is not an identity on Linux: ext4 hands a deleted
+        // file's inode number straight to the next file created in the
+        // directory, so a log removed and recreated between two polls looks
+        // like the same file that grew, and its tail is never re-read. A
+        // recreated file cannot share the old one's birth time.
+        md.dev().rotate_left(48) ^ md.ino() ^ birth.rotate_left(20)
     };
     #[cfg(windows)]
     let identity = {
         use std::os::windows::fs::MetadataExt;
-        md.creation_time()
+        // Creation time is what Windows has. NTFS "tunnels" it for fifteen
+        // seconds when a file is recreated under the same name, so a very
+        // quick rotation can go unnoticed there; the size check still catches
+        // one that shrank.
+        md.creation_time() ^ birth.rotate_left(20)
     };
-    Some(Stat {
+    Probe::Found(Stat {
         size: md.len() as i64,
-        identity,
+        identity: identity.max(1),
     })
 }
 
@@ -467,6 +499,9 @@ pub struct Engine {
     file_size: i64,
     identity: u64,
     in_error: bool,
+    /// The path answered "no such file" since the last successful stat, so
+    /// the next file found there is a new one whatever its metadata says.
+    unlinked: bool,
     tail_start: i64,            // byte offset where tail reading began
     base: i64,                  // complete lines before tail_start (absolute offset)
     base_known: bool,           // false while the background count runs
@@ -496,6 +531,7 @@ impl Engine {
             file_size: 0,
             identity: 0,
             in_error: false,
+            unlinked: false,
             tail_start: 0,
             base: 0,
             base_known: true,
@@ -549,7 +585,7 @@ impl Engine {
     /// Reads the file from scratch. Large files show their tail immediately and
     /// return a [`HeadScan`] the caller must run in the background.
     pub fn perform_initial_read(&mut self) -> Option<HeadScan> {
-        let Some(st) = self.stat() else {
+        let Probe::Found(st) = self.stat() else {
             self.sync_counters();
             return None;
         };
@@ -593,18 +629,29 @@ impl Engine {
     /// One poll tick: detect rotation/truncation, read whatever is new.
     /// Returns a [`HeadScan`] if a rotated/truncated file re-opened tail-first.
     pub fn perform_poll(&mut self) -> Option<HeadScan> {
-        let Some(st) = self.stat() else {
-            if !self.in_error {
-                self.in_error = true;
-                self.events
-                    .on_error(format!("file unavailable: {}", self.path.display()));
+        let st = match self.stat() {
+            Probe::Found(st) => st,
+            probe => {
+                if matches!(probe, Probe::Gone) {
+                    self.unlinked = true;
+                }
+                if !self.in_error {
+                    self.in_error = true;
+                    self.events
+                        .on_error(format!("file unavailable: {}", self.path.display()));
+                }
+                return None;
             }
-            return None;
         };
         let was_in_error = self.in_error;
         self.in_error = false;
 
-        let rotated = self.identity != 0 && st.identity != self.identity;
+        // A file that was seen gone and is back is a new file, whatever its
+        // metadata says: on Linux a recreate can inherit the inode and, within
+        // one clock tick, the birth time too. A mount that merely stopped
+        // answering is not that — its file continues where it left off.
+        let rotated = (self.identity != 0 && st.identity != self.identity) || self.unlinked;
+        self.unlinked = false;
 
         if rotated || st.size < self.file_size {
             // Rotation or truncation -> start over on the new content. Re-reading
@@ -734,6 +781,7 @@ impl Engine {
         self.offset = 0;
         self.file_size = new_size;
         self.identity = 0;
+        self.unlinked = false;
         self.tail_start = 0;
         self.base = 0;
         self.base_known = true;
@@ -819,9 +867,12 @@ impl Engine {
 
     // --- I/O (all under a timeout so dead mounts can't wedge the engine) ---
 
-    fn stat(&mut self) -> Option<Stat> {
+    fn stat(&mut self) -> Probe {
         let path = self.path.clone();
-        self.io.run(move || stat_path(&path)).flatten()
+        // A stat that timed out is a dead mount, not a missing file.
+        self.io
+            .run(move || probe_path(&path))
+            .unwrap_or(Probe::Unreachable)
     }
 
     fn read_bytes(&mut self, from: i64, to: i64) -> Option<Vec<u8>> {

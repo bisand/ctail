@@ -72,11 +72,11 @@ Feature parity with the Wails app is implemented natively (tracked under the
   windowed range reads, read timeouts; settings/profile/theme persistence with
   the Go app's JSON keys; regex highlighting (`fancy-regex`: linear-time for
   plain patterns, lookaround/backreferences still accepted) and search.
-  The engine also scans whole files for a find bar (`CoreFileSearch`: a
+  The engine also scans whole files for the find bar (`CoreFileSearch`: a
   debounced, cancellable scan on its own thread, and the match stepping that
-  goes with it). **The Swift UI does not use that yet** — its find bar still
-  matches only the window of lines in memory, as it always has; the Linux and
-  Windows front end drives the same object today.
+  goes with it), so the counter is the file's count and ↓ reaches matches the
+  window has never held; the Linux and Windows front end drives the same
+  object.
 - **UI** — virtualized `NSTableView` log surface, multi-tab interface (drag
   reorder, rename, color, Ctrl+Tab, reopen-closed), VS Code-style search
   (case/word/regex + filter mode), all 21 themes + custom themes, profiles &
