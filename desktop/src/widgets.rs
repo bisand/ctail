@@ -1,12 +1,15 @@
-//! The two widgets the rules editor needs and the toolkit does not have,
-//! because both are about *arbitrary* colours: Denise's palette is semantic
-//! roles, and a highlighting rule is a hex value the user chose.
+//! The widgets this app needs and the toolkit does not have. Two are about
+//! *arbitrary* colours — Denise's palette is semantic roles, and a
+//! highlighting rule is a hex value the user chose — and one is a block of
+//! wrapped text long enough to need scrolling, which is what an answer from a
+//! model is.
 
 use ctail_core::{Highlighter, Rule};
-use denise::{Color, ElementState, InputEvent, PointerButton, Radius, Rect, Role};
+use denise::{Color, ElementState, InputEvent, Point, PointerButton, Radius, Rect, Role};
 use denise_render::Canvas;
 use denise_text::TextStyle;
 use denise_ui::widget::{Event, EventCtx, Handled, PaintCtx, Widget};
+use std::cell::Cell;
 
 /// A clickable square of one colour: the palette a rule's foreground and
 /// background are picked from.
@@ -145,5 +148,103 @@ impl<M: 'static> Widget<M> for Preview {
                 fg.unwrap_or(base),
             );
         }
+    }
+}
+
+/// Read-only text wrapped to the width and scrolled with the wheel: the
+/// assistant's answer. Wrapping is the toolkit's own, done at paint time
+/// because only paint knows the width.
+pub struct TextBlock {
+    text: String,
+    style: TextStyle,
+    /// First wrapped line shown.
+    scroll: Cell<usize>,
+    /// Wrapped lines in total and lines that fit, learnt while painting, so
+    /// scrolling knows where to stop.
+    lines: Cell<usize>,
+    visible: Cell<usize>,
+}
+
+impl TextBlock {
+    pub fn new(style: TextStyle) -> Self {
+        Self {
+            text: String::new(),
+            style,
+            scroll: Cell::new(0),
+            lines: Cell::new(0),
+            visible: Cell::new(1),
+        }
+    }
+
+    pub fn set_text(&mut self, text: &str) {
+        self.text = text.to_string();
+        self.scroll.set(0);
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    fn max_scroll(&self) -> usize {
+        self.lines.get().saturating_sub(self.visible.get())
+    }
+}
+
+const TEXT_PAD: i32 = 8;
+
+impl<M: 'static> Widget<M> for TextBlock {
+    fn accepts_pointer(&self) -> bool {
+        true
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Canvas<'_>) {
+        let bounds = ctx.bounds;
+        let theme = ctx.theme;
+        let r = theme.radius(Radius::Box);
+        canvas.fill_rounded_rect(bounds, r, theme.color(Role::Base100));
+        canvas.stroke_rounded_rect(bounds, r, 1, theme.color(Role::Base300));
+        let inner = Rect::new(
+            bounds.x + TEXT_PAD,
+            bounds.y + TEXT_PAD,
+            (bounds.width - 2 * TEXT_PAD).max(1),
+            (bounds.height - 2 * TEXT_PAD).max(1),
+        );
+        let metrics = ctx.text.metrics(self.style);
+        let line_h = metrics.line_height().max(1);
+        let wrapped = ctx.text.wrap(self.style, &self.text, inner.width);
+        let visible = (inner.height / line_h).max(1) as usize;
+        self.lines.set(wrapped.len());
+        self.visible.set(visible);
+        let scroll = self.scroll.get().min(self.max_scroll());
+        self.scroll.set(scroll);
+        let fg = theme.color(Role::BaseContent);
+        let mut pen = canvas.with_clip(inner);
+        for (i, line) in wrapped.iter().skip(scroll).take(visible + 1).enumerate() {
+            let baseline = inner.y + i as i32 * line_h + metrics.ascent;
+            ctx.text.draw_line(
+                &mut pen,
+                self.style,
+                Point::new(inner.x, baseline),
+                line,
+                fg,
+            );
+        }
+    }
+
+    fn on_event(&mut self, event: &Event<'_>, _ctx: &mut EventCtx<'_, M>) -> Handled {
+        let Event::Input(InputEvent::PointerScroll { delta_y, .. }) = event else {
+            return Handled::No;
+        };
+        // Lines from a mouse wheel, pixels from a trackpad; three lines per
+        // wheel notch is the usual feel.
+        let lines = if delta_y.abs() > 20.0 {
+            *delta_y / 16.0
+        } else {
+            *delta_y * 3.0
+        };
+        let delta = lines.round() as i64;
+        let next = (self.scroll.get() as i64 + delta).clamp(0, self.max_scroll() as i64);
+        self.scroll.set(next as usize);
+        Handled::Yes
     }
 }

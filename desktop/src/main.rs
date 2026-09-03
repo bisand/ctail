@@ -3,6 +3,7 @@
 //! engine from `ctail-core` underneath, no webview and no GPU requirement.
 
 mod app;
+mod assistant;
 mod fonts;
 mod logview;
 mod profiles;
@@ -61,6 +62,7 @@ fn snapshot(what: &str, path: &str, scale: f32) -> std::io::Result<()> {
     }
     let logical = match what {
         "profiles" => profiles::SIZE,
+        "assistant" => assistant::SIZE,
         _ => settings::SIZE,
     };
     let size = Size::new(
@@ -69,8 +71,16 @@ fn snapshot(what: &str, path: &str, scale: f32) -> std::io::Result<()> {
     );
     let (tx, _rx) = std::sync::mpsc::channel();
     let (ptx, _prx) = std::sync::mpsc::channel();
+    let (atx, _arx) = std::sync::mpsc::channel();
     let mut window: Box<dyn DeniseApp> = match what {
         "profiles" => Box::new(profiles::ProfilesWindow::new(size, scale, ptx)),
+        "assistant" => {
+            let mut w = assistant::AssistantWindow::new(size, scale, String::new(), atx);
+            if let Ok(answer) = std::env::var("CTAIL_DEBUG_ANSWER") {
+                w.debug_set_answer(&answer);
+            }
+            Box::new(w)
+        }
         _ => Box::new(settings::SettingsWindow::new(size, scale, tx)),
     };
     let mut pixels = vec![0u32; (size.width * size.height) as usize];

@@ -98,6 +98,30 @@ impl ConfigStore {
         now - self.last_update_check() >= interval
     }
 
+    // --- the Copilot sign-in ---------------------------------------------------
+
+    fn copilot_token_path(&self) -> PathBuf {
+        self.dir.join("copilot-token")
+    }
+
+    /// The GitHub OAuth token a Copilot sign-in ended in, for a front end
+    /// without a keychain of its own. The macOS app keeps its own copy in the
+    /// user defaults.
+    pub fn copilot_token(&self) -> Option<String> {
+        fs::read_to_string(self.copilot_token_path())
+            .ok()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+    }
+
+    pub fn set_copilot_token(&self, token: &str) {
+        let _ = fs::write(self.copilot_token_path(), token);
+    }
+
+    pub fn clear_copilot_token(&self) {
+        let _ = fs::remove_file(self.copilot_token_path());
+    }
+
     pub fn load_settings(&self) -> AppSettings {
         fs::read_to_string(self.settings_path())
             .ok()

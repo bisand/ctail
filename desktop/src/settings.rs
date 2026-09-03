@@ -19,7 +19,7 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 /// Logical size; the window is not resizable, so this is the whole form.
-pub const SIZE: Size = Size::new(460, 600);
+pub const SIZE: Size = Size::new(460, 790);
 
 /// Which dropdown a message is about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +27,21 @@ pub enum Field {
     Theme,
     Mode,
     NewTabPosition,
+    AiProvider,
 }
+
+/// The providers the assistant knows, in the order the picker shows them.
+/// The first is "none", which is what a fresh install has.
+const AI_PROVIDERS: [&str; 8] = [
+    "",
+    "openai",
+    "anthropic",
+    "github",
+    "copilot",
+    "custom",
+    "claude-cli",
+    "codex-cli",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
@@ -79,6 +93,10 @@ pub struct SettingsWindow {
     scrollback: NodeId,
     timeout: NodeId,
     update_hours: NodeId,
+    ai_sel: NodeId,
+    ai_endpoint: NodeId,
+    ai_key: NodeId,
+    ai_model: NodeId,
     tx: Sender<Option<AppSettings>>,
     exit: bool,
 }
@@ -234,6 +252,44 @@ impl SettingsWindow {
         let (l, c) = form.row(28);
         label(&mut ui, l, "Update check (hours)");
         let update_hours = number(&mut ui, root, c, settings.update_check_interval_hours, body);
+        ui.add(root, Divider::new(), form.gap(8));
+
+        // --- the AI assistant ---
+        let (l, c) = form.row(28);
+        label(&mut ui, l, "AI provider");
+        let provider_names: Vec<String> = AI_PROVIDERS
+            .iter()
+            .map(|p| {
+                if p.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    p.to_string()
+                }
+            })
+            .collect();
+        let ai_sel = ui
+            .add(
+                root,
+                Select::new(provider_names, Msg::OpenList(Field::AiProvider))
+                    .with_selected(
+                        AI_PROVIDERS
+                            .iter()
+                            .position(|p| *p == settings.ai_provider)
+                            .or(Some(0)),
+                    )
+                    .with_style(TextStyle::built_in(body)),
+                c,
+            )
+            .expect("ai provider");
+        let (l, c) = form.row(28);
+        label(&mut ui, l, "AI endpoint (blank = default)");
+        let ai_endpoint = text(&mut ui, root, c, &settings.ai_endpoint, body);
+        let (l, c) = form.row(28);
+        label(&mut ui, l, "AI API key");
+        let ai_key = text(&mut ui, root, c, &settings.ai_key, body);
+        let (l, c) = form.row(28);
+        label(&mut ui, l, "AI model (blank = default)");
+        let ai_model = text(&mut ui, root, c, &settings.ai_model, body);
 
         // --- buttons, pinned to the bottom right ---
         let h = size.height as i32;
@@ -281,6 +337,10 @@ impl SettingsWindow {
             scrollback,
             timeout,
             update_hours,
+            ai_sel,
+            ai_endpoint,
+            ai_key,
+            ai_model,
             tx,
             exit: false,
         }
@@ -311,6 +371,15 @@ impl SettingsWindow {
         s.read_timeout_sec = num(self.timeout, s.read_timeout_sec, 1, 600);
         s.update_check_interval_hours =
             num(self.update_hours, s.update_check_interval_hours, 1, 720);
+        let str = |id: NodeId| -> String {
+            self.ui
+                .widget::<TextInput<Msg>>(id)
+                .map(|f| f.text().trim().to_string())
+                .unwrap_or_default()
+        };
+        s.ai_endpoint = str(self.ai_endpoint);
+        s.ai_key = str(self.ai_key);
+        s.ai_model = str(self.ai_model);
         s
     }
 
@@ -333,6 +402,10 @@ impl SettingsWindow {
                 self.settings.new_tab_position =
                     if index == 1 { "afterActive" } else { "end" }.into();
                 set_selected(&mut self.ui, self.new_tab_sel, index);
+            }
+            Field::AiProvider => {
+                self.settings.ai_provider = AI_PROVIDERS.get(index).copied().unwrap_or("").into();
+                set_selected(&mut self.ui, self.ai_sel, index);
             }
         }
         self.ui.close_popup();
@@ -374,6 +447,20 @@ fn number(ui: &mut Ui<Msg>, root: NodeId, rect: Rect, value: i32, size: u16) -> 
     id
 }
 
+fn text(ui: &mut Ui<Msg>, root: NodeId, rect: Rect, value: &str, size: u16) -> NodeId {
+    let id = ui
+        .add(
+            root,
+            TextInput::new().with_size(size).with_submit(Msg::Save),
+            rect,
+        )
+        .expect("text field");
+    if let Some(field) = ui.widget_mut::<TextInput<Msg>>(id) {
+        field.set_text(value.to_string());
+    }
+    id
+}
+
 fn set_selected(ui: &mut Ui<Msg>, id: NodeId, index: usize) {
     if let Some(sel) = ui.widget_mut::<Select<Msg>>(id) {
         sel.set_selected(Some(index));
@@ -404,6 +491,7 @@ impl DeniseApp for SettingsWindow {
                         Field::Theme => self.theme_sel,
                         Field::Mode => self.mode_sel,
                         Field::NewTabPosition => self.new_tab_sel,
+                        Field::AiProvider => self.ai_sel,
                     };
                     self.open_list = Some(field);
                     denise_ui::widgets::open_select(&mut self.ui, id, Msg::Chose);

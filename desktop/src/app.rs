@@ -2,6 +2,7 @@
 //! callbacks funnelled through channels into the log views, and the few
 //! messages the chrome produces.
 
+use crate::assistant::{self, AssistantEvent, AssistantWindow};
 use crate::fonts;
 use crate::logview::{LogRequest, LogView};
 use crate::profiles::ProfilesWindow;
@@ -60,6 +61,7 @@ enum Action {
     Profiles,
     Settings,
     CheckUpdates,
+    Assistant,
     About,
     TabRename,
     TabRefresh,
@@ -92,7 +94,7 @@ fn reveal(path: &str) {
 }
 
 /// Opens a web page in the default browser.
-fn open_url(url: &str) {
+pub(crate) fn open_url(url: &str) {
     let _ = if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(url).spawn()
     } else if cfg!(target_os = "windows") {
@@ -233,6 +235,9 @@ pub struct App {
     /// a quiet launch-time check only speaks up when there is an update.
     updates_tx: Sender<(UpdateCheck, bool)>,
     updates_rx: Receiver<(UpdateCheck, bool)>,
+    assistant_tx: Sender<AssistantEvent>,
+    assistant_rx: Receiver<AssistantEvent>,
+    assistant_open: bool,
     /// Height of the status strip, so a resize can recompute the log area.
     status_h: i32,
     content: Rect,
@@ -300,7 +305,8 @@ impl App {
         let menubar = ui
             .add(
                 root,
-                MenuBar::new(["File", "Edit", "View", "Help"], Msg::Menu).with_style(menu_style),
+                MenuBar::new(["File", "Edit", "View", "Tools", "Help"], Msg::Menu)
+                    .with_style(menu_style),
                 Rect::new(0, 0, w, menu_h),
             )
             .expect("menu bar");
@@ -380,6 +386,7 @@ impl App {
         let (prompt_tx, prompt_rx) = mpsc::channel();
         let (scan_tx, scans) = mpsc::channel();
         let (updates_tx, updates_rx) = mpsc::channel();
+        let (assistant_tx, assistant_rx) = mpsc::channel();
         let file_search = FileSearch::new(Arc::new(ScanNotice(Mutex::new(scan_tx))));
         let mut app = Self {
             ui,
@@ -404,6 +411,9 @@ impl App {
             scans,
             updates_tx,
             updates_rx,
+            assistant_tx,
+            assistant_rx,
+            assistant_open: false,
             status_h,
             content,
             settings_tx,
@@ -836,6 +846,10 @@ impl App {
                     Action::Settings,
                 ));
             }
+            3 => rows.push((
+                MenuItem::new("AI Assistant…").with_shortcut("Cmd+Shift+A"),
+                Action::Assistant,
+            )),
             _ => {
                 rows.push((MenuItem::new("Check for Updates…"), Action::CheckUpdates));
                 rows.push((MenuItem::new("About ctail"), Action::About));
@@ -1026,6 +1040,28 @@ impl App {
         );
     }
 
+    /// The assistant sees the active tab's log as it is now — the selection,
+    /// or its last few hundred lines.
+    fn open_assistant(&mut self) {
+        if self.assistant_open {
+            return;
+        }
+        self.assistant_open = true;
+        let log = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| self.ui.widget::<LogView<Msg>>(t.view))
+            .map(|v| v.context_text(assistant::CONTEXT_LINES))
+            .unwrap_or_default();
+        let tx = self.assistant_tx.clone();
+        self.pending_windows.push(
+            WindowRequest::new(AssistantWindow::config(), move |size, scale| {
+                AssistantWindow::new(size, scale, log, tx)
+            })
+            .with_modality(Modality::Owned),
+        );
+    }
+
     fn open_profiles(&mut self) {
         if self.profiles_open {
             return;
@@ -1198,6 +1234,7 @@ impl App {
             Action::Profiles => self.open_profiles(),
             Action::Settings => self.open_settings(),
             Action::CheckUpdates => self.check_for_updates(true),
+            Action::Assistant => self.open_assistant(),
             Action::About => {
                 rfd::MessageDialog::new()
                     .set_title("About ctail")
@@ -1530,6 +1567,10 @@ impl DeniseApp for App {
                                 self.open_search();
                                 continue;
                             }
+                            KeyCode::A if modifiers.contains(Modifiers::SHIFT) => {
+                                self.open_assistant();
+                                continue;
+                            }
                             KeyCode::Comma => {
                                 self.open_settings();
                                 continue;
@@ -1603,6 +1644,18 @@ impl DeniseApp for App {
         while self.profiles_rx.try_recv().is_ok() {
             self.profiles_open = false;
             rules_changed = true;
+        }
+        let from_assistant: Vec<AssistantEvent> = self.assistant_rx.try_iter().collect();
+        for event in from_assistant {
+            match event {
+                AssistantEvent::Closed => self.assistant_open = false,
+                AssistantEvent::ProfileGenerated(name) => {
+                    let mut s = self.config.load_settings();
+                    s.active_profile = name;
+                    self.config.save_settings(&s);
+                    rules_changed = true;
+                }
+            }
         }
         if rules_changed {
             self.reload_rules();

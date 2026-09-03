@@ -52,9 +52,17 @@ on macOS, Windows and Linux the same way this app does.
 - `src/tabbar.rs` — the tab strip: a tab carries a colour stripe and a close
   cross as well as a label, and a right-click has to report *which* tab it
   hit, so it is a widget of its own rather than the toolkit's `Tabs`.
-- `src/widgets.rs` — the two widgets the toolkit does not have, both about
-  *arbitrary* colours rather than theme roles: a clickable colour swatch and
-  the rule preview.
+- `src/widgets.rs` — the widgets the toolkit does not have: a clickable colour
+  swatch and the rule preview (both about *arbitrary* colours rather than
+  theme roles), and a wrapped, scrollable block of read-only text for the
+  assistant's answers.
+- `src/assistant.rs` — the AI Assistant window (Tools menu, Ctrl/Cmd+Shift+A):
+  ask about the active log, or have a highlighting profile written for it and
+  made active. The assistant itself — prompts, providers, Copilot's
+  device-flow sign-in — is the engine's `ai` module; this window supplies the
+  log (the selection, or its last 500 lines), keeps the Copilot token in the
+  config directory (`copilot-token`), runs each call on a thread, and shows
+  the answer. The provider, endpoint, key and model are set in Settings.
 - `src/prompt.rs` — the one-field modal window the name prompts use.
 - `src/theme.rs` — ctail palette → Denise `Theme`.
 - `src/fonts.rs` — finds a monospace face and a UI face on the machine
@@ -104,9 +112,9 @@ something to download.
 
 ## Not yet
 
-Bold/italic rule styles (needs the bold face registered as a second font)
-and the AI assistant's window — the assistant itself (providers, prompts,
-Copilot sign-in) is in the engine's `ai` module, waiting for a window. Engine events cannot wake the event loop yet, so
+Bold/italic rule styles (needs the bold face registered as a second font),
+and a resizable assistant window — its size is fixed, like the other
+secondary windows'. Engine events cannot wake the event loop yet, so
 the app polls its channels every 100 ms while a file is open — a waker in
 `denise-winit` would remove that.
 
@@ -119,6 +127,7 @@ CTAIL_CONFIG_DIR=/tmp/ctail-dev cargo run -p ctail-desktop   # isolated config
 # The window cannot be scripted from outside without accessibility permission,
 # so these open things for screenshots and manual checks:
 CTAIL_DEBUG_SEARCH=ERROR CTAIL_DEBUG_SEARCH_FILTER=1 cargo run -p ctail-desktop -- some.log
+CTAIL_DEBUG_ANSWER="…" cargo run -p ctail-desktop -- --snapshot assistant out.ppm 2   # the assistant, with that answer shown
 CTAIL_DEBUG_SETTINGS=1 cargo run -p ctail-desktop -- some.log
 CTAIL_DEBUG_PROFILES=1 cargo run -p ctail-desktop -- some.log
 

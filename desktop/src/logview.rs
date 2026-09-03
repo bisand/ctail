@@ -347,6 +347,21 @@ impl<M: 'static> LogView<M> {
         (!text.is_empty()).then(|| text.join("\n"))
     }
 
+    /// What the assistant is shown: the selection if there is one, otherwise
+    /// the last `n` lines — the macOS app's choice too.
+    pub fn context_text(&self, n: usize) -> String {
+        if let Some(selected) = self.selected_text() {
+            return selected;
+        }
+        let skip = self.lines.len().saturating_sub(n);
+        self.lines
+            .iter()
+            .skip(skip)
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     // --- search ---------------------------------------------------------
 
     /// Applies a query. `None` clears it; `filter` hides non-matching lines,
