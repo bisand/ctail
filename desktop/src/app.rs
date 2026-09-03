@@ -6,13 +6,14 @@ use crate::fonts;
 use crate::logview::{LogRequest, LogView};
 use crate::profiles::ProfilesWindow;
 use crate::prompt::PromptWindow;
-use crate::search::{SearchBar, SearchMsg};
+use crate::search::{Counter, SearchBar, SearchMsg};
 use crate::settings::SettingsWindow;
 use crate::tabbar::{TabBar, TabItem};
 use crate::theme;
 use ctail_core::{
-    resolve_palette, AppSettings, ConfigStore, Counters, LogLine, Rule, SearchMatcher, TabState,
-    Tailer, TailerEvents, TailerOptions,
+    resolve_palette, AppSettings, ConfigStore, Counters, FileSearch, FileSearchEvents,
+    FileSearchQuery, FileSearchStatus, LogLine, Rule, SearchMatcher, TabState, Tailer,
+    TailerEvents, TailerOptions,
 };
 use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Rect, Size};
 use denise_text::TextStyle;
@@ -21,7 +22,7 @@ use denise_ui::Anchors;
 use denise_ui::{NodeId, Ui};
 use denise_winit::{DeniseApp, Modality, WindowRequest};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,11 +102,23 @@ const TAB_COLORS: [(&str, &str); 6] = [
 
 enum TabEvent {
     Lines(Vec<LogLine>, bool),
+    /// A range fetched from elsewhere in the file, and the line to land on.
+    Jump(Vec<LogLine>, i64),
     Reset,
     Error(String),
     Ready,
     Base(i64, i64),
     Older(Vec<LogLine>),
+}
+
+/// A finished file scan, from its own thread to the UI's. The count itself
+/// stays in the engine; this only says that it moved.
+struct ScanNotice(Mutex<Sender<()>>);
+
+impl FileSearchEvents for ScanNotice {
+    fn on_result(&self, _query: FileSearchQuery, _total: u32) {
+        let _ = self.0.lock().unwrap().send(());
+    }
 }
 
 /// Engine thread -> channel; the UI thread drains it every frame.
@@ -194,6 +207,11 @@ pub struct App {
     /// true "No results".
     search_valid: bool,
     search_empty: bool,
+    /// The scan of the file on disk behind the bar's counter and its ↑/↓.
+    file_search: FileSearch,
+    /// A tap on the shoulder when a scan finishes; the count is read back from
+    /// `file_search`, which holds it.
+    scans: Receiver<()>,
     /// Height of the status strip, so a resize can recompute the log area.
     status_h: i32,
     content: Rect,
@@ -339,6 +357,8 @@ impl App {
         let (settings_tx, settings_rx) = mpsc::channel();
         let (profiles_tx, profiles_rx) = mpsc::channel();
         let (prompt_tx, prompt_rx) = mpsc::channel();
+        let (scan_tx, scans) = mpsc::channel();
+        let file_search = FileSearch::new(Arc::new(ScanNotice(Mutex::new(scan_tx))));
         let mut app = Self {
             ui,
             config,
@@ -358,6 +378,8 @@ impl App {
             search,
             search_valid: true,
             search_empty: true,
+            file_search,
+            scans,
             status_h,
             content,
             settings_tx,
@@ -389,6 +411,7 @@ impl App {
     /// Development affordances, driven by the environment because this window
     /// cannot be scripted from outside without accessibility permission:
     /// `CTAIL_DEBUG_SEARCH` opens the find bar on that query,
+    /// `CTAIL_DEBUG_SEARCH_STEP` presses ↓ that many times (negative for ↑),
     /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode, and
     /// `CTAIL_DEBUG_SETTINGS` / `CTAIL_DEBUG_PROFILES` open those windows.
     fn debug_hooks(&mut self) {
@@ -539,6 +562,7 @@ impl App {
 
     fn close_search(&mut self) {
         self.search.close(&mut self.ui);
+        self.file_search.clear();
         // Every view, not just the active one: a hidden tab must not come back
         // still filtered by a search the user has closed.
         let views: Vec<NodeId> = self.tabs.iter().map(|t| t.view).collect();
@@ -579,25 +603,80 @@ impl App {
         self.sync_chrome();
     }
 
-    /// Reads the live match count out of the active view. Lines arriving while
-    /// the bar is open change it without anyone pressing anything.
+    /// What the whole-file search should be answering, if anything.
+    ///
+    /// Nothing, in filter mode: filtering shows the lines the window holds,
+    /// and counting matches the view cannot show would be answering a question
+    /// nobody asked.
+    fn file_query(&self) -> Option<FileSearchQuery> {
+        if !self.search.is_open() || self.search.filter || self.search_empty || !self.search_valid {
+            return None;
+        }
+        Some(FileSearchQuery {
+            path: self.tabs.get(self.active)?.path.clone(),
+            text: self.search.query(&self.ui),
+            case_sensitive: self.search.case_sensitive,
+            whole_word: self.search.whole_word,
+            is_regex: self.search.is_regex,
+        })
+    }
+
+    /// Reads the match count out of the file scan, or out of the active view
+    /// while the scan is still running. Lines arriving while the bar is open
+    /// change the second of those without anyone pressing anything.
     fn refresh_counter(&mut self) {
-        let status = self
+        let window = self
             .tabs
             .get(self.active)
             .and_then(|t| self.ui.widget::<LogView<Msg>>(t.view))
             .map(|v| v.search_status())
             .unwrap_or_default();
-        self.search.set_counter(
-            &mut self.ui,
-            status.current,
-            status.total,
-            self.search_valid,
-            self.search_empty,
-        );
+        let counter = match self.file_query() {
+            None if !self.search_valid => Counter::BadRegex,
+            None if self.search_empty => Counter::Empty,
+            None => Counter::at(window.current, window.total),
+            Some(query) => {
+                self.file_search.request(query.clone());
+                match self.file_search.status(&query) {
+                    FileSearchStatus::Ready { current, total } => {
+                        Counter::at(current as usize, total as usize)
+                    }
+                    // The window's count is a true count of something while
+                    // the file's is still being worked out, and ↑/↓ step it.
+                    FileSearchStatus::Scanning | FileSearchStatus::Idle => {
+                        Counter::Scanning(window.total)
+                    }
+                }
+            }
+        };
+        self.search.set_counter(&mut self.ui, counter);
     }
 
+    /// Presses ↓ (or ↑) for a snapshot, after the scan the window cannot wait
+    /// for interactively.
+    pub fn debug_step_search(&mut self, times: usize, forward: bool) {
+        for _ in 0..times {
+            self.step_search(forward);
+        }
+    }
+
+    /// Next/previous match. Over the whole file once it has been scanned, and
+    /// over the window in memory until then, so ↓ answers straight away on a
+    /// file too big to have finished scanning.
     fn step_search(&mut self, forward: bool) {
+        if let Some(query) = self.file_query() {
+            let from = self
+                .tabs
+                .get(self.active)
+                .and_then(|t| self.ui.widget::<LogView<Msg>>(t.view))
+                .and_then(|v| v.first_visible_number());
+            if let Some(number) = self.file_search.step(&query, forward, from) {
+                self.go_to_line(number);
+                self.refresh_counter();
+                self.sync_chrome();
+                return;
+            }
+        }
         let Some(tab) = self.tabs.get(self.active) else {
             return;
         };
@@ -613,6 +692,48 @@ impl App {
         self.ui.invalidate(view);
         self.refresh_counter();
         self.sync_chrome();
+    }
+
+    /// Puts the line numbered `number` in the middle of the view, fetching the
+    /// part of the file around it when the window does not reach that far.
+    fn go_to_line(&mut self, number: i64) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let view = tab.view;
+        let rows = self
+            .ui
+            .widget::<LogView<Msg>>(view)
+            .map_or(50, |v| v.visible_rows());
+        if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+            if v.reveal_number(number) {
+                self.ui.invalidate(view);
+                return;
+            }
+        }
+        let count = (rows * 6).max(300);
+        let start = (number - count as i64 / 2).max(1);
+        let tx = tab.tx.clone();
+        tab.tailer.fetch_range(start, count, move |lines| {
+            let _ = tx.send(TabEvent::Jump(lines, number));
+        });
+    }
+
+    /// The window jumped somewhere else in the file and the reader wants the
+    /// end back: the tail has to be read again, there being nothing to append
+    /// live lines to.
+    fn reattach_active(&mut self) {
+        let Some(view) = self.tabs.get(self.active).map(|t| t.view) else {
+            return;
+        };
+        if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+            if !v.is_detached() {
+                return;
+            }
+            v.reset();
+        }
+        self.ui.invalidate(view);
+        self.tabs[self.active].tailer.refresh();
     }
 
     // --- menus -----------------------------------------------------------
@@ -1177,6 +1298,7 @@ impl App {
                 };
                 match ev {
                     TabEvent::Lines(lines, provisional) => v.append(lines, provisional),
+                    TabEvent::Jump(lines, target) => v.show_range(lines, target),
                     TabEvent::Reset => v.reset(),
                     TabEvent::Older(lines) => v.prepend(lines),
                     TabEvent::Base(base, total) => v.apply_base(base, total),
@@ -1203,6 +1325,9 @@ impl App {
         match msg {
             Msg::SelectTab(i) => self.activate(i),
             Msg::Follow(on) => {
+                if on {
+                    self.reattach_active();
+                }
                 if let Some(tab) = self.tabs.get(self.active) {
                     let view = tab.view;
                     if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
@@ -1211,6 +1336,7 @@ impl App {
                     self.ui.invalidate(view);
                 }
             }
+            Msg::Log(LogRequest::Reattach) => self.reattach_active(),
             Msg::Log(LogRequest::Follow(on)) => {
                 if let Some(cb) = self.ui.widget_mut::<Checkbox<Msg>>(self.follow) {
                     cb.set_checked(on);
@@ -1397,6 +1523,11 @@ impl DeniseApp for App {
             self.reload_rules();
         }
         self.pump_engine();
+        // A scan answers on its own thread; the counter reads the new count
+        // back rather than being handed it.
+        if self.scans.try_iter().count() > 0 {
+            self.refresh_counter();
+        }
         self.ui.handle(&forwarded);
         // The field reports on submit, not per keystroke, so typing is noticed
         // by comparing what is in it.

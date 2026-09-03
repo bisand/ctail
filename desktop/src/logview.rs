@@ -23,6 +23,9 @@ pub enum LogRequest {
     Copy,
     /// Follow mode changed (scrolling up pauses it, End resumes it).
     Follow(bool),
+    /// Following was asked for while the window sat somewhere else in the
+    /// file: the tail has to be read again before it can be followed.
+    Reattach,
 }
 
 /// Where the search is, for the bar's counter.
@@ -75,6 +78,9 @@ pub struct LogView<M> {
     advances: RefCell<HashMap<char, i32>>,
     show_numbers: bool,
     waiting_older: bool,
+    /// The window is a range from the middle of the file rather than the tail,
+    /// so live lines do not belong on the end of it.
+    detached: bool,
 
     // --- search ---
     matcher: Option<Arc<SearchMatcher>>,
@@ -118,6 +124,7 @@ impl<M: 'static> LogView<M> {
             advances: RefCell::new(HashMap::new()),
             show_numbers: true,
             waiting_older: false,
+            detached: false,
             matcher: None,
             filter: false,
             filtered: Vec::new(),
@@ -179,6 +186,11 @@ impl<M: 'static> LogView<M> {
         }
     }
 
+    /// Whether the window is a jumped-to range rather than the tail.
+    pub fn is_detached(&self) -> bool {
+        self.detached
+    }
+
     pub fn total_lines(&self) -> i64 {
         self.total_lines
     }
@@ -187,10 +199,17 @@ impl<M: 'static> LogView<M> {
         self.lines.front().map(|l| l.number)
     }
 
+    /// The number of the line at the top of the view, which is where a search
+    /// step measures "nearest" from.
+    pub fn first_visible_number(&self) -> Option<i64> {
+        self.line_at(self.effective_top()).map(|l| l.number)
+    }
+
     pub fn reset(&mut self) {
         self.lines.clear();
         self.top = 0;
         self.top_seg = 0;
+        self.detached = false;
         self.selection = None;
         self.provisional = false;
         self.total_lines = 0;
@@ -200,7 +219,10 @@ impl<M: 'static> LogView<M> {
 
     /// Live lines from the engine (numbered locally until `apply_base`).
     pub fn append(&mut self, new: Vec<LogLine>, provisional: bool) {
-        if new.is_empty() {
+        // A window that has jumped elsewhere in the file has no end for these
+        // to be appended to: their numbers would follow on from a line that is
+        // nowhere near them.
+        if new.is_empty() || self.detached {
             return;
         }
         self.provisional = provisional;
@@ -224,6 +246,54 @@ impl<M: 'static> LogView<M> {
         self.recompute_search();
         if self.follow {
             self.scroll_to_bottom();
+        }
+    }
+
+    /// Replaces the window with a range from somewhere else in the file and
+    /// puts `target` in the middle of the view. The window stays detached —
+    /// the tail is elsewhere — until following is asked for again.
+    pub fn show_range(&mut self, lines: Vec<LogLine>, target: i64) {
+        if lines.is_empty() {
+            return;
+        }
+        self.lines.clear();
+        self.lines.extend(lines);
+        self.provisional = false;
+        self.detached = true;
+        self.follow = false;
+        self.selection = None;
+        self.waiting_older = false;
+        self.top = 0;
+        self.top_seg = 0;
+        self.recompute_search();
+        self.reveal_number(target);
+    }
+
+    /// Scrolls the line numbered `number` into the middle of the view and
+    /// makes it the current match if it is one. False when that line is not in
+    /// the window, which is the caller's cue to go and fetch it.
+    pub fn reveal_number(&mut self, number: i64) -> bool {
+        let Some(row) = self.row_of_number(number) else {
+            return false;
+        };
+        let rows = self.visible_rows();
+        self.follow = false;
+        self.top = row.saturating_sub(rows / 2).min(self.max_top());
+        self.top_seg = 0;
+        self.current = self.matches.iter().position(|&m| m == row);
+        true
+    }
+
+    /// The displayed row holding a given line number.
+    fn row_of_number(&self, number: i64) -> Option<usize> {
+        if self.filter {
+            self.filtered
+                .iter()
+                .position(|&i| self.lines.get(i).is_some_and(|l| l.number == number))
+        } else {
+            // Numbers ascend through the window, so this is a lookup rather
+            // than a scan of everything the buffer holds.
+            self.lines.binary_search_by_key(&number, |l| l.number).ok()
         }
     }
 
@@ -875,6 +945,9 @@ impl<M: 'static> Widget<M> for LogView<M> {
                     KeyCode::ArrowDown => self.scroll_rows(1, ctx),
                     KeyCode::Home => self.scroll_rows(-(self.row_count() as i64), ctx),
                     KeyCode::End => {
+                        if self.detached {
+                            ctx.emit((self.to_message)(LogRequest::Reattach));
+                        }
                         self.follow = true;
                         self.scroll_to_bottom();
                         ctx.emit((self.to_message)(LogRequest::Follow(true)));

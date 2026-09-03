@@ -29,6 +29,32 @@ pub enum SearchMsg {
     Close,
 }
 
+/// What the match counter is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Counter {
+    /// No query: the counter says nothing rather than "no results".
+    Empty,
+    /// A regex that does not compile — an honest zero would be useless.
+    BadRegex,
+    /// The file is still being scanned; the number is what the window holds.
+    Scanning(usize),
+    NoResults,
+    /// 1-based position and the total. A position of 0 means the reader has
+    /// not stepped to a match yet.
+    At(usize, usize),
+}
+
+impl Counter {
+    /// A count, reading as "no results" when there are none.
+    pub fn at(current: usize, total: usize) -> Self {
+        if total == 0 {
+            Self::NoResults
+        } else {
+            Self::At(current, total)
+        }
+    }
+}
+
 /// Unscaled geometry; everything is multiplied by the display scale.
 const HEIGHT: i32 = 36;
 const PAD: i32 = 8;
@@ -237,24 +263,17 @@ impl SearchBar {
         ui.invalidate(id);
     }
 
-    /// `total == 0` with a non-empty query reads as no results; an invalid
-    /// regex says so instead of reporting an honest but useless zero.
-    pub fn set_counter<M: Clone + 'static>(
-        &mut self,
-        ui: &mut Ui<M>,
-        current: usize,
-        total: usize,
-        valid: bool,
-        empty: bool,
-    ) {
-        let (text, role) = if !valid {
-            ("bad regex".to_string(), Role::Error)
-        } else if empty {
-            (String::new(), Role::BaseContent)
-        } else if total == 0 {
-            ("No results".to_string(), Role::BaseContent)
-        } else {
-            (format!("{current}/{total}"), Role::BaseContent)
+    /// What the counter says.
+    pub fn set_counter<M: Clone + 'static>(&mut self, ui: &mut Ui<M>, counter: Counter) {
+        let (text, role) = match counter {
+            Counter::BadRegex => ("bad regex".to_string(), Role::Error),
+            Counter::Empty => (String::new(), Role::BaseContent),
+            // A file being scanned still has the window's matches to offer,
+            // and the ellipsis says the number is not the whole story yet.
+            Counter::Scanning(0) => ("scanning…".to_string(), Role::BaseContent),
+            Counter::Scanning(window) => (format!("{window}+…"), Role::BaseContent),
+            Counter::NoResults => ("No results".to_string(), Role::BaseContent),
+            Counter::At(current, total) => (format!("{current}/{total}"), Role::BaseContent),
         };
         // Called every frame while the bar is open, so it must cost nothing
         // when nothing moved: only a real change earns a repaint.

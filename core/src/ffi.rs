@@ -3,6 +3,7 @@
 //! protocols. Callbacks run on the tailer's worker thread.
 
 use crate::config;
+use crate::filesearch::{self, FileSearchEvents, FileSearchQuery, FileSearchStatus};
 use crate::highlight::{self, LineStyle};
 use crate::models::{self, AppSettings, Profile, Rule, Theme, ThemeColors};
 use crate::search::{self, TextRange};
@@ -290,5 +291,55 @@ impl CoreSearchMatcher {
     /// Indices of the matching lines, for filtering a whole window in one call.
     pub fn matching_indices(&self, lines: Vec<String>) -> Vec<u32> {
         self.inner.matching_indices(&lines)
+    }
+}
+
+/// Foreign-implemented listener for [`CoreFileSearch`]; mirrors
+/// [`FileSearchEvents`].
+#[uniffi::export(with_foreign)]
+pub trait FileSearchListener: Send + Sync {
+    fn on_result(&self, query: FileSearchQuery, total: u32);
+}
+
+struct FileSearchAdapter(Arc<dyn FileSearchListener>);
+
+impl FileSearchEvents for FileSearchAdapter {
+    fn on_result(&self, query: FileSearchQuery, total: u32) {
+        self.0.on_result(query, total)
+    }
+}
+
+/// Scans whole files for a find bar. Dropping it calls off any scan in flight.
+#[derive(uniffi::Object)]
+pub struct CoreFileSearch {
+    inner: filesearch::FileSearch,
+}
+
+#[uniffi::export]
+impl CoreFileSearch {
+    #[uniffi::constructor]
+    pub fn new(listener: Arc<dyn FileSearchListener>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: filesearch::FileSearch::new(Arc::new(FileSearchAdapter(listener))),
+        })
+    }
+    /// Safe to call on every keystroke: the scan waits for the typing to stop,
+    /// and a query already answered or under way is not scanned for twice.
+    pub fn request(&self, query: FileSearchQuery) {
+        self.inner.request(query)
+    }
+    pub fn clear(&self) {
+        self.inner.clear()
+    }
+    pub fn status(&self, query: FileSearchQuery) -> FileSearchStatus {
+        self.inner.status(&query)
+    }
+    pub fn matches(&self, query: FileSearchQuery) -> Vec<i64> {
+        self.inner.matches(&query)
+    }
+    /// The line number of the next or previous match, `from` being the line
+    /// the view is showing.
+    pub fn step(&self, query: FileSearchQuery, forward: bool, from: Option<i64>) -> Option<i64> {
+        self.inner.step(&query, forward, from)
     }
 }

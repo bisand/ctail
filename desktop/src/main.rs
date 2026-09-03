@@ -108,9 +108,34 @@ fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
     let files: Vec<String> = std::env::var("CTAIL_DEBUG_FILE").into_iter().collect();
     let mut app = app::App::new(size, scale, files);
     let mut damage = DamageTracker::new(size);
+    let mut pixels = vec![0u32; (size.width * size.height) as usize];
+    let paint = |app: &mut app::App, pixels: &mut Vec<u32>| {
+        let mut frame = denise::Frame::new(
+            pixels,
+            size,
+            size.width,
+            PixelFormat::Xrgb8888,
+            BufferAge::Undefined,
+        )
+        .expect("frame");
+        app.render(&mut frame, &[]);
+    };
     for _ in 0..40 {
         app.update(&[], &mut damage);
         std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    // Paint before touching anything: a view that has never been drawn does
+    // not yet know how many rows it holds, and scrolling to a match asks it.
+    paint(&mut app, &mut pixels);
+    if let Ok(n) = std::env::var("CTAIL_DEBUG_SEARCH_STEP") {
+        let forward = !n.starts_with('-');
+        let times = n.trim_start_matches('-').parse().unwrap_or(1);
+        app.debug_step_search(times, forward);
+        // The jump is answered by the engine's thread, so let it land.
+        for _ in 0..20 {
+            app.update(&[], &mut damage);
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
     }
     if let Ok(which) = std::env::var("CTAIL_DEBUG_MENU") {
         match which.parse::<usize>() {
@@ -119,18 +144,7 @@ fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
         }
         app.update(&[], &mut damage);
     }
-    let mut pixels = vec![0u32; (size.width * size.height) as usize];
-    {
-        let mut frame = denise::Frame::new(
-            &mut pixels,
-            size,
-            size.width,
-            PixelFormat::Xrgb8888,
-            BufferAge::Undefined,
-        )
-        .expect("frame");
-        app.render(&mut frame, &[]);
-    }
+    paint(&mut app, &mut pixels);
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
     write!(out, "P6\n{} {}\n255\n", size.width, size.height)?;
     for word in &pixels {

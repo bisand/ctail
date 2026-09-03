@@ -2,6 +2,7 @@
 //! queries are escaped into a regex so boolean matching and match ranges share
 //! one code path.
 
+use crate::tailer::CancelToken;
 use crate::text::to_utf16_ranges;
 use fancy_regex::Regex;
 use std::io::{BufRead, BufReader};
@@ -101,12 +102,30 @@ pub struct SearchResult {
 /// the 1-based numbers of the lines that match. An empty or invalid query
 /// matches nothing.
 pub fn search_file(path: &Path, matcher: &SearchMatcher) -> SearchResult {
+    search_file_cancellable(path, matcher, &CancelToken::default()).unwrap_or_default()
+}
+
+/// How often the scan looks at the cancel flag. Often enough that a keystroke
+/// does not wait on it, rarely enough that a scan of ten million lines does
+/// not spend its time on atomics.
+const CANCEL_EVERY: i64 = 4096;
+
+/// [`search_file`], abandoning the scan when `cancel` is tripped.
+///
+/// `None` means it stopped early: a half-scanned file gives a match count that
+/// is not merely imprecise but wrong, and the caller who asked it to stop has
+/// already moved on to another query.
+pub fn search_file_cancellable(
+    path: &Path,
+    matcher: &SearchMatcher,
+    cancel: &CancelToken,
+) -> Option<SearchResult> {
     let mut result = SearchResult::default();
     if matcher.is_empty() || !matcher.is_valid() {
-        return result;
+        return Some(result);
     }
     let Ok(file) = std::fs::File::open(path) else {
-        return result;
+        return Some(result);
     };
     let mut reader = BufReader::with_capacity(1 << 20, file);
     let mut buf = Vec::new();
@@ -120,6 +139,9 @@ pub fn search_file(path: &Path, matcher: &SearchMatcher) -> SearchResult {
             break; // trailing partial line is not a line yet
         }
         result.total_lines += 1;
+        if result.total_lines % CANCEL_EVERY == 0 && cancel.is_cancelled() {
+            return None;
+        }
         let mut end = buf.len() - 1;
         if end > 0 && buf[end - 1] == b'\r' {
             end -= 1;
@@ -129,7 +151,7 @@ pub fn search_file(path: &Path, matcher: &SearchMatcher) -> SearchResult {
         }
     }
     result.total_matches = result.match_line_numbers.len() as u32;
-    result
+    Some(result)
 }
 
 #[cfg(test)]
@@ -188,5 +210,28 @@ mod tests {
             SearchResult::default()
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_cancelled_scan_answers_with_nothing() {
+        let dir = std::env::temp_dir().join(format!("ctail-search-cancel-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.log");
+        // More lines than the cancel check's stride, so the flag is looked at.
+        let body: String = (0..CANCEL_EVERY * 2 + 7)
+            .map(|i| format!("line {i} error\n"))
+            .collect();
+        std::fs::write(&path, body).unwrap();
+        let q = SearchMatcher::new("error", false, false, false);
+
+        let live = CancelToken::default();
+        let full = search_file_cancellable(&path, &q, &live).expect("not cancelled");
+        assert_eq!(full.total_lines, CANCEL_EVERY * 2 + 7);
+        assert_eq!(full.total_matches as i64, CANCEL_EVERY * 2 + 7);
+
+        let stopped = CancelToken::default();
+        stopped.cancel();
+        assert_eq!(search_file_cancellable(&path, &q, &stopped), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

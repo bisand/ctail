@@ -32,7 +32,8 @@ on macOS, Windows and Linux the same way this app does.
   closes. Typing searches live. The counter reads as "where you are": until a
   match has been stepped to it counts from the first one at or after the top
   of the view, so the first ↓ goes to a match near what is on screen rather
-  than to the oldest one in the buffer.
+  than to the oldest one in the file. The count itself comes from
+  `ctail_core::FileSearch`, which scans the file on disk — see below.
 - `src/app.rs` — tabs (one `LogView` node each), engine callbacks funnelled
   through channels into the UI thread, status line, follow toggle, Ctrl/Cmd+O
   open (native dialog via `rfd`), Ctrl/Cmd+W close, Ctrl/Cmd+Q quit.
@@ -79,9 +80,14 @@ Settings, profiles, recent files and themes come from the same config store
 (`~/.config/ctail`, `%APPDATA%\ctail`, `~/Library/Application Support/ctail`) as
 the other front ends, so a profile edited on the Mac renders identically here.
 
-Search covers the window of lines held in memory, which is what the macOS app
-searches too. The engine can scan a whole file (`ctail_core::search_file`);
-wiring that to a "search the whole file" affordance is still to do.
+Search covers the whole file, not just the window of lines in memory. The
+engine's `FileSearch` scans what is on disk on its own thread once the typing
+stops, and the counter reads "3/41892" for the file — while the scan is still
+running it shows the window's own count with a `+…` after it, and ↑/↓ step
+that, so a huge file answers immediately and gets more truthful as it goes.
+Stepping to a match the window does not reach fetches the part of the file
+around it and shows that instead; the tab stops following, since its window is
+no longer the tail, and End (or the Follow box) reads the tail again.
 
 Word wrap (⌥⌘W / Ctrl+Alt+W, or the setting) breaks long lines to the width
 instead of running them off the edge: after the last space that fits, or

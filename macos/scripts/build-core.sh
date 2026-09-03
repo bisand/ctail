@@ -21,7 +21,9 @@ rm -rf "$OUT"; mkdir -p "$OUT/lib" "$OUT/include" "$OUT/gen"
 LIBS=()
 for t in $CORE_TARGETS; do
   rustup target list --installed | grep -qx "$t" || rustup target add "$t"
-  (cd "$ROOT" && cargo build -q "${CARGO_FLAGS[@]}" -p ctail-core --features ffi --target "$t")
+  # ${a[@]} on an empty array is "unbound" under this bash and `set -u`, which
+  # is exactly what PROFILE=debug leaves behind.
+  (cd "$ROOT" && cargo build -q ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -p ctail-core --features ffi --target "$t")
   LIBS+=("$ROOT/target/$t/$PROFILE/libctail_core.a")
 done
 if [ ${#LIBS[@]} -eq 1 ]; then cp "${LIBS[0]}" "$OUT/lib/libctail_core.a"
