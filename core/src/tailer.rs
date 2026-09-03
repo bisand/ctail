@@ -44,6 +44,7 @@ use std::time::{Duration, Instant};
 
 /// A single log line with its 1-based number.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LogLine {
     pub number: i64,
     pub text: String,
@@ -51,6 +52,7 @@ pub struct LogLine {
 
 /// Engine tuning knobs. Defaults match the shipping macOS app.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct TailerOptions {
     /// Poll cadence; clamped to at least 50 ms.
     pub poll_interval: Duration,
@@ -865,7 +867,8 @@ enum Cmd {
 }
 
 /// The tailer handle the UI owns. All work happens on a worker thread; the
-/// handle is cheap to poke from anywhere. Dropping it stops everything.
+/// handle is cheap to poke from anywhere. Dropping it shuts the worker down
+/// (asynchronously) and cancels any head scan.
 pub struct Tailer {
     tx: Sender<Cmd>,
     counters: Arc<Counters>,
@@ -940,10 +943,10 @@ impl Tailer {
 
 impl Drop for Tailer {
     fn drop(&mut self) {
+        // Ask the worker to exit and let it go: joining here could block the
+        // dropping thread (a UI thread, via FFI) behind an I/O timeout.
         let _ = self.tx.send(Cmd::Shutdown);
-        if let Some(w) = self.worker.take() {
-            let _ = w.join();
-        }
+        self.worker.take();
     }
 }
 

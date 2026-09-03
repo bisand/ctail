@@ -1,0 +1,4 @@
+[bindings.swift]
+module_name = "CtailCore"
+ffi_module_name = "CtailCoreFFI"
+generate_immutable_records = true

@@ -8,8 +8,8 @@ and an optional AI assistant. Website and user docs: see [`site/`](site/).
 
 | Path | What it is |
 |------|------------|
-| [`core/`](core/) | **Rust engine crate** (`ctail-core`). Platform-neutral: the tail engine today; highlighting, search and config next. Consumed by the native front ends. |
-| [`macos/`](macos/) | **Native macOS app** (Swift / AppKit). The shipping product; see [`macos/README.md`](macos/README.md). |
+| [`core/`](core/) | **Rust engine crate** (`ctail-core`). Platform-neutral: the tail engine today; highlighting, search and config next. Exposed to Swift through [UniFFI](https://mozilla.github.io/uniffi-rs/) (`--features ffi`). |
+| [`macos/`](macos/) | **Native macOS app** (Swift / AppKit) on top of `core/`. The shipping product; see [`macos/README.md`](macos/README.md). |
 | [`site/`](site/) | Website (SvelteKit), deployed by `.github/workflows/site.yml`. |
 | [`docs/`](docs/) | Feature documentation (highlighting rules, AI assistant, custom themes). |
 | [`legacy/wails/`](legacy/wails/) | **Archived** original cross-platform app (Go + Svelte via Wails). Not built by CI; kept for reference. See [`legacy/wails/README.md`](legacy/wails/README.md). |
@@ -24,8 +24,8 @@ into `core/`, so Linux and Windows front ends can share one tested engine.
 make test-core          # cargo test -p ctail-core
 make lint               # cargo fmt --check + clippy -D warnings
 
-# macOS app (Swift toolchain / Xcode)
-make test-macos         # swift run ctailmac --selftest
+# macOS app (Swift toolchain / Xcode + Rust toolchain)
+make test-macos         # builds the engine + bindings, then swift run ctailmac --selftest
 make -C macos run       # build & launch
 ```
 
@@ -40,7 +40,7 @@ make bench-core ARGS="--gen 2G --cold"      # Rust engine, fresh (cold) 2 GB fil
 make bench-core ARGS="--file /path/to.log"  # Rust engine, existing file
 ```
 
-Apple-silicon internal SSD, release builds, 2026-09-03 (Rust vs the Swift engine it replaces):
+Apple-silicon internal SSD, release builds, 2026-09-03 (Rust engine called directly vs the Swift engine it replaced; through the UniFFI wrapper the index times hold, page-ins cost ~5 ms per 10 k lines — see `macos/README.md`):
 
 | | 2 GB / 22.7 M lines | 10 GB / 113 M lines |
 |---|---|---|

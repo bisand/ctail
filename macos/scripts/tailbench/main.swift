@@ -1,12 +1,10 @@
-// Swift twin of core/examples/tailbench.rs: drives the app's Tailer.swift on a
-// file and prints the same measurements, so both engines can be compared.
+// Swift twin of core/examples/tailbench.rs: drives a `Tailer` on a file and
+// prints the same measurements. Compiles against either LegacyTailer.swift (the
+// old Swift engine) or Sources/ctailmac/Tailer.swift (the Rust engine through
+// UniFFI); see "Engine benchmark" in macos/README.md for both command lines.
 //
-//   cd macos/scripts/tailbench
-//   swiftc -O ../../Sources/ctailmac/Tailer.swift main.swift -o /tmp/tailbench-swift
-//   /tmp/tailbench-swift --file /path/to/ctail-bench.log
-//
-// Generate the file with the Rust harness (`--gen SIZE [--cold]`) so both
-// engines see byte-identical input.
+// Generate the file with the Rust harness (`--gen SIZE [--cold] --gen-only`) so
+// every engine sees byte-identical input.
 import Foundation
 
 var args = Array(CommandLine.arguments.dropFirst())

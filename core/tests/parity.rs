@@ -689,7 +689,7 @@ fn threaded_tailer_delivers_initial_then_live_lines() {
         Ev::Lines(l) => assert_eq!(texts(&l), ["four"]),
         other => panic!("expected lines, got {other:?}"),
     }
-    drop(tailer); // joins the worker
+    drop(tailer);
 }
 
 #[test]

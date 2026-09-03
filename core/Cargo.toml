@@ -9,10 +9,25 @@ publish = false
 [lib]
 name = "ctail_core"
 path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+default = []
+# Foreign-language bindings (UniFFI). Off by default so pure-Rust consumers
+# (tests, benches, a future Tauri front end) don't pay for it.
+ffi = ["dep:uniffi"]
+# The `uniffi-bindgen` binary used to generate the Swift bindings.
+cli = ["ffi", "uniffi/cli"]
 
 [dependencies]
 bytecount = "0.6"
 memchr = "2"
+uniffi = { version = "0.32", optional = true }
 
 [dev-dependencies]
 libc = "0.2"

@@ -8,16 +8,20 @@ BUILD_DIR  := .build/$(CONFIG)
 APP_DIR    := $(APP).app
 CONTENTS   := $(APP_DIR)/Contents
 
-.PHONY: all build run bundle icon clean test xcodeproj archive
+.PHONY: all core build run bundle icon clean test xcodeproj archive
 
 all: bundle
 
+## core: build the Rust engine + Swift bindings (Frameworks/CtailCoreFFI.xcframework)
+core:
+	@bash scripts/build-core.sh
+
 ## build: compile the binary
-build:
+build: core
 	swift build -c $(CONFIG)
 
 ## xcodeproj: generate the App Store / TestFlight Xcode project from project.yml
-xcodeproj:
+xcodeproj: core
 	xcodegen generate
 	@echo "Open ctail.xcodeproj, set your Team under Signing & Capabilities, then Product ▸ Archive."
 
@@ -28,7 +32,7 @@ archive: xcodeproj
 	@echo "Then: Xcode ▸ Window ▸ Organizer ▸ Distribute App ▸ App Store Connect (uploads to TestFlight)."
 
 ## run: build + run the unbundled binary (pass FILE=/path/to.log)
-run:
+run: core
 	swift build
 	./.build/debug/ctailmac $(FILE)
 
@@ -56,11 +60,11 @@ bundle: build icon
 	@echo "built $(APP_DIR) (v$(VERSION) build $(BUILD))"
 
 ## test: run the in-process self-tests (XCTest needs full Xcode; CLT lacks it)
-test:
+test: core
 	swift build
 	./.build/debug/ctailmac --selftest
 
 ## clean: remove build artifacts
 clean:
 	swift package clean
-	rm -rf $(APP_DIR) .build/AppIcon.icns .build/AppIcon.iconset
+	rm -rf $(APP_DIR) .build/AppIcon.icns .build/AppIcon.iconset .build/core Frameworks Sources/CtailCore

@@ -26,9 +26,9 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy -p ctail-core --all-targets -- -D warnings
+        run: cargo clippy -p ctail-core --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test -p ctail-core
+        run: cargo test -p ctail-core --all-features
 
   macos-app:
     name: macOS app self-tests
@@ -41,5 +41,11 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Rust engine + Swift bindings
+        run: bash scripts/build-core.sh
       - name: Self-tests
         run: swift run ctailmac --selftest

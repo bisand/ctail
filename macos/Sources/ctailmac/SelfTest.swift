@@ -238,24 +238,10 @@ enum SelfTest {
 
     // MARK: - Tailer suite
 
+    /// End-to-end checks through the Rust engine (the engine's own parity suite
+    /// lives in core/tests/parity.rs). Callbacks land on the main queue, so the
+    /// suite pumps the main run loop while it waits.
     static func tailerSuite() {
-        // --- pure line splitter ---
-        let (lines, offsets, consumed) = Tailer.splitLines(Data("a\nb\npartial".utf8), startingAt: 0, baseOffset: 0)
-        eq(lines.map { $0.text }, ["a", "b"], "splits complete lines, drops partial")
-        eq(lines.map { $0.number }, [1, 2], "numbers are 1-based")
-        eq(offsets, [0, 2], "line start offsets")
-        eq(consumed, 4, "consumed stops before the partial line")
-
-        // CRLF stripping + continued numbering from a base.
-        let crlf = Tailer.splitLines(Data("x\r\ny\r\n".utf8), startingAt: 10, baseOffset: 100)
-        eq(crlf.lines.map { $0.text }, ["x", "y"], "strips trailing CR")
-        eq(crlf.lines.map { $0.number }, [11, 12], "continues from startNum")
-        eq(crlf.offsets, [100, 103], "offsets are baseOffset-relative")
-
-        // Empty buffer.
-        eq(Tailer.splitLines(Data(), startingAt: 5, baseOffset: 0).lines.count, 0, "empty buffer yields no lines")
-
-        // --- file-driven engine (synchronous seams; no run loop needed) ---
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ctail-tailer-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -266,130 +252,115 @@ enum SelfTest {
             let fh = try? FileHandle(forWritingTo: file)
             fh?.seekToEndOfFile(); fh?.write(Data(s.utf8)); try? fh?.close()
         }
+        /// Runs the main run loop until `cond` holds or `timeout` elapses.
+        @discardableResult
+        func pump(_ timeout: TimeInterval = 5, until cond: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while !cond() && Date() < deadline {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            }
+            return cond()
+        }
+        func settle(_ seconds: TimeInterval) { pump(seconds) { false } }
+
+        var received: [LogLine] = []
+        var resets = 0
+        var readies = 0
+        var errors: [String] = []
 
         write("line1\nline2\nline3\n")
         let t = Tailer(path: file.path, pollInterval: 0.05)
-        t.performInitialRead()
-        eq(t.totalLines, 3, "initial read indexes 3 lines")
-        eq(t.readRange(start: 1, count: 3).map { $0.text }, ["line1", "line2", "line3"], "readRange full")
-        eq(t.readRange(start: 2, count: 1).map { $0.text }, ["line2"], "readRange windowed")
+        t.onLines = { received += $0 }
+        t.onReset = { resets += 1 }
+        t.onReady = { readies += 1 }
+        t.onError = { errors.append($0) }
+        t.start()
+        check(pump { readies == 1 && received.count == 3 }, "initial read delivers 3 lines + ready")
+        eq(received.map { $0.text }, ["line1", "line2", "line3"], "initial content")
+        eq(received.map { $0.number }, [1, 2, 3], "numbers are 1-based")
+        eq(t.totalLines, 3, "totalLines after initial read")
+        eq(t.indexingComplete, true, "small file is indexed immediately")
+
+        var got: [LogLine]?
+        t.fetchRange(start: 2, count: 1) { got = $0 }
+        check(pump { got != nil }, "fetchRange completes")
+        eq(got?.map { $0.text }, ["line2"], "fetchRange windowed")
+        got = nil
+        t.fetchRange(start: 1, count: 10) { got = $0 }
+        check(pump { got != nil }, "fetchRange completes (clamped)")
+        eq(got?.count, 3, "fetchRange clamps at EOF")
 
         // Append -> poll picks up only the new line.
         appendText("line4\n")
-        t.performPoll()
-        eq(t.totalLines, 4, "poll appends new line to index")
-        eq(t.readRange(start: 4, count: 1).first?.text, "line4", "new line readable")
+        check(pump { received.count == 4 }, "poll delivers the appended line")
+        eq(received.last?.text, "line4", "appended text")
+        eq(received.last?.number, 4, "appended number")
 
         // Partial line not committed until its newline arrives.
         appendText("partial-no-newline")
-        t.performPoll()
+        settle(0.25)
+        eq(received.count, 4, "partial line not delivered yet")
         eq(t.totalLines, 4, "partial line not counted yet")
         appendText("\n")
-        t.performPoll()
-        eq(t.totalLines, 5, "partial completes on newline")
-        eq(t.readRange(start: 5, count: 1).first?.text, "partial-no-newline", "completed partial text")
+        check(pump { received.count == 5 }, "partial completes on newline")
+        eq(received.last?.text, "partial-no-newline", "completed partial text")
 
-        // Truncation -> index resets and re-reads.
+        // Truncation -> reset + re-read.
+        received = []
         write("fresh1\nfresh2\n")
-        t.performPoll()
-        eq(t.totalLines, 2, "truncation resets to new content")
-        eq(t.readRange(start: 1, count: 2).map { $0.text }, ["fresh1", "fresh2"], "post-truncation content")
+        check(pump { resets == 1 && received.count == 2 }, "truncation resets and re-reads")
+        eq(received.map { $0.text }, ["fresh1", "fresh2"], "post-truncation content")
+        eq(t.totalLines, 2, "totalLines after truncation")
 
-        // Rotation (different inode) -> treated like truncation/reset.
+        // Rotation (new inode, larger file) -> reset + re-read.
+        received = []
         try? FileManager.default.removeItem(at: file)
-        write("rotated\n")
-        t.performPoll()
-        eq(t.totalLines, 1, "rotation re-reads new inode")
-        eq(t.readRange(start: 1, count: 1).first?.text, "rotated", "rotated content")
+        write("rotated-1\nrotated-2\nrotated-3\n")
+        check(pump { resets == 2 && received.count == 3 }, "rotation re-reads the new inode")
+        eq(received.first?.text, "rotated-1", "rotated content")
 
-        // --- sparse offset indexer ---
-        write("aa\nbb\ncc\n")                       // line starts at bytes 0,3,6; size 9
-        let dense = Tailer.indexFile(path: file.path, upTo: 9, stride: 1)
-        eq(dense.checkpoints, [0, 3, 6], "stride 1 records every line start")
-        eq(dense.total, 3, "indexFile counts all complete lines")
-        eq(dense.consumed, 9, "indexFile consumed stops past the last newline")
+        // File gone -> one error; back -> ready again + content.
+        received = []
+        try? FileManager.default.removeItem(at: file)
+        check(pump { !errors.isEmpty }, "missing file reports an error")
+        settle(0.2)
+        eq(errors.count, 1, "error reported once per outage")
+        check(errors.first?.contains("file unavailable") == true, "error message")
+        write("back\n")
+        check(pump { received.last?.text == "back" }, "recreated file is read")
 
-        // With a larger stride only every Nth line start is kept (sparse index).
-        let sparse = Tailer.indexFile(path: file.path, upTo: 9, stride: 2)
-        eq(sparse.checkpoints, [0, 6], "stride 2 keeps every 2nd line start")
-        eq(sparse.total, 3, "sparse index still counts all lines")
+        // Manual refresh re-reads from scratch.
+        received = []
+        t.refresh()
+        check(pump { resets == 4 && received.count == 1 }, "refresh resets and re-reads")
+        t.setPollInterval(0.1)
+        t.stop()
 
-        // A trailing partial line is excluded from the count and from consumed.
-        write("aa\nbb\npartial")
-        let partial = Tailer.indexFile(path: file.path, upTo: 12, stride: 1)
-        eq(partial.total, 2, "trailing partial line not counted")
-        eq(partial.consumed, 6, "consumed excludes the trailing partial")
-
-        // readRange must seek to the right checkpoint and scan forward across the
-        // sparse index (default stride 1000), so test a file spanning >2 strides.
-        var big = ""
-        for n in 1...2500 { big += "L\(n)\n" }
-        write(big)
-        let bt = Tailer(path: file.path, pollInterval: 0.05)
-        bt.performInitialRead()
-        eq(bt.totalLines, 2500, "sparse-indexed file counts all lines")
-        eq(bt.readRange(start: 1, count: 1).first?.text, "L1", "first line via checkpoint 0")
-        eq(bt.readRange(start: 1500, count: 2).map { $0.text }, ["L1500", "L1501"],
-           "range scanned forward from checkpoint 1")
-        eq(bt.readRange(start: 2001, count: 1).first?.text, "L2001", "exact checkpoint-boundary line")
-        eq(bt.readRange(start: 2500, count: 1).first?.text, "L2500", "last line")
-
-        // --- tail-first (instant tail): numbers are local until the head count lands ---
+        // Tail-first (instant tail): tiny thresholds force the large-file path.
         var tfBody = ""
         for n in 1...50 { tfBody += "L\(n)\n" }
         write(tfBody)
-        // Tiny thresholds force the large-file tail-first path on a small fixture.
         let tf = Tailer(path: file.path, pollInterval: 0.05, tailFirstThreshold: 20, tailSeekBack: 12)
-        tf.performInitialRead()
-        eq(tf.indexingComplete, false, "tail-first defers the full line count")
-        eq(tf.readRange(start: 1, count: 1).isEmpty, true, "scrollback disabled until count ready")
-        eq(tf.totalLines < 50, true, "before count, total is just the local tail")
-        // Simulate the background head count completing.
-        let head = Tailer.indexFile(path: file.path, upTo: tf.tailStart, stride: 1000)
-        tf.applyHeadCount(head.checkpoints, base: head.total)
-        eq(tf.indexingComplete, true, "count ready after head index")
+        var tfLines: [LogLine] = []
+        var base: Int64?
+        tf.onLines = { tfLines += $0 }
+        tf.onBaseResolved = { base = $0 }
+        tf.start()
+        check(pump { base != nil }, "head count resolves in the background")
+        eq(tf.indexingComplete, true, "indexing complete after head count")
         eq(tf.totalLines, 50, "absolute total after head count")
-        eq(tf.readRange(start: 1, count: 1).first?.text, "L1", "head-region line via scrollback")
-        eq(tf.readRange(start: head.total + 1, count: 1).first?.text, "L\(head.total + 1)",
-           "first tail line at absolute number base+1")
-        eq(tf.readRange(start: 50, count: 1).first?.text, "L50", "tail-region last line")
-
-        // --- chunked pump: a burst larger than maxReadChunk is read in pieces ---
-        // A tiny chunk (7 bytes) forces many lines to straddle chunk boundaries on
-        // a small fixture; every line must still be counted and readable intact.
-        write("seed\n")
-        let pumped = Tailer(path: file.path, pollInterval: 0.05, maxReadChunk: 7)
-        pumped.performInitialRead()
-        eq(pumped.totalLines, 1, "pump: initial seed line")
-        var burst = ""
-        for n in 1...200 { burst += "entry-\(n)\n" }     // each line > the 7-byte chunk
-        appendText(burst)
-        pumped.performPoll()
-        eq(pumped.totalLines, 201, "pump: all burst lines counted across chunk boundaries")
-        eq(pumped.readRange(start: 2, count: 1).first?.text, "entry-1", "pump: first burst line intact")
-        eq(pumped.readRange(start: 201, count: 1).first?.text, "entry-200", "pump: last burst line intact")
-        eq(pumped.readRange(start: 50, count: 2).map { $0.text }, ["entry-49", "entry-50"],
-           "pump: mid-burst lines intact")
-
-        // A single line longer than maxReadChunk is never split — the over-long
-        // fallback reads it whole rather than dropping or truncating it.
-        let longLine = String(repeating: "x", count: 100)   // >> 7-byte chunk
-        appendText(longLine + "\n")
-        pumped.performPoll()
-        eq(pumped.totalLines, 202, "pump: over-long line counted")
-        eq(pumped.readRange(start: 202, count: 1).first?.text, longLine, "pump: over-long line intact")
-
-        // --- head-count cancellation: a superseding read drops a stale scan ---
-        var hc = ""
-        for n in 1...50 { hc += "H\(n)\n" }
-        write(hc)
-        let cancellable = Tailer(path: file.path, pollInterval: 0.05, tailFirstThreshold: 20, tailSeekBack: 12)
-        cancellable.performInitialRead()
-        eq(cancellable.indexingComplete, false, "cancel: tail-first defers count")
-        let cancelled = CancelToken()
-        cancelled.cancel()
-        let aborted = Tailer.indexFile(path: file.path, upTo: 1_000, stride: 1000,
-                                       isCancelled: { cancelled.isCancelled })
-        eq(aborted.total, 0, "cancel: a pre-cancelled scan does no work")
+        check((base ?? 0) > 0 && (base ?? 0) < 50, "base is the head line count")
+        eq(tfLines.last?.text, "L50", "tail shown first")
+        eq(Int64(tfLines.count) + (base ?? 0), 50, "tail lines + base = total")
+        var head: [LogLine]?
+        tf.fetchRange(start: 1, count: 1) { head = $0 }
+        check(pump { head != nil }, "head-region scrollback completes")
+        eq(head?.first?.text, "L1", "head-region line via scrollback")
+        var tail: [LogLine]?
+        tf.fetchRange(start: 50, count: 1) { tail = $0 }
+        check(pump { tail != nil }, "tail-region scrollback completes")
+        eq(tail?.first?.text, "L50", "tail-region last line")
+        eq(tail?.first?.number, 50, "absolute number after base")
+        tf.stop()
     }
 }

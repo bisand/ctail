@@ -3,10 +3,13 @@
 A proof-of-concept Swift/AppKit rewrite of ctail, built to de-risk the two hard
 parts of a full native port **before** committing to it:
 
-1. **The tail engine** — a faithful port of [`legacy/wails/internal/tailer/tailer.go`](../legacy/wails/internal/tailer/tailer.go):
-   polling (network-mount safe), inode-based rotation detection, truncation
-   handling, partial-line buffering, and tail-first reads for huge files.
-   See [Tailer.swift](Sources/ctailmac/Tailer.swift).
+1. **The tail engine** — now the Rust crate in [`core/`](../core/), reached
+   through [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings.
+   [Tailer.swift](Sources/ctailmac/Tailer.swift) is a thin wrapper that keeps
+   the closure-callback surface the UI uses and hops callbacks to the main queue.
+   The engine it replaced (a port of the Go tailer) is kept at
+   [scripts/tailbench/LegacyTailer.swift](scripts/tailbench/LegacyTailer.swift)
+   as the benchmark reference.
 2. **The virtualized log view** — `NSTableView`-backed so only visible rows are
    rendered; flat memory/CPU regardless of buffer size, with a line-number
    gutter, regex highlighting, and follow (`tail -f`) mode that auto-pauses on
@@ -17,13 +20,30 @@ look and feel matches the Wails app.
 
 ## Requirements
 
-Swift 6 toolchain (Xcode or Command Line Tools). No full Xcode project needed.
+Swift 6 toolchain (Xcode or Command Line Tools) plus a Rust toolchain
+(`rustup`, with the `x86_64-apple-darwin` target for universal builds — the
+build script adds it if missing). The self-tests need only the CLT; the
+XCFramework step needs `xcodebuild`.
+
+## Build the engine first
+
+```bash
+cd macos
+make core          # = scripts/build-core.sh
+```
+
+That cargo-builds `libctail_core.a` for arm64 + x86_64, lipo's them, generates
+the Swift bindings into `Sources/CtailCore/` and wraps the library as
+`Frameworks/CtailCoreFFI.xcframework`. All of it is git-ignored, and both
+`Package.swift` and `project.yml` consume it, so run it after every engine
+change (the `make build/run/test/xcodeproj` targets do). `PROFILE=debug` and
+`CORE_TARGETS=aarch64-apple-darwin` speed up local iteration.
 
 ## Run
 
 ```bash
 cd macos
-swift build
+make core && swift build
 
 # Tail a specific file:
 ./.build/debug/ctailmac /path/to/some.log
@@ -41,9 +61,9 @@ swift build
 Feature parity with the Wails app is implemented natively (tracked under the
 "Native macOS App" milestone, issues #1–#16):
 
-- **Engine** — polling tailer with inode rotation + truncation detection,
-  partial-line buffering, tail-first + background line indexing, windowed range
-  reads, read timeouts.
+- **Engine** — (Rust, `core/`) polling tailer with inode rotation + truncation
+  detection, partial-line buffering, tail-first + background line indexing,
+  windowed range reads, read timeouts.
 - **UI** — virtualized `NSTableView` log surface, multi-tab interface (drag
   reorder, rename, color, Ctrl+Tab, reopen-closed), VS Code-style search
   (case/word/regex + filter mode), all 21 themes + custom themes, profiles &
@@ -57,15 +77,29 @@ Feature parity with the Wails app is implemented natively (tracked under the
 
 ## Engine benchmark
 
-`scripts/tailbench/main.swift` drives `Tailer.swift` standalone and prints the
-same measurements as the Rust harness (`core/examples/tailbench.rs`), so the two
-engines can be compared on the same file:
+`scripts/tailbench/main.swift` prints the same measurements as the Rust harness
+(`core/examples/tailbench.rs`). It compiles against either engine:
 
 ```bash
-cd scripts/tailbench
-swiftc -O ../../Sources/ctailmac/Tailer.swift main.swift -o /tmp/tailbench-swift
-/tmp/tailbench-swift --file /path/to/ctail-bench.log
+# The legacy Swift engine (reference):
+swiftc -O scripts/tailbench/LegacyTailer.swift scripts/tailbench/main.swift -o /tmp/tailbench-legacy
+
+# The Rust engine through the Swift wrapper + UniFFI (what the app ships), after `make core`:
+M=/tmp/ffimod; mkdir -p $M
+swiftc -O -I .build/core/include -emit-module -emit-library -module-name CtailCore \
+  Sources/CtailCore/CtailCore.swift -L .build/core/lib -lctail_core \
+  -o $M/libCtailCore.dylib -emit-module-path $M/CtailCore.swiftmodule
+swiftc -O -I $M -I .build/core/include Sources/ctailmac/Tailer.swift scripts/tailbench/main.swift \
+  -L $M -lCtailCore -Xlinker -rpath -Xlinker $M -o /tmp/tailbench-ffi
+
+/tmp/tailbench-ffi --file /path/to/ctail-bench.log
 ```
+
+On a warm 2 GB file the FFI path indexes in ~0.11–0.18 s (legacy Swift: ~0.26–0.5 s)
+but pays ~0.4 µs per line to marshal records into Swift: a 10 k-line page-in is
+~5 ms instead of ~1 ms. That work happens on the engine's worker thread, not the
+main thread. Packing batches as one byte blob and splitting on the Swift side
+would remove most of it if it ever shows.
 
 ## Sandbox notes
 
