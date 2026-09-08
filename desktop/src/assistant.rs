@@ -98,6 +98,10 @@ impl AssistantWindow {
         let theme =
             theme::from_palette(&settings.theme, &settings.theme_mode, &palette).scaled(scale);
         let mut ui: Ui<Msg> = Ui::new(size, theme);
+        // Every platform this runs on draws the pointer itself. Denise's own
+        // sprite would be a second arrow a frame behind the real one, drawn
+        // over the content and repainted with it.
+        ui.show_cursor(false);
         if let Some((_, source)) = crate::fonts::load(crate::fonts::UI) {
             let id = ui.add_font(source);
             ui.set_default_font(id);

@@ -18,3 +18,15 @@ denise-ui = { git = "https://github.com/bisand/denise", rev = "611f8f1", feature
 denise-winit = { git = "https://github.com/bisand/denise", rev = "611f8f1" }
 arboard = { version = "3", default-features = false }
 rfd = "0.15"
+
+# The status bar's memory readout: each platform names "what this process costs"
+# differently, and none of them is a portable library call.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }

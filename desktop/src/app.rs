@@ -9,6 +9,7 @@ use crate::profiles::ProfilesWindow;
 use crate::prompt::PromptWindow;
 use crate::search::{Counter, SearchBar, SearchMsg};
 use crate::settings::SettingsWindow;
+use crate::statusbar::StatusBar;
 use crate::tabbar::{TabBar, TabItem};
 use crate::theme;
 use ctail_core::{
@@ -18,7 +19,7 @@ use ctail_core::{
 };
 use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Rect, Size};
 use denise_text::TextStyle;
-use denise_ui::widgets::{open_menu, open_menu_at, Checkbox, Label, MenuBar, MenuItem};
+use denise_ui::widgets::{open_menu, open_menu_at, MenuBar, MenuItem};
 use denise_ui::Anchors;
 use denise_ui::{NodeId, Ui};
 use denise_winit::{DeniseApp, Modality, WindowRequest};
@@ -31,6 +32,8 @@ pub enum Msg {
     SelectTab(usize),
     CloseTab(usize),
     TabContext(usize),
+    /// The "+" at the end of the tab strip.
+    NewTab,
     Follow(bool),
     Log(LogRequest),
     Search(SearchMsg),
@@ -108,6 +111,9 @@ pub(crate) fn open_url(url: &str) {
 
 /// The version this binary is, for the update check.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// How often the status bar re-reads the process's memory footprint.
+const MEMORY_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The colours a tab can be marked with, matching the macOS app's set.
 const TAB_COLORS: [(&str, &str); 6] = [
@@ -219,7 +225,10 @@ pub struct App {
     prompt_tx: Sender<Option<String>>,
     prompt_rx: Receiver<Option<String>>,
     status: NodeId,
-    follow: NodeId,
+    /// When the memory figure is next worth re-reading. Two seconds, as in the
+    /// macOS app: often enough to watch a file being paged in, rare enough to
+    /// cost nothing.
+    memory_at: Instant,
     search: SearchBar,
     /// Validity and emptiness of the query the views are showing, so stepping
     /// through matches keeps reporting "bad regex" rather than a technically
@@ -280,6 +289,10 @@ impl App {
         let s = |v: i32| (v as f32 * scale + 0.5) as i32;
 
         let mut ui: Ui<Msg> = Ui::new(size, theme);
+        // Every platform this runs on draws the pointer itself. Denise's own
+        // sprite would be a second arrow a frame behind the real one, drawn
+        // over the content and repainted with it.
+        ui.show_cursor(false);
         if let Some((_, source)) = fonts::load(fonts::UI) {
             let id = ui.add_font(source);
             ui.set_default_font(id);
@@ -300,7 +313,7 @@ impl App {
         let (w, h) = (size.width as i32, size.height as i32);
         let menu_h = s(28);
         let strip_h = s(34);
-        let status_h = s(30);
+        let status_h = s(26);
         let menu_style = TextStyle::built_in(px(13.0));
         let menubar = ui
             .add(
@@ -322,8 +335,14 @@ impl App {
         let strip = ui
             .add(
                 root,
-                TabBar::new(Msg::SelectTab, Msg::CloseTab, Msg::TabContext)
-                    .with_style(TextStyle::built_in(px(13.0))),
+                TabBar::new(
+                    Msg::SelectTab,
+                    Msg::CloseTab,
+                    Msg::TabContext,
+                    || Msg::NewTab,
+                    scale,
+                )
+                .with_style(TextStyle::built_in(px(12.0))),
                 Rect::new(0, menu_h, w, strip_h),
             )
             .expect("tab strip");
@@ -336,35 +355,23 @@ impl App {
                 bottom: false,
             },
         );
+        let mut bar = StatusBar::new(
+            Msg::Follow,
+            TextStyle {
+                font: mono.font,
+                size_px: px(11.0),
+            },
+            TextStyle::built_in(px(11.0)),
+            scale,
+        );
+        bar.set_text("Open a file: ⌘O / Ctrl+O".into());
         let status = ui
-            .add(
-                root,
-                Label::new("Open a file: ⌘O / Ctrl+O").with_size(px(13.0)),
-                Rect::new(s(12), h - status_h + s(6), w - s(160), status_h - s(8)),
-            )
+            .add(root, bar, Rect::new(0, h - status_h, w, status_h))
             .expect("status");
         ui.set_anchors(
             status,
             Anchors {
                 left: true,
-                top: false,
-                right: true,
-                bottom: true,
-            },
-        );
-        let follow = ui
-            .add(
-                root,
-                Checkbox::new("Follow", Msg::Follow)
-                    .with_checked(true)
-                    .with_size(px(13.0)),
-                Rect::new(w - s(120), h - status_h + s(4), s(110), status_h - s(8)),
-            )
-            .expect("follow");
-        ui.set_anchors(
-            follow,
-            Anchors {
-                left: false,
                 top: false,
                 right: true,
                 bottom: true,
@@ -403,7 +410,7 @@ impl App {
             prompt_tx,
             prompt_rx,
             status,
-            follow,
+            memory_at: Instant::now(),
             search,
             search_valid: true,
             search_empty: true,
@@ -547,6 +554,7 @@ impl App {
         } else {
             self.title = "ctail".into();
             self.set_status("Open a file: ⌘O / Ctrl+O".into());
+            self.set_follow_shown(false);
         }
     }
 
@@ -928,10 +936,10 @@ impl App {
         let bar = self
             .ui
             .widget::<TabBar<Msg>>(self.strip)
-            .map(|b| (b.items().to_vec(), b.style()));
+            .map(|b| (b.items().to_vec(), b.style(), b.metrics()));
         let at = match (bar, strip) {
-            (Some((items, style)), Some(bounds)) => {
-                crate::tabbar::layout(&items, bounds, style, self.ui.text_mut())
+            (Some((items, style, metrics)), Some(bounds)) => {
+                crate::tabbar::layout(&items, bounds, style, metrics, self.ui.text_mut())
                     .get(index)
                     .copied()
             }
@@ -1377,15 +1385,37 @@ impl App {
     }
 
     fn set_status(&mut self, text: String) {
-        if let Some(label) = self.ui.widget_mut::<Label>(self.status) {
-            label.set_text(text);
+        let changed = self
+            .ui
+            .widget_mut::<StatusBar<Msg>>(self.status)
+            .is_some_and(|bar| bar.set_text(text));
+        if changed {
+            self.ui.invalidate(self.status);
         }
-        self.ui.invalidate(self.status);
+    }
+
+    /// Re-reads the process's footprint, at most every couple of seconds.
+    fn tick_memory(&mut self) {
+        if Instant::now() < self.memory_at {
+            return;
+        }
+        self.memory_at = Instant::now() + MEMORY_INTERVAL;
+        let text = crate::memory::footprint()
+            .map(crate::memory::format)
+            .unwrap_or_default();
+        let changed = self
+            .ui
+            .widget_mut::<StatusBar<Msg>>(self.status)
+            .is_some_and(|bar| bar.set_memory(text));
+        if changed {
+            self.ui.invalidate(self.status);
+        }
     }
 
     /// Status line + follow box reflect the active tab.
     fn sync_chrome(&mut self) {
         let Some(tab) = self.tabs.get(self.active) else {
+            self.set_follow_shown(false);
             return;
         };
         let view_id = tab.view;
@@ -1401,10 +1431,31 @@ impl App {
             None => format!("{name} · {total} lines"),
         };
         self.set_status(text);
-        if let Some(cb) = self.ui.widget_mut::<Checkbox<Msg>>(self.follow) {
-            cb.set_checked(following);
+        self.set_follow_shown(true);
+        self.set_follow(following);
+    }
+
+    /// Mirrors the view's follow state into the status bar. Repaints only on a
+    /// change: this runs whenever a batch of lines lands, which is often.
+    fn set_follow(&mut self, on: bool) {
+        let changed = self
+            .ui
+            .widget_mut::<StatusBar<Msg>>(self.status)
+            .is_some_and(|bar| bar.set_following(on));
+        if changed {
+            self.ui.invalidate(self.status);
         }
-        self.ui.invalidate(self.follow);
+    }
+
+    /// A window with no tab has nothing to follow.
+    fn set_follow_shown(&mut self, shown: bool) {
+        let changed = self
+            .ui
+            .widget_mut::<StatusBar<Msg>>(self.status)
+            .is_some_and(|bar| bar.set_show_follow(shown));
+        if changed {
+            self.ui.invalidate(self.status);
+        }
     }
 
     /// Drains every tab's engine events into its view.
@@ -1459,12 +1510,7 @@ impl App {
                 }
             }
             Msg::Log(LogRequest::Reattach) => self.reattach_active(),
-            Msg::Log(LogRequest::Follow(on)) => {
-                if let Some(cb) = self.ui.widget_mut::<Checkbox<Msg>>(self.follow) {
-                    cb.set_checked(on);
-                }
-                self.ui.invalidate(self.follow);
-            }
+            Msg::Log(LogRequest::Follow(on)) => self.set_follow(on),
             Msg::Log(LogRequest::Copy) => self.copy_selection(),
             Msg::CloseTab(i) => {
                 if i < self.tabs.len() {
@@ -1473,6 +1519,7 @@ impl App {
                 }
             }
             Msg::TabContext(i) => self.open_tab_menu(i),
+            Msg::NewTab => self.open_dialog(),
             Msg::Menu(which) => self.open_menu(which),
             Msg::MenuPick(row) => {
                 self.close_menu();
@@ -1512,6 +1559,7 @@ impl App {
 
 impl DeniseApp for App {
     fn update(&mut self, events: &[InputEvent], damage: &mut DamageTracker) {
+        self.tick_memory();
         // Shortcuts are taken here rather than in a widget, and the ones that
         // act are not passed on: Escape closing the find bar must not also
         // clear the log's selection underneath it.
@@ -1725,8 +1773,13 @@ impl DeniseApp for App {
             .next_wake_ms()
             .map(|w| Duration::from_millis(w.saturating_sub(now)));
         // Engine events arrive on their own threads and cannot wake the loop
-        // yet, so poll them at the tail cadence while a file is open.
-        let poll = (!self.tabs.is_empty()).then_some(Duration::from_millis(100));
+        // yet, so poll them at the tail cadence while a file is open. With no
+        // file open the status bar's memory figure is the only thing moving.
+        let poll = Some(if self.tabs.is_empty() {
+            MEMORY_INTERVAL
+        } else {
+            Duration::from_millis(100)
+        });
         match (ui, poll) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),

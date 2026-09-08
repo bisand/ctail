@@ -14,6 +14,42 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
+/// What the backend calls a line when the platform reports scrolling in
+/// notches rather than pixels (`denise_winit::LINE_HEIGHT_PX`). A delta that is
+/// a whole number of these came from a wheel; anything else came from a
+/// trackpad, which reports true pixels.
+const WHEEL_LINE_PX: f32 = 16.0;
+
+/// Whether a scroll delta is a wheel notch rather than a gesture.
+fn is_wheel_notch(delta: f32) -> bool {
+    delta != 0.0 && (delta % WHEEL_LINE_PX).abs() < f32::EPSILON
+}
+
+/// Whether an offset into the top row would take the view past an end of the
+/// file, where it would show a strip of nothing.
+///
+/// `rows` is the whole-row part of the movement that has just been made, and
+/// it is what tells the two cases at the top of a file apart: a movement that
+/// asked to cross the top (`rows < 0`) is cut back to the first line, while
+/// standing on the first line and moving *down* (`rows == 0`) is a request to
+/// hide the top of that line — which is how a view leaves the top three pixels
+/// at a time.
+fn past_end(at: (usize, usize), max: (usize, usize), rows: i64) -> bool {
+    (at == (0, 0) && rows < 0) || at >= max
+}
+
+/// Splits a pixel movement into the whole rows it crosses and the offset into
+/// the row it lands in. `sub_px` is the offset it starts from.
+///
+/// Euclidean rather than truncating division: Rust rounds a negative quotient
+/// towards zero, and moving up by less than a row has to land on the row above
+/// with a large offset, not on the same row with a negative one.
+fn split_pixels(sub_px: i32, pixels: i32, row_h: i32) -> (i64, i32) {
+    let row_h = row_h.max(1);
+    let total = sub_px + pixels;
+    (total.div_euclid(row_h) as i64, total.rem_euclid(row_h))
+}
+
 /// What the view asks the app for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogRequest {
@@ -54,6 +90,14 @@ pub struct LogView<M> {
     /// Which wrapped segment of that row the view starts at. Always 0 without
     /// word wrap, which is what makes the two modes share every other index.
     top_seg: usize,
+    /// Pixels of the top row hidden above the viewport, in `0..row height`.
+    /// This is what makes a trackpad feel like a trackpad: a gesture that has
+    /// not yet covered a whole row still moves the log by what it covered,
+    /// rather than being rounded away and then arriving all at once.
+    sub_px: i32,
+    /// Pixel motion a wheel or gesture reported that is not yet a whole pixel.
+    /// Kept so a slow drag accumulates instead of being truncated to nothing.
+    scroll_residue: f32,
     /// Long lines are broken to fit the width instead of running off it.
     wrap: bool,
     follow: bool,
@@ -110,6 +154,8 @@ impl<M: 'static> LogView<M> {
             cap: cap.max(200),
             top: 0,
             top_seg: 0,
+            sub_px: 0,
+            scroll_residue: 0.0,
             wrap: false,
             follow: true,
             total_lines: 0,
@@ -678,6 +724,7 @@ impl<M: 'static> LogView<M> {
     fn scroll_to_bottom(&mut self) {
         self.top = self.max_top();
         self.top_seg = self.max_top_seg();
+        self.sub_px = 0;
     }
 
     /// The topmost row of the bottom-most view. Without wrapping that is
@@ -699,6 +746,34 @@ impl<M: 'static> LogView<M> {
         }
     }
 
+    /// Moves the viewport by pixels: the whole rows it covers, and whatever is
+    /// left over as an offset into the top one. Every displayed row is exactly
+    /// one row high — a wrapped line is several of them — so the leftover is
+    /// the same measurement whichever mode the view is in.
+    fn scroll_pixels(&mut self, pixels: i32, row_h: i32, ctx: &mut EventCtx<'_, M>) {
+        let (rows, offset) = split_pixels(self.sub_px, pixels, row_h);
+        self.sub_px = offset;
+        self.scroll_rows(rows, ctx);
+        // The ends of the file are hard stops: an offset past either of them
+        // would show a strip of nothing. Only a movement that *asked* to cross
+        // the end is cut back — `rows < 0`, not `<= 0`. Standing on the first
+        // line while scrolling down is a request to hide the top of it, which
+        // is how a view leaves the top of a file three pixels at a time, and
+        // treating that as an overscroll pinned it there until a gesture
+        // happened to report a whole row at once.
+        let at = (self.top, self.top_seg);
+        if past_end(at, (self.max_top(), self.max_top_seg()), rows) {
+            self.sub_px = 0;
+        }
+    }
+
+    /// Moves by whole rows and lands on one: what a key press means, as
+    /// against the pixels a gesture reports.
+    fn scroll_rows_aligned(&mut self, delta: i64, ctx: &mut EventCtx<'_, M>) {
+        self.sub_px = 0;
+        self.scroll_rows(delta, ctx);
+    }
+
     fn scroll_rows(&mut self, delta: i64, ctx: &mut EventCtx<'_, M>) {
         if self.follow {
             // Where paint has been showing us.
@@ -706,6 +781,9 @@ impl<M: 'static> LogView<M> {
             self.top_seg = self.max_top_seg();
         }
         let was_top = self.top;
+        if delta == 0 {
+            return;
+        }
         let (new_top, new_seg) = self.walk_rows(ctx.text, delta);
         self.top = new_top;
         self.top_seg = new_seg;
@@ -772,10 +850,10 @@ impl<M: 'static> Widget<M> for LogView<M> {
         // scrolling has to stop and nothing outside paint can measure it.
         let bottom = self.bottom_anchor(ctx.text, wrap_w, rows);
         self.bottom.set(bottom);
-        let (top, top_seg) = if self.follow {
-            bottom
+        let (top, top_seg, offset) = if self.follow {
+            (bottom.0, bottom.1, 0)
         } else {
-            (self.top, self.top_seg)
+            (self.top, self.top_seg, self.sub_px.min(row_h - 1))
         };
         let muted = theme
             .color(Role::Base300)
@@ -792,7 +870,10 @@ impl<M: 'static> Widget<M> for LogView<M> {
 
         let mut painted = self.painted.borrow_mut();
         painted.clear();
-        let mut y = bounds.y;
+        // The top row starts above the viewport by whatever part of it has
+        // been scrolled past; the canvas is clipped to the widget, so the part
+        // that is off the top simply is not drawn.
+        let mut y = bounds.y - offset;
         let mut index = top;
         // The first line is entered part-way through when the view starts
         // inside a wrapped line.
@@ -901,18 +982,36 @@ impl<M: 'static> Widget<M> for LogView<M> {
         let bounds = ctx.bounds;
         match input {
             InputEvent::PointerScroll { delta_y, .. } => {
-                // Wheel deltas arrive in lines (mouse) or pixels (trackpad,
-                // larger). The sign is the toolkit's: a positive delta moves
-                // the content the way `Ui::scroll_by` would, which is what the
-                // system's own scrolling direction resolves to.
-                let rows = if delta_y.abs() > 20.0 {
-                    *delta_y / row_h as f32
+                // The backend reports pixels either way, but by two different
+                // routes: a trackpad's own fine-grained deltas, or a wheel
+                // notch multiplied out to a nominal line. Both are followed
+                // pixel for pixel — that is what makes a gesture track the
+                // fingers — except that a notch is worth the three lines every
+                // other application gives it rather than the sixteen nominal
+                // pixels the backend names, which on a Retina display is less
+                // than one row. The sign is the toolkit's: a positive delta
+                // moves the content the way `Ui::scroll_by` would.
+                let pixels = if is_wheel_notch(*delta_y) {
+                    delta_y / WHEEL_LINE_PX * 3.0 * row_h as f32
                 } else {
                     *delta_y
                 };
-                let delta = rows.round() as i64;
-                if delta != 0 {
-                    self.scroll_rows(delta, ctx);
+                // Sub-pixel remainders are kept: a slow drag is a run of them.
+                let total = pixels + self.scroll_residue;
+                let whole = total.trunc();
+                self.scroll_residue = total - whole;
+                let before = (self.top, self.top_seg, self.sub_px, self.follow);
+                if whole != 0.0 {
+                    self.scroll_pixels(whole as i32, row_h, ctx);
+                }
+                // A view already against the end of the file has nothing to
+                // show for a gesture that would take it further. Reporting the
+                // event as handled would repaint and present an identical
+                // frame for every event of a flick — a hundred a second of
+                // them, each swapping the buffer the compositor is reading,
+                // which is what makes a log that is not moving shimmer.
+                if (self.top, self.top_seg, self.sub_px, self.follow) == before {
+                    return Handled::No;
                 }
                 Handled::Yes
             }
@@ -954,11 +1053,11 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 let cmd =
                     modifiers.contains(Modifiers::SUPER) || modifiers.contains(Modifiers::CTRL);
                 match code {
-                    KeyCode::PageUp => self.scroll_rows(-page, ctx),
-                    KeyCode::PageDown => self.scroll_rows(page, ctx),
-                    KeyCode::ArrowUp => self.scroll_rows(-1, ctx),
-                    KeyCode::ArrowDown => self.scroll_rows(1, ctx),
-                    KeyCode::Home => self.scroll_rows(-(self.row_count() as i64), ctx),
+                    KeyCode::PageUp => self.scroll_rows_aligned(-page, ctx),
+                    KeyCode::PageDown => self.scroll_rows_aligned(page, ctx),
+                    KeyCode::ArrowUp => self.scroll_rows_aligned(-1, ctx),
+                    KeyCode::ArrowDown => self.scroll_rows_aligned(1, ctx),
+                    KeyCode::Home => self.scroll_rows_aligned(-(self.row_count() as i64), ctx),
                     KeyCode::End => {
                         if self.detached {
                             ctx.emit((self.to_message)(LogRequest::Reattach));
@@ -1166,5 +1265,51 @@ mod tests {
         assert_eq!(v.walk_rows(&mut text, -1), (1, 0));
         assert_eq!(v.walk_rows(&mut text, -2), (0, 0));
         assert_eq!(v.walk_rows(&mut text, -50), (0, 0));
+    }
+
+    #[test]
+    fn a_gesture_shorter_than_a_row_still_moves_the_view() {
+        // Down by three pixels of a twenty-pixel row: no row is crossed, and
+        // the view sits three pixels into the one it was on.
+        assert_eq!(split_pixels(0, 3, 20), (0, 3));
+        // Three more, and it is six in — a drag adds up rather than rounding
+        // away, which is the whole point of keeping the offset.
+        assert_eq!(split_pixels(3, 3, 20), (0, 6));
+        // Up by three from the top of a row: the row above, near its bottom.
+        assert_eq!(split_pixels(0, -3, 20), (-1, 17));
+        // A whole row lands exactly on the next one.
+        assert_eq!(split_pixels(0, 20, 20), (1, 0));
+        assert_eq!(split_pixels(5, -25, 20), (-1, 0));
+        // Several rows at once, as a flick reports.
+        assert_eq!(split_pixels(0, 55, 20), (2, 15));
+    }
+
+    #[test]
+    fn only_a_movement_that_asked_to_cross_an_end_is_cut_back() {
+        let top = (0, 0);
+        let middle = (5, 0);
+        let max = (9, 0);
+        // Pushing up against the top, and sitting at the bottom: no offset.
+        assert!(past_end(top, max, -1));
+        assert!(past_end(max, max, 1));
+        assert!(past_end(max, max, 0));
+        // Leaving the top downwards keeps its offset — without this the view
+        // was pinned to the first line until a gesture reported a whole row.
+        assert!(!past_end(top, max, 0));
+        // And anywhere in the middle, either way.
+        assert!(!past_end(middle, max, 0));
+        assert!(!past_end(middle, max, -1));
+    }
+
+    #[test]
+    fn a_wheel_notch_is_told_from_a_trackpad_gesture() {
+        // The backend multiplies a notch out to whole nominal lines.
+        assert!(is_wheel_notch(16.0));
+        assert!(is_wheel_notch(-48.0));
+        // A trackpad reports what the fingers did.
+        assert!(!is_wheel_notch(3.0));
+        assert!(!is_wheel_notch(-17.5));
+        // Standing still is not a notch, or every idle event would scroll.
+        assert!(!is_wheel_notch(0.0));
     }
 }
