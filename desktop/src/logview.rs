@@ -12,16 +12,29 @@ use denise_text::{TextEngine, TextStyle};
 use denise_ui::widget::{Event, EventCtx, Handled, PaintCtx, Widget};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// What the backend calls a line when the platform reports scrolling in
-/// notches rather than pixels (`denise_winit::LINE_HEIGHT_PX`). A delta that is
-/// a whole number of these came from a wheel; anything else came from a
-/// trackpad, which reports true pixels.
+/// notches rather than pixels (`denise_winit::LINE_HEIGHT_PX`). A wheel's
+/// deltas are whole numbers of these; a trackpad reports true pixels.
 const WHEEL_LINE_PX: f32 = 16.0;
 
-/// Whether a scroll delta is a wheel notch rather than a gesture.
-fn is_wheel_notch(delta: f32) -> bool {
+/// How long a gesture is taken to still be under way after the last delta only
+/// a gesture could have produced.
+const GESTURE_MEMORY: Duration = Duration::from_millis(500);
+
+/// Whether a scroll delta is one a wheel could have produced.
+///
+/// Not enough on its own to call it one: a trackpad reports pixels, and a
+/// tenth of them land on an exact multiple of sixteen by chance — which, taken
+/// for a notch, threw the view five rows down the file in the middle of a
+/// smooth drag. So the test that matters is the negative one. A delta that is
+/// *not* a whole number of lines proves fingers are on the glass, and
+/// [`LogView::is_notch`] remembers that for as long as a gesture plausibly
+/// lasts.
+fn could_be_notch(delta: f32) -> bool {
     delta != 0.0 && (delta % WHEEL_LINE_PX).abs() < f32::EPSILON
 }
 
@@ -72,6 +85,20 @@ pub struct SearchStatus {
     pub total: usize,
 }
 
+/// A line's highlighting, worked out once and kept.
+///
+/// Both halves of it are dear: `Highlighter::apply` runs every rule's regex
+/// over the line, and `split_runs` then walks it character by character. Doing
+/// that for seventy visible lines is a third of a frame, and the answer cannot
+/// change between one frame and the next — a line's text never changes once it
+/// has arrived.
+struct Styled {
+    /// Index of the line-level rule that styles the whole line, or -1.
+    line_rule: i32,
+    /// Byte ranges of the line and the rule that paints each, in order.
+    runs: Vec<(usize, usize, Option<u32>)>,
+}
+
 struct RuleStyle {
     fg: Option<Color>,
     bg: Option<Color>,
@@ -98,6 +125,9 @@ pub struct LogView<M> {
     /// Pixel motion a wheel or gesture reported that is not yet a whole pixel.
     /// Kept so a slow drag accumulates instead of being truncated to nothing.
     scroll_residue: f32,
+    /// When a delta last arrived that no wheel could have sent, which is what
+    /// tells a trackpad from a mouse. See [`could_be_notch`].
+    gesture_at: Option<Instant>,
     /// Long lines are broken to fit the width instead of running off it.
     wrap: bool,
     follow: bool,
@@ -120,6 +150,10 @@ pub struct LogView<M> {
     /// Character advances, memoised: wrapping walks a line character by
     /// character, and a log is written in the same few dozen of them.
     advances: RefCell<HashMap<char, i32>>,
+    /// Highlighting per line number, which is the one key that survives lines
+    /// arriving at either end of the window. Cleared whenever the rules or the
+    /// numbering change, and capped so a long session cannot grow it forever.
+    styled: RefCell<HashMap<i64, Rc<Styled>>>,
     show_numbers: bool,
     waiting_older: bool,
     /// The window is a range from the middle of the file rather than the tail,
@@ -156,6 +190,7 @@ impl<M: 'static> LogView<M> {
             top_seg: 0,
             sub_px: 0,
             scroll_residue: 0.0,
+            gesture_at: None,
             wrap: false,
             follow: true,
             total_lines: 0,
@@ -168,6 +203,7 @@ impl<M: 'static> LogView<M> {
             painted: RefCell::new(Vec::new()),
             bottom: Cell::new((0, 0)),
             advances: RefCell::new(HashMap::new()),
+            styled: RefCell::new(HashMap::new()),
             show_numbers: true,
             waiting_older: false,
             detached: false,
@@ -183,6 +219,7 @@ impl<M: 'static> LogView<M> {
 
     pub fn set_rules(&mut self, rules: &[Rule]) {
         self.highlighter = Arc::new(Highlighter::new(rules));
+        self.styled.borrow_mut().clear();
         self.styles = self
             .highlighter
             .rules()
@@ -253,8 +290,10 @@ impl<M: 'static> LogView<M> {
 
     pub fn reset(&mut self) {
         self.lines.clear();
+        self.styled.borrow_mut().clear();
         self.top = 0;
         self.top_seg = 0;
+        self.sub_px = 0;
         self.detached = false;
         self.selection = None;
         self.provisional = false;
@@ -373,6 +412,8 @@ impl<M: 'static> LogView<M> {
                 l.number += base;
             }
             self.provisional = false;
+            // Every line is keyed by its number, and every number just moved.
+            self.styled.borrow_mut().clear();
         }
         self.total_lines = total;
     }
@@ -717,6 +758,27 @@ impl<M: 'static> LogView<M> {
         };
     }
 
+    /// This line's highlighting, from the cache or worked out and kept.
+    fn styled(&self, line: &LogLine) -> Rc<Styled> {
+        if let Some(hit) = self.styled.borrow().get(&line.number) {
+            return hit.clone();
+        }
+        let style = self.highlighter.apply(&line.text);
+        let entry = Rc::new(Styled {
+            line_rule: style.line_rule,
+            runs: split_runs(&line.text, &style.spans),
+        });
+        let mut cache = self.styled.borrow_mut();
+        // Twice the window is room for every line it can hold and the ones it
+        // has just scrolled past; beyond that, start again rather than track
+        // ages for entries that cost thirty microseconds to rebuild.
+        if cache.len() > self.cap * 2 {
+            cache.clear();
+        }
+        cache.insert(line.number, entry.clone());
+        entry
+    }
+
     pub fn visible_rows(&self) -> usize {
         self.visible.get().max(1)
     }
@@ -765,6 +827,23 @@ impl<M: 'static> LogView<M> {
         if past_end(at, (self.max_top(), self.max_top_seg()), rows) {
             self.sub_px = 0;
         }
+    }
+
+    /// Whether this delta is a wheel notch, worth three rows, rather than the
+    /// pixels a trackpad reports.
+    ///
+    /// A wheel only ever speaks in whole nominal lines, so one delta that is
+    /// not a whole line is proof of a gesture — and for as long as that gesture
+    /// lasts every delta is pixels, including the ones that happen to land on a
+    /// multiple of sixteen.
+    fn is_notch(&mut self, delta: f32) -> bool {
+        if !could_be_notch(delta) {
+            self.gesture_at = Some(Instant::now());
+            return false;
+        }
+        !self
+            .gesture_at
+            .is_some_and(|at| at.elapsed() < GESTURE_MEMORY)
     }
 
     /// Moves by whole rows and lands on one: what a key press means, as
@@ -888,7 +967,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
             let row = Rect::new(bounds.x, y, bounds.width, height);
             painted.push((index, y - bounds.y, height));
             let mut pen = canvas.with_clip(row);
-            let styled = self.highlighter.apply(&line.text);
+            let styled = self.styled(line);
             let line_style =
                 (styled.line_rule >= 0).then(|| &self.styles[styled.line_rule as usize]);
             if let Some(bg) = line_style.and_then(|s| s.bg) {
@@ -917,7 +996,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
             // Runs first: each character takes the highest-priority rule span
             // covering it. Backgrounds are laid down before any glyph so a
             // search hit can tint over them without tinting the text.
-            let runs = split_runs(&line.text, &styled.spans);
+            let runs = &styled.runs;
             let hits = self
                 .matcher
                 .as_ref()
@@ -932,7 +1011,13 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 let sy = row.y + k as i32 * row_h;
                 let mut placed = Vec::with_capacity(runs.len());
                 let mut x = text_x;
-                for &(rs, re, rule) in &runs {
+                for &(rs, re, rule) in runs {
+                    // Runs are in order and `x` only grows, so once one starts
+                    // past the right edge the rest of the line is off-screen.
+                    // A log line is often half again as wide as the window.
+                    if x >= bounds.right() {
+                        break;
+                    }
                     let (a, b) = (rs.max(from), re.min(to));
                     if b <= a {
                         continue;
@@ -991,7 +1076,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 // pixels the backend names, which on a Retina display is less
                 // than one row. The sign is the toolkit's: a positive delta
                 // moves the content the way `Ui::scroll_by` would.
-                let pixels = if is_wheel_notch(*delta_y) {
+                let pixels = if self.is_notch(*delta_y) {
                     delta_y / WHEEL_LINE_PX * 3.0 * row_h as f32
                 } else {
                     *delta_y
@@ -1303,13 +1388,26 @@ mod tests {
 
     #[test]
     fn a_wheel_notch_is_told_from_a_trackpad_gesture() {
-        // The backend multiplies a notch out to whole nominal lines.
-        assert!(is_wheel_notch(16.0));
-        assert!(is_wheel_notch(-48.0));
-        // A trackpad reports what the fingers did.
-        assert!(!is_wheel_notch(3.0));
-        assert!(!is_wheel_notch(-17.5));
+        let (mut v, _, _) = view(&["one"]);
+        // On its own, a whole number of nominal lines is a notch.
+        assert!(v.is_notch(16.0));
+        assert!(v.is_notch(-48.0));
+        // What a wheel cannot have sent is a gesture, and says so.
+        assert!(!v.is_notch(3.0));
+        assert!(!v.is_notch(-17.5));
         // Standing still is not a notch, or every idle event would scroll.
-        assert!(!is_wheel_notch(0.0));
+        assert!(!v.is_notch(0.0));
+    }
+
+    #[test]
+    fn a_gesture_that_lands_on_a_whole_line_is_still_a_gesture() {
+        let (mut v, _, _) = view(&["one"]);
+        // Six pixels proves fingers are on the glass; the forty-eight that
+        // follows is the same drag, not a wheel. A tenth of a trackpad's
+        // deltas are whole multiples of sixteen, and taking those for notches
+        // threw the view five rows mid-drag.
+        assert!(!v.is_notch(6.0));
+        assert!(!v.is_notch(48.0));
+        assert!(!v.is_notch(16.0));
     }
 }
