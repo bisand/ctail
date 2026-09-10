@@ -12,6 +12,58 @@ git-ignored and regenerated on demand.
    - Create the in-app purchase: **Non-Consumable**, product id **`no.bogentech.ctail.pro`**,
      set price tier, name, description. (Enroll in the **Small Business Program** → 15% fee.)
 3. Set your team in `project.yml` (`DEVELOPMENT_TEAM:`), or pick it in Xcode after generating.
+4. **Agreements, tax and banking** — see the next section. TestFlight and a free app run on the
+   Free Apps Agreement alone; the in-app purchase does not ship until the paid one is in place.
+
+## Agreements, tax and banking (Account Holder only)
+All of it lives under **App Store Connect ▸ Business ▸ _legal entity_** (`appstoreconnect.apple.com/business`),
+not under the app. A new legal entity (including one created by converting a personal account to a
+company) starts with the **Free Apps Agreement only**; the Paid Apps Agreement, banking and tax forms
+have to be done for it separately. Until they are, the entity page shows *Actions Pending* and the
+Paid Apps row reads **New**. In order:
+
+1. **Edit Legal Entity** (the link in the banner above the agreements table): confirm the company's
+   legal name, address and contact details.
+2. **Paid Apps Agreement ▸ View** → request and accept it. This is a separate contract from the free
+   one, and the one in-app purchases are sold under.
+3. **Banking**: the account payouts go to (appears once the paid agreement is accepted).
+4. **Tax**: the U.S. tax form for a non-U.S. company (W-8BEN-E) plus Apple's own tax questionnaire; a
+   Norwegian AS also gets the Norway VAT questions. Apple's substitute W-8BEN-E, for a Norwegian
+   company (a form is valid to the end of the third calendar year after signing):
+   - Part I: Corporation (the FATCA/chapter 4 section disappears once that is chosen); no U.S. TIN;
+     foreign TIN = the organisasjonsnummer.
+   - Part III, line 14: resident of Norway ✓, derives the income ✓, LOB type **"No LOB article in
+     treaty"** — the U.S.–Norway treaty is from 1971 and predates LOB articles; the dividends box stays
+     unticked.
+   - Line 15: **Article 5, paragraph 1**, rate **0**, "Income from the sale of applications". The 1971
+     treaty's numbering is old: Business Profits is Article 5 and Royalties is Article 10 (modern
+     treaties put them at 7 and 12, which is where "Article 7 paragraph 1" advice online comes from).
+     Both give 0% — Article 5(1) exempts a Norwegian resident's business profits absent a U.S.
+     permanent establishment, Article 10(1) exempts royalties — so the explanation names both.
+   - Part XXX is two checkboxes; the signed-in Account Holder is the signature and there are no
+     name/capacity/date fields.
+5. **Digital Services Act**: declare whether the entity is a **trader**. A company selling an app or an
+   in-app purchase to users in the EU is one — the DSA turns on commercial activity, not on where the
+   developer is (Norway is EEA, the EU storefronts are still EU). Declaring trader means an address,
+   phone number and email are shown on the EU product page; any of the company's contact details will
+   do. Declaring non-trader restricts distribution to outside the EU.
+
+The Paid Apps Agreement shows **Active** with an effective date when it is done; the IAP's
+*Add for Review* is available from then on.
+
+## Submission checklist (per version, on the app's pages)
+- **Pricing and Availability**: a price (Free for ctail; Pro is the IAP) and the regions. Both are
+  empty on a new app record and both block submission.
+- **App Information**: Content Rights (no third-party content), Age Ratings questionnaire (4+),
+  categories (Developer Tools / Utilities).
+- **App Privacy**: policy URL and the "Data Not Collected" label, published.
+- **Version page**: version number matches the build's `CFBundleShortVersionString`, the build is
+  attached (*Add Build* lists processed uploads), 10 screenshots at most, **Sign-in required**
+  unticked (no account exists), App Review contact filled, notes explaining how to reach the purchase
+  sheet and Restore Purchases.
+- **In-App Purchase**: availability, en-US localization, price, a **review screenshot** of the paywall
+  (take it from the TestFlight build, where the sandbox price shows), review notes. The first IAP must be
+  submitted **together with** the first app version — *Add for Review* on the IAP, then on the version.
 
 ## Build & upload — automated (GitHub Actions → TestFlight)
 The **macOS TestFlight** workflow (`.github/workflows/macos-testflight.yml`) builds,
