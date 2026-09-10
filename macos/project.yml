@@ -12,7 +12,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.9.9"
+    MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "255"
     SWIFT_VERSION: "5.0"
     CODE_SIGN_STYLE: Automatic
@@ -49,6 +49,8 @@ targets:
       - path: Assets.xcassets
       - path: ctail.storekit            # local StoreKit testing (Scheme ▸ Run ▸ Options)
         buildPhase: none
+      - path: Resources/PrivacyInfo.xcprivacy   # required-reason APIs and "collects nothing"
+        buildPhase: resources
     dependencies:
       - target: CtailCore
       # Static library link deps don't propagate: the app links the engine too.
@@ -72,7 +74,8 @@ targets:
         NSHighResolutionCapable: true
         LSApplicationCategoryType: "public.app-category.developer-tools"
         NSHumanReadableCopyright: "Copyright © 2024–2026 André Biseth"
-        # Only Apple-provided TLS (URLSession); skips the export-compliance prompt on every TestFlight build.
+        # HTTPS only (the engine's rustls, and URLSession), which is exempt; skips the
+        # export-compliance prompt on every TestFlight build.
         ITSAppUsesNonExemptEncryption: false
         CFBundleDocumentTypes:
           - CFBundleTypeName: "Log File"

@@ -70,3 +70,9 @@ the real sandbox, so the IAP must exist in App Store Connect.
 - App icon as an asset catalog (`Assets.xcassets/AppIcon`), version, `LSApplicationCategoryType`,
   document types — all set in `project.yml`.
 - `appIcon()` guards `Bundle.module` with `#if SWIFT_PACKAGE` so the Xcode target compiles.
+- A privacy manifest (`Resources/PrivacyInfo.xcprivacy`): collects nothing, tracks nobody, and
+  names the required-reason APIs the app touches (UserDefaults; file timestamps on the logs the
+  user opened and on the container's own files).
+- The sandboxed (store) build has no **Check for Updates** and no launch-time check: the check
+  asks GitHub's releases, which is the direct download, and App Review does not allow a store
+  app to point there. The store delivers its own updates.

@@ -1,6 +1,6 @@
 [package]
 name = "ctail-desktop"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
 description = "ctail for Linux and Windows: the Rust engine under a DeniseUI front end"

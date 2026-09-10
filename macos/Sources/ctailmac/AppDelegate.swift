@@ -349,11 +349,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
 
     func checkForUpdates() { runUpdateCheck(manual: true) }
 
+    /// Whether this build gets its updates from the App Store. The check asks
+    /// GitHub's releases, which is where the direct download lives; a store
+    /// build must not point there — review forbids it, and the store delivers
+    /// updates itself. The sandbox is what tells the two builds apart.
+    private var updatesComeFromTheStore: Bool { AIEnvironment.isSandboxed }
+
     /// Auto-check on launch when enabled and the interval has elapsed (tracked in
     /// UserDefaults so it needs no settings-schema change). Quiet unless an
     /// update is found.
     private func maybeAutoCheckUpdates() {
-        guard !settings.disableUpdateCheck else { return }
+        guard !settings.disableUpdateCheck, !updatesComeFromTheStore else { return }
         let key = "lastUpdateCheck"
         let last = UserDefaults.standard.double(forKey: key)
         let now = Date().timeIntervalSince1970
@@ -473,7 +479,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         // Help menu.
         let helpItem = NSMenuItem(); main.addItem(helpItem)
         let helpMenu = NSMenu(title: "Help")
-        helpMenu.addItem(withTitle: "Check for Updates", action: #selector(checkForUpdates), keyEquivalent: "")
+        if !updatesComeFromTheStore {
+            helpMenu.addItem(withTitle: "Check for Updates", action: #selector(checkForUpdates), keyEquivalent: "")
+        }
         helpItem.submenu = helpMenu
 
         NSApp.mainMenu = main

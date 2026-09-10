@@ -691,7 +691,7 @@ checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
 name = "ctail-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bytecount",
  "fancy-regex",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "ctail-desktop"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "arboard",
  "ctail-core",
