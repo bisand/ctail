@@ -11,8 +11,7 @@
 //! handed — bounds, text metrics — is physical, and a 10-pixel pad on a Retina
 //! display is not a pad.
 
-use denise::{Color, ElementState, InputEvent, Point, PointerButton, Rect, Role};
-use denise_render::Canvas;
+use denise::{Color, ElementState, InputEvent, Pen, Point, PointerButton, Rect, Role};
 use denise_text::{TextEngine, TextStyle};
 use denise_ui::widget::{Event, EventCtx, Handled, PaintCtx, Widget};
 
@@ -207,7 +206,7 @@ impl<M: 'static> Widget<M> for TabBar<M> {
         true
     }
 
-    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Canvas<'_>) {
+    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Pen<'_>) {
         let theme = ctx.theme;
         let bounds = ctx.bounds;
         let m = self.metrics;
@@ -355,7 +354,7 @@ impl<M: 'static> Widget<M> for TabBar<M> {
 
 /// The close cross, drawn rather than set in type: the UI face may not have a
 /// multiplication sign, and a missing glyph shows as a box.
-fn cross(canvas: &mut Canvas<'_>, rect: Rect, color: Color) {
+fn cross(canvas: &mut Pen<'_>, rect: Rect, color: Color) {
     let inset = rect.width / 3;
     let (a, b) = (rect.x + inset, rect.right() - inset);
     let (t, u) = (rect.y + inset, rect.bottom() - inset);

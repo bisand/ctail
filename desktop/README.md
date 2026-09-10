@@ -3,9 +3,11 @@
 The cross-platform front end for ctail: one Rust binary, the engine from
 [`core/`](../core/) as a plain Cargo dependency, and the UI drawn by
 [DeniseUI](https://github.com/bisand/denise) — a direct-rendering toolkit with
-damage-tracked repaints, no webview and no GPU requirement. It runs on macOS
-too, which is how it is developed; the shipping macOS app stays the AppKit one
-in [`macos/`](../macos/).
+damage-tracked repaints and no webview. The window is drawn through the GPU
+where one can present to it, and by the toolkit's software rasteriser where
+none can, so a GPU is used but never required. It runs on macOS too, which is
+how it is developed; the shipping macOS app stays the AppKit one in
+[`macos/`](../macos/).
 
 ## Why this and not a webview or Qt
 
@@ -140,17 +142,38 @@ cargo run -p ctail-desktop -- --snapshot profiles /tmp/profiles.ppm 2
 # any other word for a tab's context menu.
 CTAIL_DEBUG_FILE=some.log CTAIL_DEBUG_MENU=0 \
   cargo run -p ctail-desktop -- --snapshot main /tmp/main.ppm 2
+
+# Scrolling is judged by measurement, and only in a release build — a debug
+# build paints too slowly to feel anything but the build. A gesture cannot be
+# synthesised, so this records one from the inside: a line per scroll event
+# and per painted frame, microsecond-stamped. Scroll with the trackpad for a
+# few seconds, quit, and compare frame intervals and paint times.
+CTAIL_DEBUG_SCROLL_TRACE=/tmp/scroll.txt ./target/release/ctail-desktop some.log
 ```
 
 Linux needs the usual winit/softbuffer packages (X11 or Wayland development
 libraries); Windows needs nothing beyond the MSVC toolchain.
 
-## Dependency pin
+## GPU or software
 
-`Cargo.toml` pins DeniseUI to a pushed revision. The published 0.19 crates
-predate the anchors, default-font and window-title APIs used here, and the
-menu widgets (`MenuBar`, `MenuItem`, `open_menu`, `open_menu_at` and
-`Ui::push_popup_at`) were written for this app and live on the toolkit's
-`feat/menus` branch. Bump the `rev`, or switch to a crates.io version, once a
-release carries them. The in-progress `painter-trait` branch renames `Canvas`
-to `Pen` in `Widget::paint`, which is a one-line change in each widget here.
+The window opens through `denise-wgpu` — Metal, Vulkan or DirectX 12 under
+wgpu — because a swapchain presents one frame per display refresh, and that
+pacing is what makes a scroll read as smooth; the software path presents a
+frame whenever an event has been handled, at whatever moment that falls in the
+refresh. When no adapter can present to the window — a VM without a GPU, a
+remote desktop, a board without a driver — the app says so on stderr and
+starts itself again in software. winit allows one event loop per process, so
+the fallback is a second process with the same arguments rather than a second
+window in this one. `CTAIL_PRESENT=software` chooses the rasteriser outright,
+which is how the two are compared. Every secondary window draws the way the
+main one does.
+
+## Dependency version
+
+`Cargo.toml` takes DeniseUI 0.20 from crates.io. That is the first release
+with the painter trait (`Widget::paint` draws through a `Pen`, whatever is
+behind it) and the `gpu` present path, and it carries the anchors,
+default-font, window-title and menu APIs this app was written against on a git
+pin before then. Each window implements both `DeniseApp::render`, for the
+software path's scroll optimisation over the frame's own words, and
+`DeniseApp::paint`, for the GPU.

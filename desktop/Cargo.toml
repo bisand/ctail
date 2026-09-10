@@ -8,14 +8,13 @@ publish = false
 
 [dependencies]
 ctail-core = { path = "../core" }
-# DeniseUI, pinned to a revision of `main`: the published 0.19 crates predate the
-# anchors, default-font, window-title and menu APIs this app is written against.
-# Move to a release when one carries them.
-denise = { git = "https://github.com/bisand/denise", rev = "611f8f1", features = ["std"] }
-denise-render = { git = "https://github.com/bisand/denise", rev = "611f8f1" }
-denise-text = { git = "https://github.com/bisand/denise", rev = "611f8f1", features = ["truetype"] }
-denise-ui = { git = "https://github.com/bisand/denise", rev = "611f8f1", features = ["std", "truetype"] }
-denise-winit = { git = "https://github.com/bisand/denise", rev = "611f8f1" }
+# DeniseUI 0.20: the first release with the painter trait and the `gpu` present
+# path this app draws through, and with the anchors, default-font, window-title
+# and menu APIs it was written against on a git pin before that.
+denise = { version = "0.20", features = ["std"] }
+denise-text = { version = "0.20", features = ["truetype"] }
+denise-ui = { version = "0.20", features = ["std", "truetype"] }
+denise-winit = { version = "0.20", features = ["gpu"] }
 arboard = { version = "3", default-features = false }
 rfd = "0.15"
 

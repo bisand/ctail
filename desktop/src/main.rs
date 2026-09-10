@@ -1,6 +1,7 @@
 //! ctail desktop — the Linux/Windows front end (runs on macOS too, for
-//! development). One window drawn by DeniseUI's software rasteriser, the log
-//! engine from `ctail-core` underneath, no webview and no GPU requirement.
+//! development). One window drawn by DeniseUI through the GPU, or by its
+//! software rasteriser where there is no GPU to draw with, the log engine from
+//! `ctail-core` underneath, and no webview.
 
 mod app;
 mod assistant;
@@ -14,10 +15,11 @@ mod settings;
 mod statusbar;
 mod tabbar;
 mod theme;
+mod trace;
 mod widgets;
 
 use denise::Size;
-use denise_winit::{run_with, WindowConfig};
+use denise_winit::{run_with, Error, Present, WindowConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -39,15 +41,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         (1200, 800)
     };
-    run_with(
-        WindowConfig {
-            title: "ctail".into(),
-            size: Size::new(w, h),
-            ..WindowConfig::default()
-        },
-        move |size, scale| app::App::new(size, scale, files.clone()),
-    )?;
-    Ok(())
+    let config = |present| WindowConfig {
+        title: "ctail".into(),
+        size: Size::new(w, h),
+        present,
+        ..WindowConfig::default()
+    };
+    // The GPU first, because it is what paces frames to the display: a
+    // swapchain presents one frame per refresh, where the software path
+    // presents whenever an event has been handled, and an unpaced scroll is
+    // what reads as choppy. The software rasteriser is the fallback for a
+    // machine with no adapter that can present — a VM, a remote desktop, a
+    // board without a driver — and an override, so the two can be compared.
+    let present = match std::env::var("CTAIL_PRESENT").as_deref() {
+        Ok("software") => Present::Software,
+        _ => Present::Gpu,
+    };
+    let open = move |size, scale| app::App::new(size, scale, files, present);
+    match run_with(config(present), open) {
+        Err(Error::Gpu(reason)) if present == Present::Gpu => {
+            eprintln!("ctail: cannot draw through the GPU ({reason}); drawing in software");
+            run_again_in_software()
+        }
+        outcome => outcome.map_err(Into::into),
+    }
+}
+
+/// Starts over with the software rasteriser chosen.
+///
+/// A process gets one event loop — winit refuses to make a second — so the
+/// fallback is not a second `run_with` but a second process: this executable,
+/// with the same arguments, told what to draw with. On Unix it replaces this
+/// process; elsewhere it is waited for and its exit status handed on.
+fn run_again_in_software() -> Result<(), Box<dyn std::error::Error>> {
+    let mut again = std::process::Command::new(std::env::current_exe()?);
+    again
+        .args(std::env::args_os().skip(1))
+        .env("CTAIL_PRESENT", "software");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        // `exec` only returns when it failed.
+        Err(again.exec().into())
+    }
+    #[cfg(not(unix))]
+    {
+        let status = again.status()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
 }
 
 /// Paints one of the app's windows into a buffer and writes it as a PPM, so a
@@ -75,7 +116,12 @@ fn snapshot(what: &str, path: &str, scale: f32) -> std::io::Result<()> {
     let (ptx, _prx) = std::sync::mpsc::channel();
     let (atx, _arx) = std::sync::mpsc::channel();
     let mut window: Box<dyn DeniseApp> = match what {
-        "profiles" => Box::new(profiles::ProfilesWindow::new(size, scale, ptx)),
+        "profiles" => Box::new(profiles::ProfilesWindow::new(
+            size,
+            scale,
+            ptx,
+            Present::Software,
+        )),
         "assistant" => {
             let mut w = assistant::AssistantWindow::new(size, scale, String::new(), atx);
             if let Ok(answer) = std::env::var("CTAIL_DEBUG_ANSWER") {
@@ -118,7 +164,7 @@ fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
 
     let size = Size::new((1200.0 * scale + 0.5) as u32, (760.0 * scale + 0.5) as u32);
     let files: Vec<String> = std::env::var("CTAIL_DEBUG_FILE").into_iter().collect();
-    let mut app = app::App::new(size, scale, files);
+    let mut app = app::App::new(size, scale, files, Present::Software);
     let mut damage = DamageTracker::new(size);
     let mut pixels = vec![0u32; (size.width * size.height) as usize];
     let paint = |app: &mut app::App, pixels: &mut Vec<u32>| {

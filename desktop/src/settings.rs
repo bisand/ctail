@@ -10,7 +10,9 @@
 
 use crate::theme;
 use ctail_core::{all_themes, resolve_palette, AppSettings, ConfigStore};
-use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Rect, Role, Size};
+use denise::{
+    BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Pen, Rect, Role, Size,
+};
 use denise_text::TextStyle;
 use denise_ui::widgets::{Align, Button, Checkbox, Divider, Label, Select, TextInput};
 use denise_ui::{Anchors, NodeId, Ui};
@@ -108,6 +110,7 @@ impl SettingsWindow {
             size: SIZE,
             resizable: false,
             frame_interval: Duration::from_nanos(1_000_000_000 / 60),
+            ..WindowConfig::default()
         }
     }
 
@@ -522,8 +525,17 @@ impl DeniseApp for SettingsWindow {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, _damage: &[Rect]) {
+        // The software path: `Ui::paint` takes the frame itself, so a scrolled
+        // viewport can be moved rather than redrawn.
         self.ui.paint(frame);
         self.ui.presented();
+    }
+
+    fn paint(&mut self, pen: &mut Pen<'_>, age: BufferAge, _damage: &[Rect]) -> bool {
+        // The GPU path draws through a pen over the swapchain.
+        self.ui.paint_with(pen, age);
+        self.ui.presented();
+        true
     }
 
     fn exit_requested(&self) -> bool {

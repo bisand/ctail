@@ -5,9 +5,8 @@
 
 use ctail_core::{Highlighter, LogLine, Rule, SearchMatcher};
 use denise::{
-    Color, ElementState, InputEvent, KeyCode, Modifiers, Point, PointerButton, Rect, Role,
+    Color, ElementState, InputEvent, KeyCode, Modifiers, Pen, Point, PointerButton, Rect, Role,
 };
-use denise_render::Canvas;
 use denise_text::{TextEngine, TextStyle};
 use denise_ui::widget::{Event, EventCtx, Handled, PaintCtx, Widget};
 use std::cell::{Cell, RefCell};
@@ -837,6 +836,12 @@ impl<M: 'static> LogView<M> {
         };
     }
 
+    /// Where the viewport is, as (top row, segment, pixels of it hidden,
+    /// following), for the scroll trace.
+    pub fn trace_position(&self) -> (usize, usize, i32, bool) {
+        (self.top, self.top_seg, self.sub_px, self.follow)
+    }
+
     pub fn visible_rows(&self) -> usize {
         self.visible.get().max(1)
     }
@@ -962,7 +967,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
         true
     }
 
-    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Canvas<'_>) {
+    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Pen<'_>) {
         let bounds = ctx.bounds;
         let theme = ctx.theme;
         let style = self.style;
@@ -1196,6 +1201,12 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 let before = (self.top, self.top_seg, self.sub_px, self.follow);
                 if whole != 0.0 {
                     self.scroll_pixels(whole as i32, row_h, ctx);
+                }
+                if crate::trace::enabled() {
+                    crate::trace::log(format_args!(
+                        "scroll dy={delta_y} px={pixels} whole={whole} top={} seg={} sub={} follow={} row_h={row_h}",
+                        self.top, self.top_seg, self.sub_px, self.follow
+                    ));
                 }
                 // A view already against the end of the file has nothing to
                 // show for a gesture that would take it further. Reporting the

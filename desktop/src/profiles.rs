@@ -10,11 +10,13 @@ use crate::prompt::PromptWindow;
 use crate::theme;
 use crate::widgets::{Preview, Swatch};
 use ctail_core::{resolve_palette, ConfigStore, Profile, Rule};
-use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Rect, Role, Size};
+use denise::{
+    BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Pen, Rect, Role, Size,
+};
 use denise_text::TextStyle;
 use denise_ui::widgets::{Align, Button, Checkbox, Label, List, ListItem, Select, TextInput};
 use denise_ui::{NodeId, Ui};
-use denise_winit::{DeniseApp, Modality, WindowConfig, WindowRequest};
+use denise_winit::{DeniseApp, Modality, Present, WindowConfig, WindowRequest};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
@@ -95,6 +97,8 @@ pub struct ProfilesWindow {
     exit: bool,
     /// Told whenever the rules on disk changed, so the log restyles at once.
     changed: Sender<()>,
+    /// What draws this window, and so what draws the prompts it opens.
+    present: Present,
 }
 
 impl ProfilesWindow {
@@ -104,10 +108,11 @@ impl ProfilesWindow {
             size: SIZE,
             resizable: false,
             frame_interval: Duration::from_nanos(1_000_000_000 / 60),
+            ..WindowConfig::default()
         }
     }
 
-    pub fn new(size: Size, scale: f32, changed: Sender<()>) -> Self {
+    pub fn new(size: Size, scale: f32, changed: Sender<()>, present: Present) -> Self {
         let config = ConfigStore::new(None);
         config.ensure_default_profile();
         let settings = config.load_settings();
@@ -358,6 +363,7 @@ impl ProfilesWindow {
             dirty: false,
             exit: false,
             changed,
+            present,
         };
         window.select_rule(0);
         window
@@ -500,9 +506,13 @@ impl ProfilesWindow {
             Pending::Rename => "Rename Profile",
         };
         self.windows.push(
-            WindowRequest::new(PromptWindow::config(title), move |size, scale| {
-                PromptWindow::new(size, scale, caption, initial, tx)
-            })
+            WindowRequest::new(
+                WindowConfig {
+                    present: self.present,
+                    ..PromptWindow::config(title)
+                },
+                move |size, scale| PromptWindow::new(size, scale, caption, initial, tx),
+            )
             .with_modality(Modality::Modal),
         );
     }
@@ -786,8 +796,17 @@ impl DeniseApp for ProfilesWindow {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, _damage: &[Rect]) {
+        // The software path: `Ui::paint` takes the frame itself, so a scrolled
+        // viewport can be moved rather than redrawn.
         self.ui.paint(frame);
         self.ui.presented();
+    }
+
+    fn paint(&mut self, pen: &mut Pen<'_>, age: BufferAge, _damage: &[Rect]) -> bool {
+        // The GPU path draws through a pen over the swapchain.
+        self.ui.paint_with(pen, age);
+        self.ui.presented();
+        true
     }
 
     fn take_windows(&mut self) -> Vec<WindowRequest> {

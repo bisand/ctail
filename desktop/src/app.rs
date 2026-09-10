@@ -17,12 +17,14 @@ use ctail_core::{
     FileSearchEvents, FileSearchQuery, FileSearchStatus, LogLine, Rule, SearchMatcher, TabState,
     Tailer, TailerEvents, TailerOptions, UpdateCheck,
 };
-use denise::{DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Rect, Size};
+use denise::{
+    BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Pen, Rect, Size,
+};
 use denise_text::TextStyle;
 use denise_ui::widgets::{open_menu, open_menu_at, MenuBar, MenuItem};
 use denise_ui::Anchors;
 use denise_ui::{NodeId, Ui};
-use denise_winit::{DeniseApp, Modality, WindowRequest};
+use denise_winit::{DeniseApp, Modality, Present, WindowConfig, WindowRequest};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -259,6 +261,9 @@ pub struct App {
     settings_rx: Receiver<Option<AppSettings>>,
     /// Windows asked for this frame; the backend takes them after `update`.
     pending_windows: Vec<WindowRequest>,
+    /// What draws the pixels: the GPU, or the software rasteriser when no
+    /// adapter can present. Every window this one opens draws the same way.
+    present: Present,
     /// One Settings window at a time — a second would edit a stale copy.
     settings_open: bool,
     /// The Profiles window says here whenever the rules on disk changed.
@@ -277,7 +282,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(size: Size, scale: f32, files: Vec<String>) -> Self {
+    pub fn new(size: Size, scale: f32, files: Vec<String>, present: Present) -> Self {
         let config = ConfigStore::new(None);
         config.ensure_default_profile();
         let settings = config.load_settings();
@@ -430,6 +435,7 @@ impl App {
             settings_tx,
             settings_rx,
             pending_windows: Vec::new(),
+            present,
             settings_open: false,
             profiles_tx,
             profiles_rx,
@@ -454,13 +460,32 @@ impl App {
         app
     }
 
+    /// One trace line per painted frame, with the log view's position, when
+    /// `CTAIL_DEBUG_SCROLL_TRACE` is set.
+    fn trace_frame(&self, path: &str, started: Instant) {
+        if !crate::trace::enabled() {
+            return;
+        }
+        let view = self
+            .tabs
+            .get(self.active)
+            .and_then(|tab| self.ui.widget::<LogView<Msg>>(tab.view))
+            .map(|v| v.trace_position());
+        crate::trace::log(format_args!(
+            "frame {path} paint_us={} view={view:?}",
+            started.elapsed().as_micros()
+        ));
+    }
+
     /// Development affordances, driven by the environment because this window
     /// cannot be scripted from outside without accessibility permission:
     /// `CTAIL_DEBUG_SCROLL_X` scrolls the log that many pixels sideways,
     /// `CTAIL_DEBUG_SEARCH` opens the find bar on that query,
     /// `CTAIL_DEBUG_SEARCH_STEP` presses ↓ that many times (negative for ↑),
     /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode, and
-    /// `CTAIL_DEBUG_SETTINGS` / `CTAIL_DEBUG_PROFILES` open those windows.
+    /// `CTAIL_DEBUG_SETTINGS` / `CTAIL_DEBUG_PROFILES` open those windows, and
+    /// `CTAIL_DEBUG_SCROLL_TRACE` is a file to log scroll events and painted
+    /// frames to (see `trace.rs`).
     fn debug_hooks(&mut self) {
         self.debug_scroll_x = std::env::var("CTAIL_DEBUG_SCROLL_X")
             .ok()
@@ -1042,6 +1067,17 @@ impl App {
 
     // --- settings --------------------------------------------------------
 
+    /// A secondary window's configuration, drawing the way this one does: a
+    /// GPU window opening a software one would be two present paths in one
+    /// process for no reason, and a software fallback that opened GPU windows
+    /// would fail the same way the main one did.
+    fn on_same_surface(&self, config: WindowConfig) -> WindowConfig {
+        WindowConfig {
+            present: self.present,
+            ..config
+        }
+    }
+
     fn open_settings(&mut self) {
         if self.settings_open {
             return;
@@ -1049,9 +1085,10 @@ impl App {
         self.settings_open = true;
         let tx = self.settings_tx.clone();
         self.pending_windows.push(
-            WindowRequest::new(SettingsWindow::config(), move |size, scale| {
-                SettingsWindow::new(size, scale, tx)
-            })
+            WindowRequest::new(
+                self.on_same_surface(SettingsWindow::config()),
+                move |size, scale| SettingsWindow::new(size, scale, tx),
+            )
             .with_modality(Modality::Owned),
         );
     }
@@ -1071,9 +1108,10 @@ impl App {
             .unwrap_or_default();
         let tx = self.assistant_tx.clone();
         self.pending_windows.push(
-            WindowRequest::new(AssistantWindow::config(), move |size, scale| {
-                AssistantWindow::new(size, scale, log, tx)
-            })
+            WindowRequest::new(
+                self.on_same_surface(AssistantWindow::config()),
+                move |size, scale| AssistantWindow::new(size, scale, log, tx),
+            )
             .with_modality(Modality::Owned),
         );
     }
@@ -1084,10 +1122,12 @@ impl App {
         }
         self.profiles_open = true;
         let tx = self.profiles_tx.clone();
+        let present = self.present;
         self.pending_windows.push(
-            WindowRequest::new(ProfilesWindow::config_window(), move |size, scale| {
-                ProfilesWindow::new(size, scale, tx)
-            })
+            WindowRequest::new(
+                self.on_same_surface(ProfilesWindow::config_window()),
+                move |size, scale| ProfilesWindow::new(size, scale, tx, present),
+            )
             .with_modality(Modality::Owned),
         );
     }
@@ -1271,9 +1311,12 @@ impl App {
                 self.renaming = Some(index);
                 let tx = self.prompt_tx.clone();
                 self.pending_windows.push(
-                    WindowRequest::new(PromptWindow::config("Rename Tab"), move |size, scale| {
-                        PromptWindow::new(size, scale, "Name for this tab".into(), initial, tx)
-                    })
+                    WindowRequest::new(
+                        self.on_same_surface(PromptWindow::config("Rename Tab")),
+                        move |size, scale| {
+                            PromptWindow::new(size, scale, "Name for this tab".into(), initial, tx)
+                        },
+                    )
                     .with_modality(Modality::Modal),
                 );
             }
@@ -1765,8 +1808,21 @@ impl DeniseApp for App {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, _damage: &[Rect]) {
+        // The software path: `Ui::paint` takes the frame itself, so a scrolled
+        // viewport can be moved rather than redrawn.
+        let started = Instant::now();
         self.ui.paint(frame);
         self.ui.presented();
+        self.trace_frame("software", started);
+    }
+
+    fn paint(&mut self, pen: &mut Pen<'_>, age: BufferAge, _damage: &[Rect]) -> bool {
+        // The GPU path draws through a pen over the swapchain.
+        let started = Instant::now();
+        self.ui.paint_with(pen, age);
+        self.ui.presented();
+        self.trace_frame("gpu", started);
+        true
     }
 
     fn take_windows(&mut self) -> Vec<WindowRequest> {

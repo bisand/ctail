@@ -5,8 +5,7 @@
 //! model is.
 
 use ctail_core::{Highlighter, Rule};
-use denise::{Color, ElementState, InputEvent, Point, PointerButton, Radius, Rect, Role};
-use denise_render::Canvas;
+use denise::{Color, ElementState, InputEvent, Pen, Point, PointerButton, Radius, Rect, Role};
 use denise_text::TextStyle;
 use denise_ui::widget::{Event, EventCtx, Handled, PaintCtx, Widget};
 use std::cell::Cell;
@@ -39,7 +38,7 @@ impl<M: Clone + 'static> Widget<M> for Swatch<M> {
         true
     }
 
-    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Canvas<'_>) {
+    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Pen<'_>) {
         let r = ctx.theme.radius(Radius::Selector);
         canvas.fill_rounded_rect(ctx.bounds, r, self.color);
         if self.selected {
@@ -95,7 +94,7 @@ impl Preview {
 }
 
 impl<M: 'static> Widget<M> for Preview {
-    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Canvas<'_>) {
+    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Pen<'_>) {
         let bounds = ctx.bounds;
         canvas.fill_rect(bounds, ctx.theme.color(Role::Base100));
         let fg =
@@ -197,7 +196,7 @@ impl<M: 'static> Widget<M> for TextBlock {
         true
     }
 
-    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Canvas<'_>) {
+    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Pen<'_>) {
         let bounds = ctx.bounds;
         let theme = ctx.theme;
         let r = theme.radius(Radius::Box);

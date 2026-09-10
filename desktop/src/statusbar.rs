@@ -8,8 +8,7 @@
 //! checkbox is sized for a form (a 20pt selector), which beside 11pt text
 //! reads as a button rather than a status indicator.
 
-use denise::{Color, ElementState, InputEvent, Point, PointerButton, Rect, Role};
-use denise_render::Canvas;
+use denise::{Color, ElementState, InputEvent, Pen, Point, PointerButton, Rect, Role};
 use denise_text::{TextEngine, TextStyle};
 use denise_ui::widget::{Event, EventCtx, Handled, PaintCtx, Widget};
 
@@ -112,7 +111,7 @@ impl<M: 'static> Widget<M> for StatusBar<M> {
         true
     }
 
-    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Canvas<'_>) {
+    fn paint(&self, ctx: &mut PaintCtx<'_>, canvas: &mut Pen<'_>) {
         let bounds = ctx.bounds;
         let theme = ctx.theme;
         canvas.fill_rect(bounds, theme.color(Role::Base200));
@@ -237,7 +236,7 @@ impl<M: 'static> Widget<M> for StatusBar<M> {
 
 /// A checkmark inside `area`. Drawn rather than set in type, for the reason the
 /// tab strip's close cross is: the UI face may not carry the glyph.
-fn tick(canvas: &mut Canvas<'_>, area: Rect, color: Color, scale: f32) {
+fn tick(canvas: &mut Pen<'_>, area: Rect, color: Color, scale: f32) {
     let (w, h) = (area.width, area.height);
     let (ax, ay) = (area.x + w / 4, area.y + h / 2);
     let (bx, by) = (area.x + w * 7 / 16, area.y + h * 11 / 16);
