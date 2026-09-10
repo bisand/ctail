@@ -157,6 +157,11 @@ enum SelfTest {
             view.perfAppend(chunk)
             _ = view.perfMakeVisibleRows()
         }
+        // Lines three hundred characters wide, a window eighteen hundred points
+        // wide: the table has to be wider than the viewport, or nothing scrolls
+        // sideways and long lines are simply cut off.
+        check(view.perfTableWidth > view.perfViewportWidth + 200,
+              "long lines widen the table past the viewport (\(view.perfTableWidth) vs \(view.perfViewportWidth))")
         print(String(format: "  highlight one line:              %6.1f µs", renderUs))
         print(String(format: "  first fill, 10k lines:           %6.2f ms", fillMs))
         print(String(format: "  reload in place:                 %6.2f ms", reloadMs))

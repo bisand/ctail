@@ -145,6 +145,16 @@ pub struct LogView<M> {
     /// know how tall a wrapped line turned out.
     wrap_width: Cell<i32>,
     painted: RefCell<Vec<(usize, i32, i32)>>,
+    /// Pixels the text is scrolled sideways. The gutter stays put; only the
+    /// text moves. Always 0 with word wrap, which has no sideways to go.
+    scroll_x: i32,
+    /// Bytes of the longest resident line — in a monospaced face, an upper
+    /// bound on its width, and what sideways scrolling is clamped to. A running
+    /// maximum as lines arrive, recounted when lines are dropped.
+    widest: usize,
+    /// The text area's width and one glyph's advance, learnt while painting,
+    /// so a scroll can clamp without measuring anything itself.
+    text_area: Cell<(i32, i32)>,
     /// Where "scrolled all the way down" is, as (row, segment).
     bottom: Cell<(usize, usize)>,
     /// Character advances, memoised: wrapping walks a line character by
@@ -201,6 +211,9 @@ impl<M: 'static> LogView<M> {
             visible: Cell::new(0),
             wrap_width: Cell::new(0),
             painted: RefCell::new(Vec::new()),
+            scroll_x: 0,
+            widest: 0,
+            text_area: Cell::new((0, 1)),
             bottom: Cell::new((0, 0)),
             advances: RefCell::new(HashMap::new()),
             styled: RefCell::new(HashMap::new()),
@@ -239,6 +252,9 @@ impl<M: 'static> LogView<M> {
 
     /// Whether long lines are broken to fit the width.
     pub fn set_word_wrap(&mut self, wrap: bool) {
+        if wrap {
+            self.scroll_x = 0;
+        }
         if wrap == self.wrap {
             return;
         }
@@ -294,6 +310,8 @@ impl<M: 'static> LogView<M> {
         self.top = 0;
         self.top_seg = 0;
         self.sub_px = 0;
+        self.scroll_x = 0;
+        self.widest = 0;
         self.detached = false;
         self.selection = None;
         self.provisional = false;
@@ -311,6 +329,7 @@ impl<M: 'static> LogView<M> {
             return;
         }
         self.provisional = provisional;
+        self.note_widest(&new);
         self.lines.extend(new);
         self.total_lines = self
             .lines
@@ -322,11 +341,13 @@ impl<M: 'static> LogView<M> {
             if over > 0 {
                 self.lines.drain(..over);
                 self.shift_indices(over);
+                self.recount_widest();
             }
         } else if self.lines.len() > self.cap * 3 {
             let over = self.lines.len() - self.cap * 3;
             self.lines.drain(..over);
             self.shift_indices(over);
+            self.recount_widest();
         }
         self.recompute_search();
         if self.follow {
@@ -343,6 +364,7 @@ impl<M: 'static> LogView<M> {
         }
         self.lines.clear();
         self.lines.extend(lines);
+        self.recount_widest();
         self.provisional = false;
         self.detached = true;
         self.follow = false;
@@ -389,6 +411,7 @@ impl<M: 'static> LogView<M> {
             return;
         }
         let n = older.len();
+        self.note_widest(&older);
         for line in older.into_iter().rev() {
             self.lines.push_front(line);
         }
@@ -779,6 +802,41 @@ impl<M: 'static> LogView<M> {
         entry
     }
 
+    fn note_widest(&mut self, lines: &[LogLine]) {
+        for line in lines {
+            self.widest = self.widest.max(line.text.len());
+        }
+    }
+
+    fn recount_widest(&mut self) {
+        self.widest = self.lines.iter().map(|l| l.text.len()).max().unwrap_or(0);
+    }
+
+    /// Bytes of the longest resident line.
+    #[cfg(test)]
+    pub fn widest(&self) -> usize {
+        self.widest
+    }
+
+    /// How far the text can go sideways: the widest line's width less the
+    /// area it is shown in, and never past the last glyph. From what paint
+    /// measured last; 0 before the first paint, when there is nothing to
+    /// scroll anyway.
+    fn max_scroll_x(&self) -> i32 {
+        let (width, zero_w) = self.text_area.get();
+        (self.widest as i32 * zero_w + zero_w - width).max(0)
+    }
+
+    /// Scrolls the text sideways to `px` from its left edge, within what the
+    /// widest line allows.
+    pub fn set_scroll_x(&mut self, px: i32) {
+        self.scroll_x = if self.wrap {
+            0
+        } else {
+            px.clamp(0, self.max_scroll_x())
+        };
+    }
+
     pub fn visible_rows(&self) -> usize {
         self.visible.get().max(1)
     }
@@ -920,7 +978,17 @@ impl<M: 'static> Widget<M> for LogView<M> {
         } else {
             zero_w / 2
         };
-        let text_x = bounds.x + gutter_w;
+        // The text starts where the gutter ends, less however far it has been
+        // scrolled sideways; the gutter itself does not move.
+        let text_left = bounds.x + gutter_w;
+        let text_w = bounds.width - gutter_w;
+        self.text_area.set((text_w, zero_w));
+        let scroll_x = if self.wrap {
+            0
+        } else {
+            self.scroll_x.min(self.max_scroll_x())
+        };
+        let text_x = text_left - scroll_x;
         let wrap_w = (bounds.width - gutter_w - zero_w / 2).max(zero_w);
         self.wrap_width.set(wrap_w);
         // Following pins the window to its end at the row count paint actually
@@ -971,7 +1039,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
             let line_style =
                 (styled.line_rule >= 0).then(|| &self.styles[styled.line_rule as usize]);
             if let Some(bg) = line_style.and_then(|s| s.bg) {
-                pen.fill_rect(Rect::new(text_x, row.y, row.width - gutter_w, height), bg);
+                pen.fill_rect(Rect::new(text_left, row.y, text_w, height), bg);
             }
             let base_fg = line_style.and_then(|s| s.fg).unwrap_or(fg);
 
@@ -987,7 +1055,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 ctx.text.draw_line(
                     &mut pen,
                     style,
-                    Point::new(text_x - zero_w - num_w, row.y + 1 + metrics.ascent),
+                    Point::new(text_left - zero_w - num_w, row.y + 1 + metrics.ascent),
                     &num,
                     muted,
                 );
@@ -1007,7 +1075,11 @@ impl<M: 'static> Widget<M> for LogView<M> {
             } else {
                 hit
             };
+            // Clipped to the text area, so a line scrolled sideways stops at
+            // the gutter instead of running into it.
+            let text_clip = Rect::new(text_left, row.y, text_w, height);
             for (k, &(from, to)) in segs.iter().skip(skip).enumerate() {
+                let mut pen = pen.with_clip(text_clip);
                 let sy = row.y + k as i32 * row_h;
                 let mut placed = Vec::with_capacity(runs.len());
                 let mut x = text_x;
@@ -1057,6 +1129,23 @@ impl<M: 'static> Widget<M> for LogView<M> {
             index += 1;
             skip = 0;
         }
+
+        // A thin bar along the bottom says how much lies to either side, as a
+        // scroll view's would; nothing is drawn when everything fits.
+        let max_x = self.max_scroll_x();
+        if !self.wrap && max_x > 0 {
+            let content_w = (text_w + max_x).max(1);
+            let track = Rect::new(text_left, bounds.bottom() - 6, text_w, 4);
+            let thumb_w = (text_w as i64 * text_w as i64 / content_w as i64).max(24) as i32;
+            let thumb_x = text_left
+                + ((text_w - thumb_w) as i64 * scroll_x as i64 / max_x.max(1) as i64) as i32;
+            canvas.fill_rounded_rect(track, 2, theme.color(Role::Base300).with_alpha(120));
+            canvas.fill_rounded_rect(
+                Rect::new(thumb_x, track.y, thumb_w, track.height),
+                2,
+                theme.color(Role::BaseContent).with_alpha(110),
+            );
+        }
     }
 
     fn on_event(&mut self, event: &Event<'_>, ctx: &mut EventCtx<'_, M>) -> Handled {
@@ -1066,7 +1155,26 @@ impl<M: 'static> Widget<M> for LogView<M> {
         let row_h = ctx.text.metrics(self.style).line_height().max(1) + 2;
         let bounds = ctx.bounds;
         match input {
-            InputEvent::PointerScroll { delta_y, .. } => {
+            InputEvent::PointerScroll {
+                delta_x, delta_y, ..
+            } => {
+                // Sideways first: a two-finger drag to the side, or a wheel with
+                // shift held. Pixels either way, clamped to the widest line.
+                let mut moved = false;
+                if !self.wrap && *delta_x != 0.0 {
+                    let (_, zero_w) = self.text_area.get();
+                    let px = if self.is_notch(*delta_x) {
+                        delta_x / WHEEL_LINE_PX * 3.0 * zero_w as f32
+                    } else {
+                        *delta_x
+                    };
+                    let next = (self.scroll_x + px.round() as i32).clamp(0, self.max_scroll_x());
+                    moved = next != self.scroll_x;
+                    self.scroll_x = next;
+                }
+                if *delta_y == 0.0 {
+                    return if moved { Handled::Yes } else { Handled::No };
+                }
                 // The backend reports pixels either way, but by two different
                 // routes: a trackpad's own fine-grained deltas, or a wheel
                 // notch multiplied out to a nominal line. Both are followed
@@ -1095,7 +1203,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 // frame for every event of a flick — a hundred a second of
                 // them, each swapping the buffer the compositor is reading,
                 // which is what makes a log that is not moving shimmer.
-                if (self.top, self.top_seg, self.sub_px, self.follow) == before {
+                if (self.top, self.top_seg, self.sub_px, self.follow) == before && !moved {
                     return Handled::No;
                 }
                 Handled::Yes
@@ -1367,6 +1475,33 @@ mod tests {
         assert_eq!(split_pixels(5, -25, 20), (-1, 0));
         // Several rows at once, as a flick reports.
         assert_eq!(split_pixels(0, 55, 20), (2, 15));
+    }
+
+    fn numbered(number: i64, text: &str) -> LogLine {
+        LogLine {
+            number,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn the_widest_line_follows_the_window() {
+        let (mut v, _, _) = view(&["short", "a much longer line of text"]);
+        assert_eq!(v.widest(), "a much longer line of text".len());
+        v.prepend(vec![numbered(0, &"x".repeat(40))]);
+        assert_eq!(v.widest(), 40, "an older line can be the widest");
+        // Filling the window past its cap drops the front, and the count
+        // with it: the widest line must be one that is still there.
+        let cap = v.cap;
+        v.append(
+            (0..cap as i64 + 5)
+                .map(|i| numbered(100 + i, "mid"))
+                .collect(),
+            false,
+        );
+        assert_eq!(v.widest(), 3, "a dropped line no longer counts");
+        v.reset();
+        assert_eq!(v.widest(), 0);
     }
 
     #[test]

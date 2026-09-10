@@ -229,6 +229,9 @@ pub struct App {
     /// macOS app: often enough to watch a file being paged in, rare enough to
     /// cost nothing.
     memory_at: Instant,
+    /// A sideways offset a snapshot asked for, applied to the active view as
+    /// its lines arrive (the clamp needs a painted width and a widest line).
+    debug_scroll_x: Option<i32>,
     search: SearchBar,
     /// Validity and emptiness of the query the views are showing, so stepping
     /// through matches keeps reporting "bad regex" rather than a technically
@@ -411,6 +414,7 @@ impl App {
             prompt_rx,
             status,
             memory_at: Instant::now(),
+            debug_scroll_x: None,
             search,
             search_valid: true,
             search_empty: true,
@@ -452,11 +456,15 @@ impl App {
 
     /// Development affordances, driven by the environment because this window
     /// cannot be scripted from outside without accessibility permission:
+    /// `CTAIL_DEBUG_SCROLL_X` scrolls the log that many pixels sideways,
     /// `CTAIL_DEBUG_SEARCH` opens the find bar on that query,
     /// `CTAIL_DEBUG_SEARCH_STEP` presses ↓ that many times (negative for ↑),
     /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode, and
     /// `CTAIL_DEBUG_SETTINGS` / `CTAIL_DEBUG_PROFILES` open those windows.
     fn debug_hooks(&mut self) {
+        self.debug_scroll_x = std::env::var("CTAIL_DEBUG_SCROLL_X")
+            .ok()
+            .and_then(|v| v.parse().ok());
         if std::env::var_os("CTAIL_DEBUG_SETTINGS").is_some() {
             self.open_settings();
         }
@@ -1491,6 +1499,15 @@ impl App {
                 self.refresh_counter();
             }
             self.sync_chrome();
+        }
+        if let Some(x) = self.debug_scroll_x {
+            if let Some(tab) = self.tabs.get(self.active) {
+                let view = tab.view;
+                if let Some(v) = self.ui.widget_mut::<LogView<Msg>>(view) {
+                    v.set_scroll_x(x);
+                }
+                self.ui.invalidate(view);
+            }
         }
     }
 

@@ -139,6 +139,11 @@ fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
     // Paint before touching anything: a view that has never been drawn does
     // not yet know how many rows it holds, and scrolling to a match asks it.
     paint(&mut app, &mut pixels);
+    // A sideways offset clamps against what that first paint measured, so it
+    // takes one more update to land.
+    if std::env::var_os("CTAIL_DEBUG_SCROLL_X").is_some() {
+        app.update(&[], &mut damage);
+    }
     if let Ok(n) = std::env::var("CTAIL_DEBUG_SEARCH_STEP") {
         let forward = !n.starts_with('-');
         let times = n.trim_start_matches('-').parse().unwrap_or(1);

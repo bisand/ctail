@@ -87,6 +87,12 @@ final class LogView: NSView {
     /// Text-column width the current wrapped row heights were computed for.
     private var wrapWidth: CGFloat = 0
     private var reloading = false
+    /// Columns of the widest resident line. The text column is sized to it, and
+    /// that is the whole of horizontal scrolling: a table wider than its clip
+    /// view is something NSScrollView scrolls sideways by itself. Kept
+    /// incrementally as lines arrive; recounted when eviction may have taken
+    /// the widest one.
+    private var widestColumns = 0
 
     /// Shows/hides the line-number gutter live (View menu), keeping the same
     /// content under the viewport.
@@ -104,6 +110,7 @@ final class LogView: NSView {
         guard on != wordWrap else { return }
         wordWrap = on
         scrollView.hasHorizontalScroller = !on
+        updateTextColumnWidth()
         wrapWidth = textColumn.width
         reloadRestoring(scrollAnchor())
     }
@@ -125,24 +132,51 @@ final class LogView: NSView {
             let w = gutterWidth()
             if gutterColumn.width != w { gutterColumn.width = w }
         }
+        recountWidest()
+        updateTextColumnWidth()
         table.reloadData()
         reloading = false
     }
 
-    /// Rows a line occupies when wrapped, from its column count and the cell
-    /// width. The font is monospaced and wrapping is per character, so this is
-    /// exact for ASCII; non-ASCII scalars count double (CJK/emoji) and tabs as 4,
-    /// which errs toward a spare blank line rather than clipping. O(n) over the
-    /// bytes and no text layout, so it's cheap enough to run on every reload.
-    private func wrappedRows(for text: String) -> Int {
-        let usable = textColumn.width - 8            // NSTextFieldCell's horizontal insets
-        guard usable > charAdvance else { return 1 }
-        let perRow = max(1, Int(usable / charAdvance))
+    /// Columns a line takes in the monospaced row font. Exact for ASCII;
+    /// non-ASCII scalars count double (CJK/emoji) and tabs as 4, which errs
+    /// toward spare room rather than clipping. O(n) over the bytes and no text
+    /// layout, so it's cheap enough to run on every line that arrives.
+    private func columns(of text: String) -> Int {
         var cols = 0
         for b in text.utf8 {
             if b < 0x80 { cols += (b == 0x09) ? 4 : 1 } else if b & 0xC0 != 0x80 { cols += 2 }
         }
-        return max(1, (cols + perRow - 1) / perRow)
+        return cols
+    }
+
+    /// Rows a line occupies when wrapped, from its column count and the cell
+    /// width; wrapping is per character, so this is exact for what `columns`
+    /// is exact for.
+    private func wrappedRows(for text: String) -> Int {
+        let usable = textColumn.width - 2 * LogRowCell.insetX
+        guard usable > charAdvance else { return 1 }
+        let perRow = max(1, Int(usable / charAdvance))
+        return max(1, (columns(of: text) + perRow - 1) / perRow)
+    }
+
+    private func noteWidth(of newLines: [LogLine]) {
+        for line in newLines { widestColumns = max(widestColumns, columns(of: line.text)) }
+    }
+
+    private func recountWidest() {
+        widestColumns = lines.reduce(0) { max($0, columns(of: $1.text)) }
+    }
+
+    /// Sizes the text column: the viewport's width when wrapping, since rows
+    /// wrap to it; otherwise the wider of the viewport and the widest line,
+    /// which is what gives the scroll view something to scroll sideways to.
+    private func updateTextColumnWidth() {
+        let gutter = showLineNumbers ? gutterColumn.width : 0
+        let available = max(0, scrollView.contentView.bounds.width - gutter)
+        let content = CGFloat(widestColumns) * charAdvance + 2 * LogRowCell.insetX + charAdvance
+        let width = wordWrap ? available : max(available, content)
+        if textColumn.width != width { textColumn.width = width }
     }
 
     /// The text column autoresizes with the window; wrapped heights depend on
@@ -162,6 +196,7 @@ final class LogView: NSView {
     /// every layout pass too (zoom and split resizes don't go through live resize).
     override func layout() {
         super.layout()
+        updateTextColumnWidth()
         columnResized()
     }
 
@@ -183,7 +218,11 @@ final class LogView: NSView {
 
         gutterColumn.width = showLineNumbers ? gutterWidth() : 0
         gutterColumn.isHidden = !showLineNumbers
-        textColumn.resizingMask = .autoresizingMask
+        // Neither column follows the table's width: the text column is sized to
+        // the content (see `updateTextColumnWidth`), and a table wider than its
+        // clip view is what scrolls sideways.
+        table.columnAutoresizingStyle = .noColumnAutoresizing
+        textColumn.resizingMask = []
         table.addTableColumn(gutterColumn)
         table.addTableColumn(textColumn)
         table.dataSource = self
@@ -255,6 +294,8 @@ final class LogView: NSView {
         // of range. A growth cap (then a reload) bounds a long-held selection.
         if (table.isDragging || hasSelection), table.window != nil, table.numberOfRows == firstNew {
             lines.append(contentsOf: newLines)
+            noteWidth(of: newLines)
+            updateTextColumnWidth()
             let hardCap = windowCap * 3
             if lines.count <= hardCap {
                 table.insertRows(at: IndexSet(integersIn: firstNew..<lines.count), withAnimation: [])
@@ -629,7 +670,8 @@ final class LogView: NSView {
         let before = table.numberOfRows
         let evict = max(0, before + older.count - windowCap)
         lines.insert(contentsOf: older, at: 0)
-        if evict > 0 { lines.removeLast(evict) }
+        if evict > 0 { lines.removeLast(evict); recountWidest() } else { noteWidth(of: older) }
+        updateTextColumnWidth()
         // What is about to appear above the viewport is exactly how far the
         // content has to move to stay put: the rows' heights, as the table
         // will ask for them, so wrapped rows count fully.
@@ -671,7 +713,8 @@ final class LogView: NSView {
         // The height about to leave above the viewport, measured before it goes.
         let removed = evict > 0 ? table.rect(ofRow: evict).minY - table.rect(ofRow: 0).minY : 0
         lines.append(contentsOf: newer)
-        if evict > 0 { lines.removeFirst(evict) }
+        if evict > 0 { lines.removeFirst(evict); recountWidest() } else { noteWidth(of: newer) }
+        updateTextColumnWidth()
         suppressed {
             let clip = scrollView.contentView
             let target = NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y - removed)
@@ -706,6 +749,10 @@ final class LogView: NSView {
     private(set) var perfViewsMade = 0
     private(set) var perfHeightsAsked = 0
     func perfResetCounters() { perfViewsMade = 0; perfHeightsAsked = 0 }
+
+    /// Content and viewport widths: the difference is what can scroll sideways.
+    var perfTableWidth: CGFloat { table.frame.width }
+    var perfViewportWidth: CGFloat { scrollView.contentView.bounds.width }
 
     /// The last resident line, so an append can be made contiguous with it.
     var perfLastLine: Int64? { lines.last?.number }
