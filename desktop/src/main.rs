@@ -206,6 +206,19 @@ fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
             Err(_) => app.open_tab_menu(0),
         }
         app.update(&[], &mut damage);
+        // `CTAIL_DEBUG_MENU_HOVER="0,4;1,1"` then rests the pointer on those
+        // rows in turn — panel, row — so a submenu opens for the picture.
+        if let Ok(hovers) = std::env::var("CTAIL_DEBUG_MENU_HOVER") {
+            for hover in hovers.split(';') {
+                let mut parts = hover
+                    .split(',')
+                    .filter_map(|n| n.trim().parse::<usize>().ok());
+                if let (Some(panel), Some(row)) = (parts.next(), parts.next()) {
+                    app.debug_hover_menu(panel, row);
+                    app.update(&[], &mut damage);
+                }
+            }
+        }
     }
     paint(&mut app, &mut pixels);
     // A run of scrolling frames, each painted *incrementally* into the same

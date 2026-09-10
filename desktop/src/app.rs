@@ -22,7 +22,7 @@ use denise::{
     Rect, Size,
 };
 use denise_text::TextStyle;
-use denise_ui::widgets::{open_menu, open_menu_at, MenuBar, MenuItem};
+use denise_ui::widgets::{open_menu, open_menu_at, Menu, MenuBar, MenuEvent, MenuItem};
 use denise_ui::Anchors;
 use denise_ui::{NodeId, Ui};
 use denise_winit::{DeniseApp, Modality, Present, WindowConfig, WindowRequest};
@@ -42,8 +42,44 @@ pub enum Msg {
     Search(SearchMsg),
     /// A menu-bar title was pressed.
     Menu(usize),
-    /// A row of whichever menu is open was chosen.
-    MenuPick(usize),
+    /// Whichever menu is open reports a choice, a slide to another title,
+    /// or a press that dismissed it.
+    MenuEvent(MenuEvent),
+}
+
+/// The rows of a menu and what each does, in the order the menu numbers
+/// them: a submenu's own row, then its rows, then the row after it.
+#[derive(Default)]
+struct Entries {
+    items: Vec<MenuItem>,
+    actions: Vec<Action>,
+}
+
+impl Entries {
+    fn item(&mut self, item: MenuItem, action: Action) {
+        self.items.push(item);
+        self.actions.push(action);
+    }
+
+    fn rule(&mut self) {
+        self.item(MenuItem::separator(), Action::None);
+    }
+
+    /// A row that opens the rows `fill` adds beside it. Greyed out when it
+    /// would open nothing.
+    fn submenu(&mut self, label: &str, fill: impl FnOnce(&mut Entries)) {
+        let mut sub = Entries::default();
+        fill(&mut sub);
+        let enabled = sub.items.iter().any(|i| i.enabled);
+        self.items
+            .push(MenuItem::submenu(label, sub.items).enabled(enabled));
+        self.actions.push(Action::None);
+        self.actions.extend(sub.actions);
+    }
+
+    fn into_parts(self) -> (Vec<MenuItem>, Vec<Action>) {
+        (self.items, self.actions)
+    }
 }
 
 /// What a menu row does. Kept beside the entries the popup was built from, so
@@ -221,6 +257,8 @@ pub struct App {
     menubar: NodeId,
     /// What each row of the open menu does.
     menu_actions: Vec<Action>,
+    /// The open menu's node, for the debug hooks that hover its rows.
+    menu: Option<NodeId>,
     /// The tab a context menu was opened on.
     context_tab: Option<usize>,
     /// Set while a rename prompt is open, with the tab it will rename.
@@ -421,6 +459,7 @@ impl App {
             strip,
             menubar,
             menu_actions: Vec::new(),
+            menu: None,
             context_tab: None,
             renaming: None,
             prompt_tx,
@@ -831,87 +870,93 @@ impl App {
 
     /// The rows of one menu-bar menu, and what each of them does.
     fn menu_entries(&self, which: usize) -> (Vec<MenuItem>, Vec<Action>) {
-        let mut rows: Vec<(MenuItem, Action)> = Vec::new();
+        let mut e = Entries::default();
         match which {
             0 => {
-                rows.push((
+                e.item(
                     MenuItem::new("Open…").with_shortcut("Cmd+O"),
                     Action::OpenFile,
-                ));
-                let has_tabs = !self.tabs.is_empty();
-                rows.push((
+                );
+                e.rule();
+                e.item(
                     MenuItem::new("Close Tab")
                         .with_shortcut("Cmd+W")
-                        .enabled(has_tabs),
+                        .enabled(!self.tabs.is_empty()),
                     Action::CloseTab,
-                ));
-                rows.push((
+                );
+                e.item(
                     MenuItem::new("Reopen Closed Tab")
                         .with_shortcut("Cmd+Shift+T")
                         .enabled(!self.closed.is_empty()),
                     Action::ReopenTab,
-                ));
+                );
+                e.rule();
                 let recent = self.config.recent_files();
-                rows.push((MenuItem::heading("Recent"), Action::None));
-                if recent.is_empty() {
-                    rows.push((MenuItem::new("(empty)").disabled(), Action::None));
-                } else {
-                    for path in recent.iter().take(8) {
+                e.submenu("Recent", |e| {
+                    for path in recent.iter().take(10) {
                         let name = std::path::Path::new(path)
                             .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_else(|| path.clone());
-                        rows.push((MenuItem::new(name), Action::OpenRecent(path.clone())));
+                        e.item(MenuItem::new(name), Action::OpenRecent(path.clone()));
                     }
-                    rows.push((MenuItem::new("Clear Recent"), Action::ClearRecent));
-                }
-                rows.push((MenuItem::new("Quit").with_shortcut("Cmd+Q"), Action::Quit));
+                    if !recent.is_empty() {
+                        e.rule();
+                        e.item(MenuItem::new("Clear Recent"), Action::ClearRecent);
+                    }
+                });
+                e.rule();
+                e.item(MenuItem::new("Quit").with_shortcut("Cmd+Q"), Action::Quit);
             }
             1 => {
-                rows.push((MenuItem::new("Copy").with_shortcut("Cmd+C"), Action::Copy));
-                rows.push((
+                e.item(MenuItem::new("Copy").with_shortcut("Cmd+C"), Action::Copy);
+                e.item(
                     MenuItem::new("Select All").with_shortcut("Cmd+A"),
                     Action::SelectAll,
-                ));
-                rows.push((MenuItem::new("Find…").with_shortcut("Cmd+F"), Action::Find));
+                );
+                e.rule();
+                e.item(MenuItem::new("Find…").with_shortcut("Cmd+F"), Action::Find);
             }
             2 => {
                 let settings = self.config.load_settings();
-                rows.push((
+                e.item(
                     MenuItem::new("Show Line Numbers")
                         .with_shortcut("Cmd+Shift+L")
                         .checked(settings.show_line_numbers),
                     Action::ToggleLineNumbers,
-                ));
-                rows.push((
+                );
+                e.item(
                     MenuItem::new("Word Wrap")
                         .with_shortcut("Cmd+Alt+W")
                         .checked(settings.word_wrap),
                     Action::ToggleWordWrap,
-                ));
-                rows.push((
+                );
+                e.rule();
+                e.item(
                     MenuItem::new("Light Theme").checked(settings.theme_mode == "light"),
                     Action::ToggleTheme,
-                ));
-                rows.push((
+                );
+                e.rule();
+                e.item(
                     MenuItem::new("Profiles & Rules…").with_shortcut("Cmd+R"),
                     Action::Profiles,
-                ));
-                rows.push((
+                );
+                e.item(
                     MenuItem::new("Settings…").with_shortcut("Cmd+,"),
                     Action::Settings,
-                ));
+                );
             }
-            3 => rows.push((
+            3 => e.item(
                 MenuItem::new("AI Assistant…").with_shortcut("Cmd+Shift+A"),
                 Action::Assistant,
-            )),
+            ),
             _ => {
-                rows.push((MenuItem::new("Check for Updates…"), Action::CheckUpdates));
-                rows.push((MenuItem::new("About ctail"), Action::About));
+                e.item(MenuItem::new("Check for Updates…"), Action::CheckUpdates);
+                e.rule();
+                e.item(MenuItem::new("About ctail"), Action::About);
             }
         }
-        rows.into_iter().unzip()
+        e.into_parts()
     }
 
     /// The rows of a tab's right-click menu.
@@ -923,38 +968,46 @@ impl App {
         } else {
             "Show in File Manager"
         };
-        let mut rows = vec![
-            (MenuItem::new("Rename…"), Action::TabRename),
-            (MenuItem::new("Refresh"), Action::TabRefresh),
-            (MenuItem::new("Change File Path…"), Action::TabChangePath),
-            (MenuItem::new("Copy Path"), Action::TabCopyPath),
-            (MenuItem::new(reveal), Action::TabReveal),
-            (MenuItem::new("Close Tab"), Action::TabClose),
-            (MenuItem::heading("Colour"), Action::None),
-        ];
         let current = self
             .context_tab
             .and_then(|i| self.tabs.get(i))
             .map(|t| t.color.clone())
             .unwrap_or_default();
-        for (name, hex) in TAB_COLORS {
-            rows.push((
-                MenuItem::new(name).checked(current == hex),
-                Action::TabColor(hex.to_string()),
-            ));
-        }
-        rows.push((
-            MenuItem::new("None").checked(current.is_empty()),
-            Action::TabColor(String::new()),
-        ));
-        rows.into_iter().unzip()
+        let mut e = Entries::default();
+        e.item(MenuItem::new("Rename…"), Action::TabRename);
+        e.item(MenuItem::new("Refresh"), Action::TabRefresh);
+        e.rule();
+        e.item(MenuItem::new("Change File Path…"), Action::TabChangePath);
+        e.item(MenuItem::new("Copy Path"), Action::TabCopyPath);
+        e.item(MenuItem::new(reveal), Action::TabReveal);
+        e.rule();
+        e.submenu("Colour", |e| {
+            for (name, hex) in TAB_COLORS {
+                e.item(
+                    MenuItem::new(name).checked(current == hex),
+                    Action::TabColor(hex.to_string()),
+                );
+            }
+            e.rule();
+            e.item(
+                MenuItem::new("None").checked(current.is_empty()),
+                Action::TabColor(String::new()),
+            );
+        });
+        e.rule();
+        e.item(MenuItem::new("Close Tab"), Action::TabClose);
+        e.into_parts()
     }
 
     pub(crate) fn open_menu(&mut self, which: usize) {
         self.context_tab = None;
+        // Sliding along the bar closes the menu that was up before this one
+        // opens; opening over it would stack two.
+        self.ui.close_popup();
         let (entries, actions) = self.menu_entries(which);
         self.menu_actions = actions;
-        if open_menu(&mut self.ui, self.menubar, which, &entries, Msg::MenuPick).is_some() {
+        self.menu = open_menu(&mut self.ui, self.menubar, which, &entries, Msg::MenuEvent);
+        if self.menu.is_some() {
             if let Some(bar) = self.ui.widget_mut::<MenuBar<Msg>>(self.menubar) {
                 bar.set_open(Some(which));
             }
@@ -965,11 +1018,25 @@ impl App {
     /// Drops the menu bar's highlight when a menu closes, however it closed.
     fn close_menu(&mut self) {
         self.ui.close_popup();
-        if let Some(bar) = self.ui.widget_mut::<MenuBar<Msg>>(self.menubar) {
-            if bar.open().is_some() {
+        self.sync_menubar();
+    }
+
+    /// The bar's title stays lit only while a menu is up. Escape closes the
+    /// popup inside the toolkit without a word, so this is asked every frame
+    /// as well as on every close.
+    fn sync_menubar(&mut self) {
+        if self.ui.popup_open() {
+            return;
+        }
+        let lit = self
+            .ui
+            .widget::<MenuBar<Msg>>(self.menubar)
+            .is_some_and(|bar| bar.open().is_some());
+        if lit {
+            if let Some(bar) = self.ui.widget_mut::<MenuBar<Msg>>(self.menubar) {
                 bar.set_open(None);
-                self.ui.invalidate(self.menubar);
             }
+            self.ui.invalidate(self.menubar);
         }
     }
 
@@ -997,11 +1064,33 @@ impl App {
         let (entries, actions) = self.tab_menu_entries();
         self.menu_actions = actions;
         let style = TextStyle::built_in(self.menu_px());
-        open_menu_at(&mut self.ui, self.strip, at, &entries, style, Msg::MenuPick);
+        self.menu = open_menu_at(
+            &mut self.ui,
+            self.strip,
+            at,
+            &entries,
+            style,
+            Msg::MenuEvent,
+        );
     }
 
     fn menu_px(&self) -> u16 {
         (13.0 * self.scale + 0.5) as u16
+    }
+
+    /// Moves the pointer onto row `row` of panel `panel` of the open menu,
+    /// for a snapshot of a menu with a submenu open.
+    pub(crate) fn debug_hover_menu(&mut self, panel: usize, row: usize) {
+        let Some(rect) = self
+            .menu
+            .and_then(|id| self.ui.widget::<Menu<Msg>>(id))
+            .and_then(|menu| menu.row_rect(panel, row))
+        else {
+            return;
+        };
+        self.ui.handle(&[InputEvent::PointerMoved {
+            position: Point::new(rect.x + rect.width / 2, rect.y + rect.height / 2),
+        }]);
     }
 
     // --- session ---------------------------------------------------------
@@ -1596,11 +1685,13 @@ impl App {
             Msg::TabContext(i) => self.open_tab_menu(i),
             Msg::NewTab => self.open_dialog(),
             Msg::Menu(which) => self.open_menu(which),
-            Msg::MenuPick(row) => {
+            Msg::MenuEvent(MenuEvent::Picked(row)) => {
                 self.close_menu();
                 let action = self.menu_actions.get(row).cloned().unwrap_or(Action::None);
                 self.run(action);
             }
+            Msg::MenuEvent(MenuEvent::Title(which)) => self.open_menu(which),
+            Msg::MenuEvent(MenuEvent::Dismissed) => self.close_menu(),
             Msg::Search(SearchMsg::Toggle(which)) => {
                 self.search.toggle(&mut self.ui, which);
                 self.apply_search();
@@ -1819,6 +1910,7 @@ impl DeniseApp for App {
         for m in messages {
             self.handle_message(m);
         }
+        self.sync_menubar();
         if self.ui.needs_paint() {
             let pending = self.ui.pending_damage();
             if pending.is_empty() {

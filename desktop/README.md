@@ -139,8 +139,10 @@ cargo run -p ctail-desktop -- --snapshot settings /tmp/settings.ppm 2
 cargo run -p ctail-desktop -- --snapshot profiles /tmp/profiles.ppm 2
 
 # The main window too, with a menu down: CTAIL_DEBUG_MENU is a title index, or
-# any other word for a tab's context menu.
-CTAIL_DEBUG_FILE=some.log CTAIL_DEBUG_MENU=0 \
+# any other word for a tab's context menu. CTAIL_DEBUG_MENU_HOVER rests the
+# pointer on rows in turn — "panel,row" pairs, panel 0 the menu itself — so a
+# submenu is open in the picture.
+CTAIL_DEBUG_FILE=some.log CTAIL_DEBUG_MENU=0 CTAIL_DEBUG_MENU_HOVER="0,5;1,1" \
   cargo run -p ctail-desktop -- --snapshot main /tmp/main.ppm 2
 
 # Scrolling is judged by measurement, and only in a release build — a debug
@@ -168,14 +170,12 @@ window in this one. `CTAIL_PRESENT=software` chooses the rasteriser outright,
 which is how the two are compared. Every secondary window draws the way the
 main one does.
 
-## Dependency pin
+## Dependency version
 
-`Cargo.toml` pins DeniseUI to a pushed revision of its `feat/widget-scroll`
-branch: the 0.20 release — the first with the painter trait (`Widget::paint`
-draws through a `Pen`, whatever is behind it) and the `gpu` present path —
-plus the scroll hook the log view needs. A widget that scrolls itself reports
-the move through `EventCtx::scrolled`, and the tree shifts the rows still on
-screen and asks the widget to paint only the strip that came into view, on
-both present paths. Each window implements both `DeniseApp::render` and
-`DeniseApp::paint`. Move to a crates.io version once a release carries the
-hook.
+`Cargo.toml` takes DeniseUI 0.21 from crates.io: the painter trait
+(`Widget::paint` draws through a `Pen`, whatever is behind it), the `gpu`
+present path, the scroll hook the log view needs — a widget that scrolls
+itself reports the move through `EventCtx::scrolled`, and the tree shifts the
+rows still on screen and asks for only the strip that came into view — and
+menus with submenus and rules. Each window implements both `DeniseApp::render`
+and `DeniseApp::paint`.
