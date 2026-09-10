@@ -5,11 +5,11 @@
 	import Seo from '$lib/components/Seo.svelte';
 </script>
 
-<Seo title="Download" description="Download ctail for macOS from the Mac App Store, join the TestFlight beta, or get the cross-platform builds for Linux and Windows from GitHub." />
+<Seo title="Download" description="Download ctail for macOS from the Mac App Store or join the TestFlight beta. A Linux and Windows edition on the same engine is on its way; the previous cross-platform release is still on GitHub." />
 
 <div class="mx-auto max-w-6xl px-4 py-16">
 	<h1 class="text-4xl font-bold tracking-tight sm:text-5xl">Download</h1>
-	<p class="mt-4 max-w-2xl text-lg text-base-content/70">ctail for macOS is a native app distributed through the Mac App Store. The original cross-platform edition for Linux and Windows is on GitHub.</p>
+	<p class="mt-4 max-w-2xl text-lg text-base-content/70">ctail for macOS is a native app distributed through the Mac App Store. A Linux and Windows edition built on the same engine is on its way; the previous cross-platform release is still on GitHub.</p>
 
 	<div class="mt-12 grid gap-6 lg:grid-cols-3">
 		<div class="card card-border bg-base-200/60 lg:col-span-2">
@@ -60,27 +60,20 @@ swift build
 	<p class="mt-2 text-sm text-base-content/60">Use <code class="rounded bg-base-200 px-1 font-mono">make bundle</code> for a distributable <code class="rounded bg-base-200 px-1 font-mono">ctail.app</code>. Source builds have no App Store licensing, so Pro features can be enabled from the app menu in debug builds.</p>
 
 	<h2 class="mt-20 text-2xl font-bold tracking-tight">Linux and Windows</h2>
-	<p class="mt-2 max-w-2xl text-base-content/70">The cross-platform edition of ctail (Go and Svelte, built with Wails) runs on Linux, Windows and macOS and shares the same highlighting rules, profiles and themes. Grab the latest release from GitHub.</p>
-	<div class="mt-6 grid gap-4 sm:grid-cols-3">
+	<p class="mt-2 max-w-2xl text-base-content/70">A new cross-platform edition of ctail is in development: the same Rust engine as the Mac app — tail-first opens, the background index, the highlighter and whole-file search — under a native window of its own, with no web view. It shares highlighting rules, profiles and themes with the Mac app. Watch the <a href={site.github} class="link" rel="noopener">repository</a> for the first release.</p>
+	<div class="mt-6 grid gap-4 sm:grid-cols-2">
 		<div class="card card-border bg-base-200/60">
 			<div class="card-body">
 				<h3 class="card-title text-base"><Icon name="terminal" class="h-5 w-5" /> Linux</h3>
-				<p class="text-sm text-base-content/70">.deb and .rpm packages, plus a standalone binary. Needs GTK 3 and WebKit2GTK 4.1.</p>
-				<a href={site.latestRelease} class="btn btn-sm mt-2" rel="noopener">Latest release</a>
+				<p class="text-sm text-base-content/70">Until then, the previous edition (0.9.9, built with Wails) is still available: .deb and .rpm packages plus a standalone binary. Needs GTK 3 and WebKit2GTK 4.1.</p>
+				<a href={site.previousEdition} class="btn btn-sm mt-2" rel="noopener">Previous edition 0.9.9</a>
 			</div>
 		</div>
 		<div class="card card-border bg-base-200/60">
 			<div class="card-body">
 				<h3 class="card-title text-base"><Icon name="terminal" class="h-5 w-5" /> Windows</h3>
-				<p class="text-sm text-base-content/70">A single .exe. Uses the WebView2 runtime that ships with Windows 10 and 11.</p>
-				<a href={site.latestRelease} class="btn btn-sm mt-2" rel="noopener">Latest release</a>
-			</div>
-		</div>
-		<div class="card card-border bg-base-200/60">
-			<div class="card-body">
-				<h3 class="card-title text-base"><Icon name="terminal" class="h-5 w-5" /> macOS (Wails)</h3>
-				<p class="text-sm text-base-content/70">A universal binary of the cross-platform edition, unsigned. Most Mac users should prefer the native app above.</p>
-				<a href={site.latestRelease} class="btn btn-sm mt-2" rel="noopener">Latest release</a>
+				<p class="text-sm text-base-content/70">Until then, the previous edition (0.9.9, built with Wails) is still available as a single .exe, using the WebView2 runtime that ships with Windows 10 and 11.</p>
+				<a href={site.previousEdition} class="btn btn-sm mt-2" rel="noopener">Previous edition 0.9.9</a>
 			</div>
 		</div>
 	</div>

@@ -153,7 +153,7 @@ export const features: Feature[] = [
 			'Registered as a viewer for .log, .txt and .csv, so Open With and double-click work.',
 			'Sandboxed for the Mac App Store, with security-scoped bookmarks so your files reopen after a relaunch.',
 			'Window position, open tabs, active profile and every setting survive restarts.',
-			'Built-in update check against GitHub releases.'
+			'Updates arrive through the App Store, like any other Mac app.'
 		],
 		shot: 'settings.webp',
 		shotAlt: 'The native Settings window with Appearance, Behavior, Updates and AI Assistant tabs',

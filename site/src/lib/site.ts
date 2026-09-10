@@ -8,12 +8,14 @@ export const site = {
 	discussions: 'https://github.com/bisand/ctail/discussions',
 	releases: 'https://github.com/bisand/ctail/releases',
 	latestRelease: 'https://github.com/bisand/ctail/releases/latest',
+	// The last release of the previous, Wails-based cross-platform edition.
+	previousEdition: 'https://github.com/bisand/ctail/releases/tag/v0.9.9',
 	security: 'https://github.com/bisand/ctail/blob/main/SECURITY.md',
 	license: 'https://github.com/bisand/ctail/blob/main/LICENSE',
-	appStore: 'https://apps.apple.com/app/ctail/id0000000000', // TODO: replace with the real App Store link once live
+	appStore: 'https://apps.apple.com/app/ctail/id6808019248',
 	author: 'André Biseth',
 	authorUrl: 'https://github.com/bisand',
-	version: '0.9.9',
+	version: '1.0.0',
 	minMacOS: 'macOS 13 Ventura'
 };
 
