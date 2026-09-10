@@ -9,6 +9,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     private var settings = AppSettings()
     private var palette = ThemeColors.placeholder
 
+    /// Development affordances, driven by the environment because the window
+    /// cannot be scripted from outside without accessibility permission:
+    /// `CTAIL_DEBUG_PAGE_UP=n` pages the active log up a screen at a time,
+    /// ten times a second, `n` times — a reader scrolling back through a big
+    /// file, for watching what that does to the process from outside.
+    private func debugHooks() {
+        guard let n = ProcessInfo.processInfo.environment["CTAIL_DEBUG_PAGE_UP"].flatMap(Int.init), n > 0 else { return }
+        var left = n
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] t in
+            guard left > 0, let view = self?.tabs.activeTab?.logView else { t.invalidate(); return }
+            view.keyPageUp()
+            left -= 1
+        }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = config.loadSettings()
         config.ensureDefaultProfile()
@@ -19,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         buildMenu()
         buildWindow()
         tabs.onTabsChanged = { [weak self] in self?.persistSession() }
+        debugHooks()
 
         // StoreKit: load Pro entitlement and keep the menu in sync.
         StoreManager.shared.onChange = { [weak self] _ in self?.proStatusChanged() }

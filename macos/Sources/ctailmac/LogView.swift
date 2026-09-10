@@ -246,7 +246,6 @@ final class LogView: NSView {
         }
 
         let firstNew = lines.count
-        lines.append(contentsOf: newLines)
 
         // Frozen while the user has a selection (or is mid-drag): keep the selection
         // and the visible content perfectly put by ONLY appending rows at the bottom
@@ -255,6 +254,7 @@ final class LogView: NSView {
         // matches the buffer; appending at `firstNew == numberOfRows` can't go out
         // of range. A growth cap (then a reload) bounds a long-held selection.
         if (table.isDragging || hasSelection), table.window != nil, table.numberOfRows == firstNew {
+            lines.append(contentsOf: newLines)
             let hardCap = windowCap * 3
             if lines.count <= hardCap {
                 table.insertRows(at: IndexSet(integersIn: firstNew..<lines.count), withAnimation: [])
@@ -265,11 +265,8 @@ final class LogView: NSView {
             return
         }
 
-        // Default: keep the window bounded and reloadData. There's no selection to
-        // preserve here, and reloadData is always safe (off-screen background tabs,
-        // initial big tail loads, evictions of any size) — no row-delta math.
-        if lines.count > windowCap { lines.removeFirst(lines.count - windowCap) }
-        reload()
+        // Default: the window slides along the tail, evicting from the top.
+        slide(appending: newLines)
         if following { scrollToBottom() }
     }
 
@@ -499,12 +496,15 @@ final class LogView: NSView {
 
     private func setScrollOrigin(x: CGFloat? = nil, y: CGFloat) {
         let clip = scrollView.contentView
+        suppressed { place(clip, at: NSPoint(x: x ?? clip.bounds.origin.x, y: y)) }
+    }
+
+    /// Scrolls `clip` to `origin`, clamped to the content. For a caller already
+    /// inside `suppressed`.
+    private func place(_ clip: NSClipView, at origin: NSPoint) {
         let maxY = max(0, table.bounds.height - clip.bounds.height)
-        let origin = NSPoint(x: x ?? clip.bounds.origin.x, y: min(maxY, max(0, y)))
-        suppressed {
-            clip.setBoundsOrigin(origin)
-            scrollView.reflectScrolledClipView(clip)
-        }
+        clip.setBoundsOrigin(NSPoint(x: origin.x, y: min(maxY, max(0, origin.y))))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     /// The absolute line at the top of the viewport plus the pixel offset into its
@@ -577,12 +577,7 @@ final class LogView: NSView {
             defer { self.isPaging = false }
             guard !older.isEmpty, older.last?.number == self.windowStart - 1 else { return }   // must be contiguous
             self.following = false
-            let anchor = self.scrollAnchor()
-            self.lines.insert(contentsOf: older, at: 0)
-            if self.lines.count > self.windowCap {
-                self.lines.removeLast(self.lines.count - self.windowCap)   // evict the far (bottom) end
-            }
-            self.reloadRestoring(anchor)
+            self.slide(insertingAtTop: older)
         }
     }
 
@@ -597,13 +592,146 @@ final class LogView: NSView {
             guard let self else { return }
             defer { self.isPaging = false }
             guard !newer.isEmpty, newer.first?.number == self.windowEnd + 1 else { return }   // must be contiguous
-            let anchor = self.scrollAnchor()
-            self.lines.append(contentsOf: newer)
-            if self.lines.count > self.windowCap {
-                self.lines.removeFirst(self.lines.count - self.windowCap)  // evict the far (top) end
-            }
-            self.reloadRestoring(anchor)
+            self.slide(appending: newer)
         }
+    }
+
+    // MARK: - Sliding the window without a reload
+
+    /// Whether the table can take rows in and out around the viewport rather
+    /// than be rebuilt: it has to be showing exactly the buffer, row for row.
+    /// Filter mode and a search project the buffer, a background tab's table is
+    /// stale until it is shown again, and an empty table is cheaper to fill.
+    private var canSlide: Bool {
+        !filterMode && query.isEmpty && table.window != nil
+            && table.numberOfRows == lines.count && table.numberOfRows > 0
+    }
+
+    /// Pages `older` in above the window, evicting the same weight from the
+    /// bottom, and leaves every row on screen exactly where it was.
+    ///
+    /// `reloadData` was the safe choice here — no row-delta arithmetic — but it
+    /// discards every visible row view and remakes them at ~180 µs each: 11 ms
+    /// on the main thread per page-in, which is a hitch a flick can feel and a
+    /// momentum scroll does not survive. Inserting and removing rows costs the
+    /// table nothing for rows outside the viewport, and the contiguity checks
+    /// the callers make are what keep the arithmetic honest: what goes in at
+    /// one end is exactly the count that comes off the other.
+    private func slide(insertingAtTop older: [LogLine]) {
+        guard !older.isEmpty else { return }
+        guard canSlide else {
+            let anchor = scrollAnchor()
+            lines.insert(contentsOf: older, at: 0)
+            if lines.count > windowCap { lines.removeLast(lines.count - windowCap) }
+            reloadRestoring(anchor)
+            return
+        }
+        let before = table.numberOfRows
+        let evict = max(0, before + older.count - windowCap)
+        lines.insert(contentsOf: older, at: 0)
+        if evict > 0 { lines.removeLast(evict) }
+        // What is about to appear above the viewport is exactly how far the
+        // content has to move to stay put: the rows' heights, as the table
+        // will ask for them, so wrapped rows count fully.
+        let added = (0..<older.count).reduce(CGFloat(0)) { $0 + tableView(table, heightOfRow: $1) }
+        suppressed {
+            let clip = scrollView.contentView
+            let target = NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y + added)
+            // The viewport goes to where the content will be *before* the rows
+            // go in. `endUpdates` is when the table decides which rows are on
+            // screen and makes views for them; at the old origin those would
+            // be the new rows — a whole screen of views made for the scroll to
+            // hide a moment later, and kept in the reuse pool for ever after.
+            // Past the end of the content for a moment, which the clip view
+            // allows and nothing draws in between.
+            clip.setBoundsOrigin(target)
+            table.beginUpdates()
+            if evict > 0 {
+                table.removeRows(at: IndexSet(integersIn: (before - evict)..<before), withAnimation: [])
+            }
+            table.insertRows(at: IndexSet(integersIn: 0..<older.count), withAnimation: [])
+            table.endUpdates()
+            place(clip, at: target)
+        }
+    }
+
+    /// Adds `newer` below the window, evicting the same weight from the top,
+    /// with the rows on screen left where they were. See `slide(insertingAtTop:)`.
+    private func slide(appending newer: [LogLine]) {
+        guard !newer.isEmpty else { return }
+        guard canSlide else {
+            let anchor = scrollAnchor()
+            lines.append(contentsOf: newer)
+            if lines.count > windowCap { lines.removeFirst(lines.count - windowCap) }
+            reloadRestoring(anchor)
+            return
+        }
+        let before = table.numberOfRows
+        let evict = max(0, before + newer.count - windowCap)
+        // The height about to leave above the viewport, measured before it goes.
+        let removed = evict > 0 ? table.rect(ofRow: evict).minY - table.rect(ofRow: 0).minY : 0
+        lines.append(contentsOf: newer)
+        if evict > 0 { lines.removeFirst(evict) }
+        suppressed {
+            let clip = scrollView.contentView
+            let target = NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y - removed)
+            // Viewport first, rows second; see `slide(insertingAtTop:)`.
+            clip.setBoundsOrigin(target)
+            table.beginUpdates()
+            if evict > 0 {
+                table.removeRows(at: IndexSet(integersIn: 0..<evict), withAnimation: [])
+            }
+            let kept = before - evict
+            table.insertRows(at: IndexSet(integersIn: kept..<(kept + newer.count)), withAnimation: [])
+            table.endUpdates()
+            place(clip, at: target)
+        }
+    }
+
+    // MARK: - Performance harness hooks
+
+    /// Rebuilds the table keeping the same content under the viewport — what a
+    /// settings toggle and every page-in do — so the self-test can time it.
+    func perfReloadInPlace() { reloadRestoring(scrollAnchor()) }
+
+    /// Pages older lines in at the top, as scrolling near it does. The harness
+    /// answers `requestRange` inline, so this is the whole page-in but the disk.
+    func perfPageIn() { pageUp() }
+
+    /// Puts the first resident row at the top of the viewport.
+    func perfScrollToTop() { scrollRowToTop(0) }
+
+    /// How many row views were made and row heights asked since the last
+    /// reset: what a page-in costs the table, counted rather than timed.
+    private(set) var perfViewsMade = 0
+    private(set) var perfHeightsAsked = 0
+    func perfResetCounters() { perfViewsMade = 0; perfHeightsAsked = 0 }
+
+    /// The last resident line, so an append can be made contiguous with it.
+    var perfLastLine: Int64? { lines.last?.number }
+
+    /// Appends as the tailer does while the view follows the tail.
+    func perfAppend(_ newLines: [LogLine]) {
+        following = true
+        append(newLines)
+    }
+
+    /// The pixel offset of the viewport into its top row, to check that a
+    /// page-in left the content exactly where it was.
+    var perfTopOffset: CGFloat {
+        let y = scrollView.contentView.bounds.minY
+        let row = table.row(at: NSPoint(x: 0, y: y))
+        return row < 0 ? -1 : y - table.rect(ofRow: row).minY
+    }
+
+    /// Makes (or remakes) the row views for every visible row, as a scroll does
+    /// for the rows that come into view; returns how many that was.
+    func perfMakeVisibleRows() -> Int {
+        // A display pass, as the window would run: it is what makes the row
+        // views for the visible rect and commits them to the table.
+        table.layoutSubtreeIfNeeded()
+        table.display()
+        return table.rows(in: table.visibleRect).length
     }
 
     // MARK: - Search (issue #9)
@@ -681,49 +809,45 @@ extension LogView: NSTableViewDelegate {
     /// Fixed height unless wrapping, then one text line per wrapped row. Cheap
     /// enough (no text layout) to be asked for every resident row on each reload.
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        perfHeightsAsked += 1
         guard wordWrap, row < displayed.count else { return tableView.rowHeight }
         return CGFloat(wrappedRows(for: displayed[row].text)) * lineHeight + rowPadding
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        perfViewsMade += 1
         let line = displayed[row]
         let id = tableColumn!.identifier
-        let cell = (tableView.makeView(withIdentifier: id, owner: self) as? NSTextField) ?? makeCell(id)
-        // Reused cells may predate a wrap toggle, so (re)apply the mode each time.
-        // Single-line mode centres vertically; off, both columns top-align so the
-        // gutter number sits beside the first wrapped line.
+        let cell = (tableView.makeView(withIdentifier: id, owner: self) as? LogRowCell) ?? makeCell(id)
         let isText = id.rawValue == "text"
-        cell.cell?.usesSingleLineMode = !wordWrap
-        cell.lineBreakMode = (wordWrap && isText) ? .byCharWrapping : .byClipping
-        cell.maximumNumberOfLines = (wordWrap && isText) ? 0 : 1
 
         if !isText {
             // While the background line count runs, real numbers aren't known yet
             // — show a placeholder rather than the provisional local numbers.
             let counting = !(indexingReadyProvider?() ?? true)
-            cell.attributedStringValue = NSAttributedString(
+            let number = NSAttributedString(
                 string: counting ? "·" : String(line.number),
                 attributes: [.font: rowFont, .foregroundColor: palette.gutter])
-            cell.alignment = .right
+            // Top-aligned like the text when wrapping, so the number sits
+            // beside the first wrapped line.
+            cell.set(number, wraps: false, alignment: .right, centred: !wordWrap)
         } else {
             let rendered = highlighter.render(line.text)
             // Only pay for a mutable copy when there's something to layer on; the
             // common (no search, no wrap) path uses the highlighter's result directly.
             if query.isEmpty && !wordWrap {
-                cell.attributedStringValue = rendered
+                cell.set(rendered, wraps: false, alignment: .left, centred: true)
             } else {
                 let attr = NSMutableAttributedString(attributedString: rendered)
                 applySearchHighlight(attr, line: line, row: row)
                 if wordWrap {
-                    // An attributed value brings its own paragraph style (word
-                    // wrapping by default), overriding the cell's lineBreakMode —
-                    // pin it to per-character so the row-height estimate is exact.
+                    // Wrapping is per character, so the row-height estimate
+                    // in `wrappedRows` is exact.
                     attr.addAttribute(.paragraphStyle, value: Self.charWrapStyle,
                                       range: NSRange(location: 0, length: attr.length))
                 }
-                cell.attributedStringValue = attr
+                cell.set(attr, wraps: wordWrap, alignment: .left, centred: !wordWrap)
             }
-            cell.alignment = .left
         }
         return cell
     }
@@ -744,13 +868,62 @@ extension LogView: NSTableViewDelegate {
         return p
     }()
 
-    private func makeCell(_ id: NSUserInterfaceItemIdentifier) -> NSTextField {
-        let f = NSTextField(labelWithString: "")
-        f.identifier = id
-        f.font = rowFont
-        f.drawsBackground = false
-        f.isBordered = false
-        return f
+    private func makeCell(_ id: NSUserInterfaceItemIdentifier) -> LogRowCell {
+        let cell = LogRowCell(lineHeight: lineHeight)
+        cell.identifier = id
+        return cell
+    }
+}
+
+/// A row cell that draws its attributed string and nothing else.
+///
+/// `NSTextField` was the cell here, and a text field costs what a text field
+/// costs: a cell object, an Auto Layout engine, a dozen constraints and their
+/// observations, per field — two hundred microseconds to make, and, kept in
+/// the table's reuse pool, a plateau of sixty megabytes after a long scroll
+/// through a big file. A log row needs one thing done: its string drawn at a
+/// point, clipped at the edge, or wrapped in its rect when wrapping is on.
+final class LogRowCell: NSView {
+    /// Horizontal inset each side; `wrappedRows` estimates against the same
+    /// eight points in total.
+    static let insetX: CGFloat = 4
+
+    private var text = NSAttributedString()
+    private var wraps = false
+    private var alignment: NSTextAlignment = .left
+    private var centred = true
+    private let lineHeight: CGFloat
+
+    init(lineHeight: CGFloat) {
+        self.lineHeight = lineHeight
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Top-left is the origin, as the table's row frames are.
+    override var isFlipped: Bool { true }
+
+    func set(_ text: NSAttributedString, wraps: Bool, alignment: NSTextAlignment, centred: Bool) {
+        self.text = text
+        self.wraps = wraps
+        self.alignment = alignment
+        self.centred = centred
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let inset = bounds.insetBy(dx: Self.insetX, dy: 0)
+        if wraps {
+            // Wrapped in the rect's width by the string's own paragraph style;
+            // the rect is the row's, so nothing draws past it.
+            text.draw(with: inset, options: [.usesLineFragmentOrigin], context: nil)
+            return
+        }
+        // One line: the view's bounds clip it at the edge, which is what
+        // `byClipping` did. Centred in the row, as a single-line field was.
+        let y = centred ? (bounds.height - lineHeight) / 2 : 0
+        let x = alignment == .right ? inset.maxX - text.size().width : inset.minX
+        text.draw(at: NSPoint(x: x, y: y))
     }
 }
 

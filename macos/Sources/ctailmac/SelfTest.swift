@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import CtailCore
 
@@ -34,6 +35,7 @@ enum SelfTest {
             ("AI", aiSuite),
             ("Bookmarks", bookmarksSuite),
             ("Tailer", tailerSuite),
+            ("LogViewPerf", logViewPerfSuite),
         ]
         for (name, body) in suites {
             let before = failures
@@ -43,6 +45,133 @@ enum SelfTest {
         }
         print("\n\(checks) checks, \(failures) failures")
         return failures == 0 ? 0 : 1
+    }
+
+    // MARK: - LogView performance (opt-in: CTAIL_PERF=1)
+
+    /// Not a pass/fail suite: prints what a scroll costs — the append that fills
+    /// the window, the reload every page-in does, and the row views a scroll
+    /// remakes — so a change can be judged in numbers rather than by feel. The
+    /// desktop front end has the same in `--snapshot main`.
+    static func logViewPerfSuite() {
+        guard ProcessInfo.processInfo.environment["CTAIL_PERF"] != nil else { return }
+        _ = NSApplication.shared
+        let palette = ThemeCatalog.palette(name: "gruvbox", mode: "dark")
+        let rules = Defaults.commonLogsProfile().rules
+        let view = LogView(palette: palette, rules: rules, fontSize: 12)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1800, height: 1074),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = view
+        window.layoutIfNeeded()
+        view.layoutSubtreeIfNeeded()
+
+        // Lines shaped like a structured application log: long, with the
+        // severity the default profile colours.
+        let severities = ["INFO", "INFO", "INFO", "DEBUG", "WARN", "INFO", "ERROR"]
+        let lines: [LogLine] = (1...10_000).map { i in
+            let sev = severities[i % severities.count]
+            let text = "{\"timestamp\":\"2026-09-02T09:\(50 + i % 10):\(10 + i % 50).\(i % 1000)+02:00\"," +
+                "\"severity\":\"\(sev)\",\"body\":\"Outbox CSGA heartbeat: ready=\(i * 7) inFlight=\(i % 10000) " +
+                "oldestPendingAgeSeconds=27.543 published=\(i * 3) ratePerSecond=333.3\"," +
+                "\"logger\":\"NG.OutboxPublisher.Pipeline.OutboxHeartbeat\",\"version\":\"1.4.\(i % 9)\"}"
+            return LogLine(number: Int64(i), text: text)
+        }
+        // Each body is timed on its own and followed by one turn of the run
+        // loop, as the app's event loop would give it: that is when AppKit
+        // lets go of the row views it has finished with, and without it the
+        // harness would be measuring a process that never gets to tidy up.
+        func turn() { RunLoop.main.run(mode: .default, before: Date()) }
+        func ms(_ n: Int = 1, _ body: () -> Void) -> Double {
+            var total: TimeInterval = 0
+            for _ in 0..<n {
+                let start = Date()
+                autoreleasepool(invoking: body)
+                total -= start.timeIntervalSinceNow
+                turn()
+            }
+            return total * 1000 / Double(n)
+        }
+        // The engine's answer, minus the disk: older lines are made up on demand.
+        view.totalLinesProvider = { 1_000_000 }
+        view.indexingReadyProvider = { true }
+        view.requestRange = { start, count, completion in
+            completion((0..<count).map { i in
+                let n = start + Int64(i)
+                return LogLine(number: n, text: lines[Int(n) % lines.count].text + " seq=\(n)")
+            })
+        }
+        let resident = lines.map { LogLine(number: $0.number + 500_000, text: $0.text) }
+
+        let engine = HighlightEngine(rules: rules, palette: palette,
+                                     font: .monospacedSystemFont(ofSize: 12, weight: .regular))
+        let renderUs = ms(2000) { _ = engine.render(lines[Int.random(in: 0..<lines.count)].text) } * 1000
+
+        let fillMs = ms { view.append(resident) }
+        view.layoutSubtreeIfNeeded()
+        var rows = 0
+        let reloadMs = ms(20) { view.perfReloadInPlace() }
+        let rowsMs = ms(20) { view.perfReloadInPlace(); rows = view.perfMakeVisibleRows() } - reloadMs
+        // A page-in happens with the reader near the top of the window, and the
+        // window then slides under them: the same line must stay under the
+        // viewport, at the same pixel. Scrolling back to the top between
+        // page-ins is what a reader scrolling up does; without it the window
+        // would slide out from under a viewport that never moved.
+        var moved: [String] = []
+        // The scroll to the top brings a screen of rows into view whether or
+        // not a page-in follows; what the page-in itself costs is the difference.
+        let scrollMs = ms(20) {
+            view.perfScrollToTop()
+            _ = view.perfMakeVisibleRows()
+        }
+        let pageInMs = ms(20) {
+            view.perfScrollToTop()
+            _ = view.perfMakeVisibleRows()
+            let (line, offset) = (view.topLine, view.perfTopOffset)
+            view.perfPageIn()
+            _ = view.perfMakeVisibleRows()
+            if view.topLine != line || view.perfTopOffset != offset {
+                moved.append("\(line)+\(offset) -> \(view.topLine)+\(view.perfTopOffset)")
+            }
+        } - scrollMs
+        check(moved.isEmpty, "a page-in leaves the content where it was (\(moved.first ?? ""))")
+        // One page-in taken apart: the slide itself, then the display pass
+        // after it, with what the table asked of the delegate for each.
+        var parts = ""
+        for _ in 0..<2 {
+            view.perfScrollToTop()
+            _ = view.perfMakeVisibleRows()
+            view.perfResetCounters()
+            let slideMs = ms { view.perfPageIn() }
+            let (v1, h1) = (view.perfViewsMade, view.perfHeightsAsked)
+            let displayMs = ms { _ = view.perfMakeVisibleRows() }
+            let (v2, h2) = (view.perfViewsMade - v1, view.perfHeightsAsked - h1)
+            parts = String(format: "slide %.2f ms (%d views made, %d heights asked); display after it %.2f ms (%d views, %d heights)",
+                           slideMs, v1, h1, displayMs, v2, h2)
+        }
+        // And the tail: what every poll costs while following a busy file.
+        view.scrollToBottom()
+        var next = (view.perfLastLine ?? 0) + 1
+        let appendMs = ms(20) {
+            let chunk = (0..<200).map { i in LogLine(number: next + Int64(i), text: lines[i].text) }
+            next += 200
+            view.perfAppend(chunk)
+            _ = view.perfMakeVisibleRows()
+        }
+        print(String(format: "  highlight one line:              %6.1f µs", renderUs))
+        print(String(format: "  first fill, 10k lines:           %6.2f ms", fillMs))
+        print(String(format: "  reload in place:                 %6.2f ms", reloadMs))
+        print(String(format: "  %d visible rows remade:          %6.2f ms (%.0f µs/row)",
+                     rows, rowsMs, rowsMs * 1000 / Double(max(rows, 1))))
+        print(String(format: "  one page-in of 500 lines:        %6.2f ms (over the screen it scrolled in)", pageInMs))
+        print("    taken apart: " + parts)
+        print(String(format: "  one poll's append while following: %5.2f ms", appendMs))
+        check(rows > 0, "the harness window shows rows")
+        // Kept alive so `heap`/`footprint` can look at what the scrolling left.
+        if ProcessInfo.processInfo.environment["CTAIL_PERF_HOLD"] != nil {
+            print("  holding for inspection (pid \(ProcessInfo.processInfo.processIdentifier))")
+            fflush(stdout)
+            Thread.sleep(forTimeInterval: 40)
+        }
     }
 
     // MARK: - ConfigStore suite

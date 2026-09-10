@@ -137,7 +137,7 @@
 				</table>
 			</div>
 			<p class="mt-2 text-xs text-base-content/60">
-				Measured on an Apple silicon MacBook with the file not yet in the page cache. The window itself, tail already highlighted, appears about 300 ms after launch, the same as for an empty file. The whole app sat at 47 MB with the 2 GB log open, and paging any 10,000 lines of scrollback took about 1 ms.
+				Measured on an Apple silicon MacBook with the file not yet in the page cache. The window itself, tail already highlighted, appears about 300 ms after launch, the same as for an empty file. The whole app sat at about 90 MB with the 2 GB log open — the same as with a 400 KB one, and most of it the window's own pixel buffers at Retina scale — and paging any 10,000 lines of scrollback took about 1 ms.
 			</p>
 		</div>
 		<Shot src="search.webp" alt="Search bar showing ERROR matches in a large log" />
