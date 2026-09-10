@@ -208,6 +208,45 @@ fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
         app.update(&[], &mut damage);
     }
     paint(&mut app, &mut pixels);
+    // A run of scrolling frames, each painted *incrementally* into the same
+    // buffer — the rows moved, the strip drawn — and then the same state
+    // painted whole into another. The two must not differ by a pixel: that
+    // is the log view's claim that its scroll moved exactly what it said.
+    if std::env::var_os("CTAIL_DEBUG_SCROLL_Y").is_some() {
+        let steps: usize = std::env::var("CTAIL_DEBUG_SCROLL_STEPS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+        for _ in 0..steps {
+            app.update(&[], &mut damage);
+            let mut frame = denise::Frame::new(
+                &mut pixels,
+                size,
+                size.width,
+                PixelFormat::Xrgb8888,
+                BufferAge::Frames(1),
+            )
+            .expect("frame");
+            app.render(&mut frame, &[]);
+        }
+        let mut whole = vec![0u32; pixels.len()];
+        let mut frame = denise::Frame::new(
+            &mut whole,
+            size,
+            size.width,
+            PixelFormat::Xrgb8888,
+            BufferAge::Undefined,
+        )
+        .expect("frame");
+        app.render(&mut frame, &[]);
+        drop(frame);
+        let differing = pixels
+            .iter()
+            .zip(&whole)
+            .filter(|(a, b)| (**a ^ **b) & 0x00FF_FFFF != 0)
+            .count();
+        eprintln!("after {steps} scrolled frames: {differing} pixels differ from a whole repaint");
+    }
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
     write!(out, "P6\n{} {}\n255\n", size.width, size.height)?;
     for word in &pixels {

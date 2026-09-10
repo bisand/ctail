@@ -168,12 +168,14 @@ window in this one. `CTAIL_PRESENT=software` chooses the rasteriser outright,
 which is how the two are compared. Every secondary window draws the way the
 main one does.
 
-## Dependency version
+## Dependency pin
 
-`Cargo.toml` takes DeniseUI 0.20 from crates.io. That is the first release
-with the painter trait (`Widget::paint` draws through a `Pen`, whatever is
-behind it) and the `gpu` present path, and it carries the anchors,
-default-font, window-title and menu APIs this app was written against on a git
-pin before then. Each window implements both `DeniseApp::render`, for the
-software path's scroll optimisation over the frame's own words, and
-`DeniseApp::paint`, for the GPU.
+`Cargo.toml` pins DeniseUI to a pushed revision of its `feat/widget-scroll`
+branch: the 0.20 release — the first with the painter trait (`Widget::paint`
+draws through a `Pen`, whatever is behind it) and the `gpu` present path —
+plus the scroll hook the log view needs. A widget that scrolls itself reports
+the move through `EventCtx::scrolled`, and the tree shifts the rows still on
+screen and asks the widget to paint only the strip that came into view, on
+both present paths. Each window implements both `DeniseApp::render` and
+`DeniseApp::paint`. Move to a crates.io version once a release carries the
+hook.

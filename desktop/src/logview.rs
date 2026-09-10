@@ -144,6 +144,9 @@ pub struct LogView<M> {
     /// know how tall a wrapped line turned out.
     wrap_width: Cell<i32>,
     painted: RefCell<Vec<(usize, i32, i32)>>,
+    /// Rows actually drawn by the last paint, as against merely placed on
+    /// `painted`: the measure of what a scroll saved. For the trace.
+    drawn: Cell<usize>,
     /// Pixels the text is scrolled sideways. The gutter stays put; only the
     /// text moves. Always 0 with word wrap, which has no sideways to go.
     scroll_x: i32,
@@ -209,6 +212,7 @@ impl<M: 'static> LogView<M> {
             styles: Vec::new(),
             visible: Cell::new(0),
             wrap_width: Cell::new(0),
+            drawn: Cell::new(0),
             painted: RefCell::new(Vec::new()),
             scroll_x: 0,
             widest: 0,
@@ -838,8 +842,60 @@ impl<M: 'static> LogView<M> {
 
     /// Where the viewport is, as (top row, segment, pixels of it hidden,
     /// following), for the scroll trace.
-    pub fn trace_position(&self) -> (usize, usize, i32, bool) {
-        (self.top, self.top_seg, self.sub_px, self.follow)
+    pub fn trace_position(&self) -> (usize, usize, i32, bool, usize) {
+        (
+            self.top,
+            self.top_seg,
+            self.sub_px,
+            self.follow,
+            self.drawn.get(),
+        )
+    }
+
+    /// Visual rows from one viewport position to another: positive when `to`
+    /// is further down the file. Without wrapping that is arithmetic; with it
+    /// the lines in between are measured, and a jump too long to be worth
+    /// measuring — more than two screens — answers `None`, which is also
+    /// too far to move pixels for.
+    fn rows_between(
+        &self,
+        text: &mut TextEngine,
+        from: (usize, usize),
+        to: (usize, usize),
+    ) -> Option<i64> {
+        if !self.wrap {
+            return Some(to.0 as i64 - from.0 as i64);
+        }
+        let (a, b, sign) = if from <= to {
+            (from, to, 1)
+        } else {
+            (to, from, -1)
+        };
+        if b.0 - a.0 > self.visible_rows() * 2 {
+            return None;
+        }
+        let width = self.wrap_width.get();
+        let rows = if a.0 == b.0 {
+            b.1 as i64 - a.1 as i64
+        } else {
+            let mut rows = self.seg_count(text, a.0, width) as i64 - a.1 as i64;
+            for row in a.0 + 1..b.0 {
+                rows += self.seg_count(text, row, width) as i64;
+            }
+            rows + b.1 as i64
+        };
+        Some(rows * sign)
+    }
+
+    /// The part of the widget a vertical scroll moves: everything but the
+    /// sideways scrollbar along the bottom, when there is one, which stays
+    /// where it is and is repainted.
+    fn moving_area(&self, bounds: Rect) -> Rect {
+        if !self.wrap && self.max_scroll_x() > 0 {
+            Rect::new(bounds.x, bounds.y, bounds.width, bounds.height - 6)
+        } else {
+            bounds
+        }
     }
 
     pub fn visible_rows(&self) -> usize {
@@ -1022,6 +1078,7 @@ impl<M: 'static> Widget<M> for LogView<M> {
 
         let mut painted = self.painted.borrow_mut();
         painted.clear();
+        let mut drawn = 0;
         // The top row starts above the viewport by whatever part of it has
         // been scrolled past; the canvas is clipped to the widget, so the part
         // that is off the top simply is not drawn.
@@ -1039,6 +1096,18 @@ impl<M: 'static> Widget<M> for LogView<M> {
             let height = shown as i32 * row_h;
             let row = Rect::new(bounds.x, y, bounds.width, height);
             painted.push((index, y - bounds.y, height));
+            // Only the rows the clip reaches are drawn. After a scroll the tree
+            // has moved the others and asks for the strip that came into view,
+            // and laying out seventy lines of text to draw two is what the
+            // move was meant to save. The row is still on the record above:
+            // hit-testing needs every row, drawn or not.
+            if !row.intersects(&canvas.clip()) {
+                y += height;
+                index += 1;
+                skip = 0;
+                continue;
+            }
+            drawn += 1;
             let mut pen = canvas.with_clip(row);
             let styled = self.styled(line);
             let line_style =
@@ -1135,6 +1204,8 @@ impl<M: 'static> Widget<M> for LogView<M> {
             skip = 0;
         }
 
+        self.drawn.set(drawn);
+
         // A thin bar along the bottom says how much lies to either side, as a
         // scroll view's would; nothing is drawn when everything fits.
         let max_x = self.max_scroll_x();
@@ -1216,6 +1287,21 @@ impl<M: 'static> Widget<M> for LogView<M> {
                 // which is what makes a log that is not moving shimmer.
                 if (self.top, self.top_seg, self.sub_px, self.follow) == before && !moved {
                     return Handled::No;
+                }
+                // A vertical move and nothing else is one the tree can make by
+                // shifting the rows already on screen and asking for the strip
+                // that came into view. Not while following, when paint pins the
+                // view to the end and `top` says nothing about where the rows
+                // were; not with a sideways move, which every row is part of.
+                if !moved && !before.3 && !self.follow {
+                    let rows =
+                        self.rows_between(ctx.text, (before.0, before.1), (self.top, self.top_seg));
+                    let dy = rows
+                        .map(|rows| rows * row_h as i64 + (self.sub_px - before.2) as i64)
+                        .filter(|dy| *dy != 0 && dy.unsigned_abs() < bounds.height as u64);
+                    if let Some(dy) = dy {
+                        ctx.scrolled(self.moving_area(bounds), Point::new(0, dy as i32));
+                    }
                 }
                 Handled::Yes
             }

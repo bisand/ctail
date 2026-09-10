@@ -18,7 +18,8 @@ use ctail_core::{
     Tailer, TailerEvents, TailerOptions, UpdateCheck,
 };
 use denise::{
-    BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Pen, Rect, Size,
+    BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Pen, Point,
+    Rect, Size,
 };
 use denise_text::TextStyle;
 use denise_ui::widgets::{open_menu, open_menu_at, MenuBar, MenuItem};
@@ -234,6 +235,13 @@ pub struct App {
     /// A sideways offset a snapshot asked for, applied to the active view as
     /// its lines arrive (the clamp needs a painted width and a widest line).
     debug_scroll_x: Option<i32>,
+    /// `CTAIL_DEBUG_SCROLL_Y`: scrolls of that many pixels fed to the log one
+    /// per frame, cycling through the list — a gesture that never ends, for
+    /// measuring what a frame of scrolling costs without a hand on the
+    /// trackpad. Empty when unset.
+    debug_scroll_y: Vec<f32>,
+    /// Frames the synthetic gesture has run for.
+    debug_frame: usize,
     search: SearchBar,
     /// Validity and emptiness of the query the views are showing, so stepping
     /// through matches keeps reporting "bad regex" rather than a technically
@@ -420,6 +428,8 @@ impl App {
             status,
             memory_at: Instant::now(),
             debug_scroll_x: None,
+            debug_scroll_y: Vec::new(),
+            debug_frame: 0,
             search,
             search_valid: true,
             search_empty: true,
@@ -483,13 +493,18 @@ impl App {
     /// `CTAIL_DEBUG_SEARCH` opens the find bar on that query,
     /// `CTAIL_DEBUG_SEARCH_STEP` presses ↓ that many times (negative for ↑),
     /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode, and
-    /// `CTAIL_DEBUG_SETTINGS` / `CTAIL_DEBUG_PROFILES` open those windows, and
-    /// `CTAIL_DEBUG_SCROLL_TRACE` is a file to log scroll events and painted
-    /// frames to (see `trace.rs`).
+    /// `CTAIL_DEBUG_SETTINGS` / `CTAIL_DEBUG_PROFILES` open those windows,
+    /// `CTAIL_DEBUG_SCROLL_Y` scrolls the log by those pixels, one per frame,
+    /// and `CTAIL_DEBUG_SCROLL_TRACE` is a file to log scroll events and
+    /// painted frames to (see `trace.rs`).
     fn debug_hooks(&mut self) {
         self.debug_scroll_x = std::env::var("CTAIL_DEBUG_SCROLL_X")
             .ok()
             .and_then(|v| v.parse().ok());
+        self.debug_scroll_y = std::env::var("CTAIL_DEBUG_SCROLL_Y")
+            .ok()
+            .map(|v| v.split(',').filter_map(|d| d.trim().parse().ok()).collect())
+            .unwrap_or_default();
         if std::env::var_os("CTAIL_DEBUG_SETTINGS").is_some() {
             self.open_settings();
         }
@@ -1778,6 +1793,15 @@ impl DeniseApp for App {
         for (check, manual) in answers {
             self.show_update_check(check, manual);
         }
+        if !self.debug_scroll_y.is_empty() {
+            let dy = self.debug_scroll_y[self.debug_frame % self.debug_scroll_y.len()];
+            self.debug_frame += 1;
+            forwarded.push(InputEvent::PointerScroll {
+                delta_x: 0.0,
+                delta_y: dy,
+                position: Point::new(self.window.width as i32 / 2, self.window.height as i32 / 2),
+            });
+        }
         self.ui.handle(&forwarded);
         // The field reports on submit, not per keystroke, so typing is noticed
         // by comparing what is in it.
@@ -1848,7 +1872,10 @@ impl DeniseApp for App {
         // Engine events arrive on their own threads and cannot wake the loop
         // yet, so poll them at the tail cadence while a file is open. With no
         // file open the status bar's memory figure is the only thing moving.
-        let poll = Some(if self.tabs.is_empty() {
+        let poll = Some(if !self.debug_scroll_y.is_empty() {
+            // The synthetic gesture runs at a display's pace.
+            Duration::from_millis(8)
+        } else if self.tabs.is_empty() {
             MEMORY_INTERVAL
         } else {
             Duration::from_millis(100)
