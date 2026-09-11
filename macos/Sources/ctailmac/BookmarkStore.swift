@@ -19,12 +19,20 @@ final class BookmarkStore {
     }
 
     /// Records a security-scoped bookmark for a user-granted URL.
+    ///
+    /// The bookmark asks for read access only. The app is entitled to read what
+    /// the user picks and nothing more, and a read-write scope is refused under
+    /// that entitlement — which, swallowed, left every file unreadable after a
+    /// relaunch: the tab came back, its contents did not.
     func save(_ url: URL) {
-        guard let data = try? url.bookmarkData(options: .withSecurityScope,
-                                               includingResourceValuesForKeys: nil, relativeTo: nil)
-        else { return }
-        map[url.path] = data.base64EncodedString()
-        persist()
+        do {
+            let data = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                            includingResourceValuesForKeys: nil, relativeTo: nil)
+            map[url.path] = data.base64EncodedString()
+            persist()
+        } catch {
+            NSLog("ctail: cannot keep access to %@ across launches: %@", url.path, error.localizedDescription)
+        }
     }
 
     /// Resolves + starts accessing the bookmark for `path`. Returns false if no
@@ -38,9 +46,11 @@ final class BookmarkStore {
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope,
                                  relativeTo: nil, bookmarkDataIsStale: &stale) else { return false }
-        if stale { save(url) }
         let ok = url.startAccessingSecurityScopedResource()
         if ok { active[path] = url }
+        // A stale bookmark is renewed from the resolved URL, which can only be
+        // bookmarked again while it is being accessed.
+        if stale { save(url) }
         return ok
     }
 
