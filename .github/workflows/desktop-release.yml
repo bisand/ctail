@@ -1,0 +1,436 @@
+name: Desktop release
+
+# The desktop app — the Linux and Windows front end in desktop/ — built for the
+# machines people run it on, packaged the way each of those machines installs
+# software, and attached to a release as downloads:
+#
+#   Linux x86_64 and aarch64   .tar.gz, .deb, .rpm and Arch's .pkg.tar.zst,
+#                              from a glibc build; .apk, from a musl build
+#   Windows x86_64             .zip
+#
+# each with a .sha256 beside it. macOS is not here on purpose: the Mac app is
+# the Swift one in macos/, and it ships through the App Store.
+#
+# # The release comes first
+#
+# ctail's releases are published by a person, and this follows from that: a
+# published release names a tag, and everything here is built from the tree at
+# that tag. A failed build cannot un-publish anything, so it runs after the
+# publish, attaches whatever did build, and can be run again by hand for the
+# same tag.
+#
+# # Runnable on its own
+#
+# Run it from the Actions tab with a tag that has *no* release and the packages
+# come back as the run's artifacts instead, with nothing published or edited —
+# which is how to rehearse it. A pull request that changes this file or
+# packaging/ builds everything from the branch in the same way.
+#
+# # Why nfpm
+#
+# One description, packaging/nfpm.yaml, makes all four Linux package formats
+# from a binary that is already built, on an ordinary runner. dpkg-deb,
+# rpmbuild, abuild and makepkg each want to run on their own distribution and
+# to build the software themselves, which would be four builds of one program.
+
+on:
+  release:
+    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to build, and the release to attach to.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build, e.g. v1.0.1. With no release of that name the packages stay in the workflow.
+        required: true
+        type: string
+  # A release workflow that is only exercised by releasing is a release
+  # workflow nobody has tested.
+  pull_request:
+    paths:
+      - .github/workflows/desktop-release.yml
+      - packaging/**
+
+permissions:
+  contents: write # attaching assets to the release, and editing its notes
+
+env:
+  CARGO_TERM_COLOR: always
+  # The tag, whichever way this run was started: a published release names its
+  # own, a person or a calling workflow passes one, and a pull request has none.
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+  # The Alpine the .apk is built on and checked on. musl keeps old binaries
+  # running on newer releases, so this is the oldest Alpine the package is for.
+  ALPINE_VERSION: "3.22"
+
+jobs:
+  # Once, before five builds spend their minutes: the program prints the
+  # version in desktop/Cargo.toml, not the tag's, so a tag and a crate that
+  # disagree would ship packages that call themselves something else.
+  version:
+    name: the tag and the crate agree
+    runs-on: ubuntu-latest
+    outputs:
+      number: ${{ steps.version.outputs.number }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      # With no tag (a pull request) the crate's own number stands, and there is
+      # nothing to check it against.
+      - name: What version this is
+        id: version
+        run: |
+          set -euo pipefail
+          # The first line of the file that starts `version =` is [package]'s;
+          # the dependencies carry theirs inline.
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n 1)
+          if [ -z "$TAG" ]; then
+            echo "number=$crate" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          number="${TAG#v}"
+          if [ "$number" != "$crate" ]; then
+            echo "::error::The tag $TAG is version $number, but desktop/Cargo.toml says $crate, which is what the program would call itself. To fix: set version = \"$number\" in desktop/Cargo.toml (and in VERSION), run cargo build so Cargo.lock follows, commit both, then delete the release and the tag $TAG and publish the release again from that commit."
+            exit 1
+          fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not deny the others their downloads: each
+      # is uploaded on its own, and a failed one can be re-run by itself.
+      fail-fast: false
+      matrix:
+        include:
+          # Built on the oldest runner still offered rather than the newest: a
+          # binary is linked against the glibc it was built against and will not
+          # start on anything older. 22.04's makes it glibc 2.34 or newer —
+          # Debian 12, RHEL 9, Ubuntu 22.04 and everything since.
+          - name: Linux x86_64
+            os: ubuntu-22.04
+            libc: gnu
+            slug: x86_64-unknown-linux-gnu
+            arch: amd64
+          # Native rather than cross-compiled, so no arm64 sysroot is needed.
+          - name: Linux aarch64
+            os: ubuntu-22.04-arm
+            libc: gnu
+            slug: aarch64-unknown-linux-gnu
+            arch: arm64
+          # Alpine is musl, and a glibc binary does not run there at all, so it
+          # gets a build of its own, made inside Alpine on the same runners.
+          - name: Alpine x86_64
+            os: ubuntu-22.04
+            libc: musl
+            slug: x86_64-unknown-linux-musl
+            arch: amd64
+          - name: Alpine aarch64
+            os: ubuntu-22.04-arm
+            libc: musl
+            slug: aarch64-unknown-linux-musl
+            arch: arm64
+          - name: Windows x86_64
+            os: windows-latest
+            libc: msvc
+            slug: x86_64-pc-windows-msvc
+            arch: amd64
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      VERSION: ${{ needs.version.outputs.number }}
+      LIBC: ${{ matrix.libc }}
+      SLUG: ${{ matrix.slug }}
+      ARCH: ${{ matrix.arch }}
+
+    steps:
+      # The tag when there is one; on a pull request, whatever the branch says.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      # The Alpine build brings its own toolchain in its container.
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.libc != 'musl'
+
+      # The packages DeniseUI's own release builds install, for the same reason:
+      # denise-winit pulls in winit. The binary links none of them — winit and
+      # wgpu open the window system's libraries at run time — so they matter to
+      # the build and not to the packages' dependencies.
+      - name: Install build dependencies
+        if: matrix.libc == 'gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
+
+      # `--locked` deliberately: the downloads are built from exactly the
+      # dependency versions the tree was tested with, or they are not the same
+      # software.
+      - name: Build
+        if: matrix.libc != 'musl'
+        run: cargo build --release --locked -p ctail-desktop
+
+      # Inside Alpine, and linked *dynamically* against musl, which is not what
+      # Rust does for musl by default. A static musl binary's dlopen can open
+      # nothing, and every library a window needs is opened with dlopen, so a
+      # static build would pass every test below and then fail to open a window
+      # on every Alpine desktop; the check after the build holds it to that.
+      # Its own target directory keeps the container's root-owned files out of
+      # target/release.
+      - name: Build (Alpine)
+        if: matrix.libc == 'musl'
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/src" -w /src \
+            -e CARGO_TERM_COLOR -e CARGO_TARGET_DIR=/src/target/musl \
+            -e RUSTFLAGS="-C target-feature=-crt-static" \
+            "rust:1-alpine$ALPINE_VERSION" \
+            sh -euc 'apk add --no-cache pkgconf musl-dev libxkbcommon-dev wayland-dev > /dev/null
+                     cargo build --release --locked -p ctail-desktop'
+          described=$(file target/musl/release/ctail-desktop)
+          echo "$described"
+          case "$described" in
+            *"interpreter /lib/ld-musl-"*) ;;
+            *)
+              echo "::error::the Alpine binary is not dynamically linked against musl, so it could not open a window system"
+              exit 1
+              ;;
+          esac
+
+      # What ships: the program under the name people type, the licence, and a
+      # README. The debug info comes out — the release profile keeps it for
+      # profiling, and it is four fifths of the file (107 MB down to 20 MB) —
+      # but the symbol table stays, so a panic's backtrace still names its
+      # functions. The .exe's debug info is in a .pdb that is not shipped.
+      - name: Lay out what ships
+        run: |
+          set -euo pipefail
+          case "$LIBC" in
+            gnu)  built=target/release/ctail-desktop;      program=ctail ;;
+            musl) built=target/musl/release/ctail-desktop; program=ctail ;;
+            msvc) built=target/release/ctail-desktop.exe;  program=ctail.exe ;;
+          esac
+          stage="ctail-$VERSION-$SLUG"
+          mkdir -p "$stage" out
+          cp "$built" "$stage/$program"
+          if [ "$LIBC" != msvc ]; then
+            strip --strip-debug "$stage/$program"
+          fi
+          cp LICENSE "$stage/LICENSE"
+          cp packaging/README-dist.md "$stage/README.md"
+          ls -l "$stage"
+          echo "STAGE=$stage" >> "$GITHUB_ENV"
+          echo "PROGRAM=$stage/$program" >> "$GITHUB_ENV"
+
+      # Every program is run before it is packaged: it says the version the tag
+      # says, and it draws the main window with a log open, which needs no
+      # display (packaging/smoke.sh says why, and what the Windows build can and
+      # cannot print). The Alpine program is run in Alpine, with libgcc, the one
+      # library it links that a bare Alpine lacks.
+      - name: The program runs, and says the version the tag says
+        run: |
+          set -euo pipefail
+          if [ "$LIBC" = musl ]; then
+            docker run --rm -v "$PWD:/src" -w /src "alpine:$ALPINE_VERSION" \
+              sh -euc 'apk add --no-cache libgcc > /dev/null && sh packaging/smoke.sh "$1" "$2"' \
+              sh "$PROGRAM" "$VERSION"
+          else
+            sh packaging/smoke.sh "$PROGRAM" "$VERSION"
+          fi
+
+      # A pinned release, checked against the checksum it was published with:
+      # what builds the packages should not change under a re-run.
+      - name: Install nfpm
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          version=2.47.0
+          case "$(uname -m)" in
+            x86_64)
+              file="nfpm_${version}_Linux_x86_64.tar.gz"
+              sum=0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+              ;;
+            aarch64)
+              file="nfpm_${version}_Linux_arm64.tar.gz"
+              sum=1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
+              ;;
+          esac
+          curl -fsSL -o "$RUNNER_TEMP/$file" \
+            "https://github.com/goreleaser/nfpm/releases/download/v$version/$file"
+          echo "$sum  $RUNNER_TEMP/$file" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP" nfpm
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # The file names are each format's own convention, written out here
+      # rather than left to nfpm, so the notes job can link them without
+      # guessing. The "-1" and "-r1" are the package release in nfpm.yaml.
+      - name: Package (Linux)
+        if: matrix.libc == 'gnu'
+        run: |
+          set -euo pipefail
+          case "$ARCH" in amd64) machine=x86_64 ;; arm64) machine=aarch64 ;; esac
+          tar -czf "out/$STAGE.tar.gz" "$STAGE"
+          export CTAIL_BINARY="$PROGRAM"
+          nfpm package --config packaging/nfpm.yaml --packager deb \
+            --target "out/ctail_${VERSION}-1_${ARCH}.deb"
+          nfpm package --config packaging/nfpm.yaml --packager rpm \
+            --target "out/ctail-${VERSION}-1.${machine}.rpm"
+          nfpm package --config packaging/nfpm.yaml --packager archlinux \
+            --target "out/ctail-${VERSION}-1-${machine}.pkg.tar.zst"
+
+      - name: Package (Alpine)
+        if: matrix.libc == 'musl'
+        run: |
+          set -euo pipefail
+          case "$ARCH" in amd64) machine=x86_64 ;; arm64) machine=aarch64 ;; esac
+          CTAIL_BINARY="$PROGRAM" nfpm package --config packaging/nfpm.yaml --packager apk \
+            --target "out/ctail_${VERSION}-r1_${machine}.apk"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: 7z a -tzip "out/$STAGE.zip" "$STAGE" > /dev/null
+
+      # Each package installed in a clean container of a distribution it is
+      # for, and the installed program run: the names it depends on exist
+      # there, they resolve, and the program starts and draws with nothing more.
+      # Ubuntu 22.04 and AlmaLinux 9 are the oldest the glibc build is for.
+      # Arch Linux publishes no aarch64 image, so its package is installed on
+      # x86_64 only — the aarch64 one is the same description around a
+      # different binary, and that binary has already run above.
+      - name: The packages install, and what they install runs
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          check() {
+            echo "::group::$2 on $1"
+            docker run --rm -v "$PWD:/src" -w /src "$1" sh packaging/check-package.sh "$2" "$VERSION"
+            echo "::endgroup::"
+          }
+          if [ "$LIBC" = musl ]; then
+            check "alpine:$ALPINE_VERSION" out/*.apk
+          else
+            check ubuntu:22.04 out/*.deb
+            check debian:12 out/*.deb
+            check almalinux:9 out/*.rpm
+            check fedora:latest out/*.rpm
+            if [ "$ARCH" = amd64 ]; then
+              check archlinux:latest out/*.pkg.tar.zst
+            fi
+          fi
+
+      - name: Checksum
+        run: |
+          set -euo pipefail
+          cd out
+          for file in *; do
+            sha256sum "$file" > "$file.sha256"
+          done
+          cat ./*.sha256
+
+      # Kept whatever happens next, so a rehearsal on a tag with no release —
+      # and a release upload that fails — still leaves something to download.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctail-${{ matrix.slug }}
+          path: out/*
+          if-no-files-found: error
+
+      # Only when the tag actually has a release. `--clobber` so a re-run
+      # replaces its own earlier attempt rather than failing on it.
+      - name: Attach to the release
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber --repo "$REPO"
+            echo "attached to $TAG"
+          else
+            echo "::notice::no release called $TAG — the packages are in this run's artifacts instead."
+          fi
+
+  # The release page says the downloads exist, which to pick, and what the
+  # first launch of an unsigned Windows program looks like. Appended once, under
+  # a marker, so a re-run does not say it twice and whatever a person wrote
+  # above it is left alone.
+  notes:
+    name: say how to get it, on the release page
+    needs: build
+    if: (inputs.tag || github.event.release.tag_name) != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the download section to the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # --repo on every call: this job builds nothing, so it has no checkout,
+          # and `gh` with neither a repository argument nor a git remote in the
+          # working directory fails the same way as a missing release. DeniseUI's
+          # copy of this job learned that the hard way, reporting "no release
+          # called v0.20.0" a minute after attaching assets to that very release.
+          if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            echo "::notice::no release called $TAG — nothing to write notes on."
+            exit 0
+          fi
+
+          marker="<!-- desktop-downloads -->"
+          body=$(gh release view "$TAG" --repo "$REPO" --json body --jq .body)
+          if printf '%s' "$body" | grep -qF "$marker"; then
+            echo "the notes already say this"
+            exit 0
+          fi
+
+          base="https://github.com/$REPO/releases/download/$TAG"
+          link() { printf "[\`%s\`](%s/%s)" "$1" "$base" "$1"; }
+          {
+            printf '%s\n' "$body"
+            cat <<NOTES
+
+          $marker
+          ## Download ctail for Linux and Windows
+
+          The desktop app, ready to install. Each file has a \`.sha256\` beside it.
+
+          | | x86-64 | aarch64 |
+          |---|---|---|
+          | Debian, Ubuntu | $(link "ctail_${version}-1_amd64.deb") | $(link "ctail_${version}-1_arm64.deb") |
+          | Fedora, RHEL and its rebuilds | $(link "ctail-${version}-1.x86_64.rpm") | $(link "ctail-${version}-1.aarch64.rpm") |
+          | Arch Linux | $(link "ctail-${version}-1-x86_64.pkg.tar.zst") | $(link "ctail-${version}-1-aarch64.pkg.tar.zst") |
+          | Alpine | $(link "ctail_${version}-r1_x86_64.apk") | $(link "ctail_${version}-r1_aarch64.apk") |
+          | Any Linux with glibc 2.34 or newer | $(link "ctail-${version}-x86_64-unknown-linux-gnu.tar.gz") | $(link "ctail-${version}-aarch64-unknown-linux-gnu.tar.gz") |
+          | Windows | $(link "ctail-${version}-x86_64-pc-windows-msvc.zip") | |
+
+          Install a package with the package manager, which fetches what the window
+          needs: \`sudo apt install ./ctail_${version}-1_amd64.deb\`,
+          \`sudo dnf install ./ctail-${version}-1.x86_64.rpm\`,
+          \`sudo pacman -U ctail-${version}-1-x86_64.pkg.tar.zst\`, or
+          \`sudo apk add --allow-untrusted ctail_${version}-r1_x86_64.apk\` (the packages
+          are not signed, which is what apk's flag is about). The \`.tar.gz\` is the
+          program on its own, for a machine that already has a desktop.
+
+          **On a Mac**, get ctail from the [Mac App Store](https://apps.apple.com/app/id6808019248).
+
+          **The Windows build is not signed**, so SmartScreen stops its first launch:
+          choose **More info**, then **Run anyway**.
+          NOTES
+          } > notes.md
+
+          gh release edit "$TAG" --repo "$REPO" --notes-file notes.md
+          echo "the release page now says where the downloads are"

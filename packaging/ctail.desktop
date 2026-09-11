@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ctail
+GenericName=Log Viewer
+Comment=Follow, highlight and search log files as they grow
+Exec=ctail %F
+Icon=ctail
+Terminal=false
+Categories=Development;Utility;System;Monitor;
+MimeType=text/plain;text/x-log;
+Keywords=log;tail;follow;search;highlight;

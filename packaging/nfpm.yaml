@@ -1,0 +1,195 @@
+# The Linux packages of the desktop app — .deb, .rpm, .apk and the Arch Linux
+# .pkg.tar.zst — from one description, by nfpm (https://nfpm.goreleaser.com).
+# The release workflow (.github/workflows/desktop-release.yml) runs it once per
+# format from the repository root, with three variables in the environment:
+#
+#   VERSION       the version being released, without the leading "v"
+#   ARCH          amd64 or arm64; nfpm translates it to each format's own name
+#   CTAIL_BINARY  the program to install as /usr/bin/ctail, already stripped
+#
+#   VERSION=1.0.0 ARCH=arm64 CTAIL_BINARY=stage/ctail \
+#     nfpm package --config packaging/nfpm.yaml --packager deb --target out/
+#
+# # Dependencies
+#
+# The binary itself links only libc, libm and libgcc_s (`readelf -d` names
+# nothing else). Everything that makes a window — X11 or Wayland, the keyboard
+# map, the GPU — is opened at run time with dlopen, by winit, softbuffer and
+# wgpu, so none of it appears to ldd, and none of it is needed by
+# `ctail --version` or by `--snapshot`, which draws in software with no display.
+# What a window does need was found by starting the program under Xvfb and a
+# headless weston with LD_DEBUG=libs, and then taking libraries away one at a
+# time:
+#
+#   X11      libX11, libX11-xcb, libxcb, libXcursor, libXi, libxkbcommon and
+#            libxkbcommon-x11 (without the last, winit panics; without Xcursor
+#            or Xi it cannot make an event loop)
+#   Wayland  libwayland-client, and libxkbcommon once a keyboard is attached
+#   GPU      libvulkan (with a Vulkan driver) or libEGL (with Mesa); with
+#            neither, the program says so and draws in software instead
+#   fonts    DejaVu Sans Mono / DejaVu Sans are the first faces it looks for
+#            on Linux; with no font at all it uses a built-in bitmap face
+#
+# So the hard dependencies are libc and libgcc, and the window system is a
+# recommendation wherever the format can say "recommended": apt and dnf install
+# recommendations by default, so a desktop gets them, and a headless machine
+# that only wants `--snapshot` is not made to take an X11 stack. Alpine's apk
+# and pacman (as nfpm writes it — no optdepends) have no such word, so there
+# the libraries a window cannot open without are hard dependencies, and the GPU
+# and the fonts, which have fallbacks, are left to the machine.
+
+name: ctail
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: 1
+section: utils
+priority: optional
+maintainer: André Biseth <andre@biseth.net>
+vendor: André Biseth
+homepage: https://github.com/bisand/ctail
+license: MIT
+description: |-
+  Log viewer that follows files as they grow
+  ctail opens the tail of a large log at once and follows it as it grows,
+  colours lines by highlighting rules, searches the whole file rather than what
+  is on screen, and brings its tabs back the way they were left. Drawn through
+  the GPU where one can present, in software where none can.
+
+contents:
+  - src: ${CTAIL_BINARY}
+    dst: /usr/bin/ctail
+    expand: true
+    file_info:
+      mode: 0755
+
+  - src: packaging/ctail.desktop
+    dst: /usr/share/applications/ctail.desktop
+    file_info:
+      mode: 0644
+
+  # The Mac app's icon set, at the sizes the hicolor theme names. It has no
+  # 48 px image, which is the size most launchers ask for first, so that one
+  # is packaging/icons/ctail-48.png: the 256 px image scaled down
+  # (`sips -z 48 48 icon_128@2x.png`), kept beside this file so the build needs
+  # no image tools.
+  - src: macos/Assets.xcassets/AppIcon.appiconset/icon_16.png
+    dst: /usr/share/icons/hicolor/16x16/apps/ctail.png
+    file_info:
+      mode: 0644
+  - src: macos/Assets.xcassets/AppIcon.appiconset/icon_32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/ctail.png
+    file_info:
+      mode: 0644
+  - src: packaging/icons/ctail-48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/ctail.png
+    file_info:
+      mode: 0644
+  - src: macos/Assets.xcassets/AppIcon.appiconset/icon_128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/ctail.png
+    file_info:
+      mode: 0644
+  - src: macos/Assets.xcassets/AppIcon.appiconset/icon_256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/ctail.png
+    file_info:
+      mode: 0644
+  - src: macos/Assets.xcassets/AppIcon.appiconset/icon_512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/ctail.png
+    file_info:
+      mode: 0644
+
+  - src: LICENSE
+    dst: /usr/share/doc/ctail/LICENSE
+    file_info:
+      mode: 0644
+  - src: packaging/README-dist.md
+    dst: /usr/share/doc/ctail/README.md
+    file_info:
+      mode: 0644
+  # Arch keeps licence texts in a place of their own, and namcap asks for it.
+  - src: LICENSE
+    dst: /usr/share/licenses/ctail/LICENSE
+    packager: archlinux
+    file_info:
+      mode: 0644
+
+overrides:
+  deb:
+    depends:
+      # GLIBC_2.34 is the newest symbol version the binary references
+      # (`objdump -T`), because it is built on Ubuntu 22.04.
+      - libc6 (>= 2.34)
+      - libgcc-s1
+    recommends:
+      - libx11-6
+      - libx11-xcb1
+      - libxcb1
+      - libxcursor1
+      - libxi6
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libwayland-client0
+      - libvulkan1
+      - libegl1
+      - fonts-dejavu-core
+    suggests:
+      # The Open dialog asks the desktop portal over D-Bus; "reveal in file
+      # manager" and the update check's download link go through xdg-open.
+      - xdg-desktop-portal
+      - xdg-utils
+
+  rpm:
+    # By soname rather than by package name, as rpmbuild's own dependency
+    # generator would write them: Fedora, RHEL and openSUSE call the packages
+    # different things, but every one of them provides the library under the
+    # same name. `(64bit)` is what rpm marks every 64-bit ELF library with,
+    # x86_64 and aarch64 alike.
+    depends:
+      - libc.so.6(GLIBC_2.34)(64bit)
+      - libm.so.6()(64bit)
+      - libgcc_s.so.1()(64bit)
+    recommends:
+      - libX11.so.6()(64bit)
+      - libX11-xcb.so.1()(64bit)
+      - libxcb.so.1()(64bit)
+      - libXcursor.so.1()(64bit)
+      - libXi.so.6()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - libxkbcommon-x11.so.0()(64bit)
+      - libwayland-client.so.0()(64bit)
+      - libvulkan.so.1()(64bit)
+      - libEGL.so.1()(64bit)
+      - dejavu-sans-mono-fonts
+    suggests:
+      - xdg-desktop-portal
+      - xdg-utils
+
+  apk:
+    # Built against musl on Alpine, and linked dynamically on purpose: a
+    # static musl binary cannot dlopen, and every window-system library is
+    # dlopen'd. libgcc is the unwinder that dynamic link brings in.
+    depends:
+      - musl
+      - libgcc
+      - libx11
+      - libxcb
+      - libxcursor
+      - libxi
+      - libxkbcommon
+      - libxkbcommon-x11
+      - wayland-libs-client
+
+  archlinux:
+    depends:
+      - glibc
+      - gcc-libs
+      - libx11
+      - libxcb
+      - libxcursor
+      - libxi
+      - libxkbcommon
+      - libxkbcommon-x11
+      - wayland
+
+archlinux:
+  packager: André Biseth <andre@biseth.net>

@@ -9,6 +9,28 @@ none can, so a GPU is used but never required. It runs on macOS too, which is
 how it is developed; the shipping macOS app stays the AppKit one in
 [`macos/`](../macos/).
 
+## Download
+
+Every [GitHub release](https://github.com/bisand/ctail/releases) carries this
+app prebuilt, with a `.sha256` beside each file:
+
+- **Linux**, x86_64 and aarch64: a `.deb` for Debian and Ubuntu, an `.rpm` for
+  Fedora and RHEL, an `.apk` for Alpine, a `.pkg.tar.zst` for Arch Linux, and a
+  plain `.tar.gz` for anything else with glibc 2.34 or newer. The packages
+  install the program as `ctail`, with a menu entry and an icon, and pull in
+  the X11 and Wayland libraries a window needs.
+- **Windows**, x86_64: a `.zip` holding `ctail.exe`. It is not signed, so
+  SmartScreen stops the first launch: **More info**, then **Run anyway**.
+
+On a Mac, get ctail from the
+[Mac App Store](https://apps.apple.com/app/id6808019248), or build this front
+end from source with `cargo build --release -p ctail-desktop`.
+
+The downloads are made by
+[`.github/workflows/desktop-release.yml`](../.github/workflows/desktop-release.yml)
+from [`packaging/`](../packaging/) whenever a release is published;
+`packaging/nfpm.yaml` says why each dependency is there.
+
 ## Why this and not a webview or Qt
 
 The Wails app's Svelte UI was never as smooth as the native Mac app, and Tauri
@@ -163,8 +185,9 @@ wgpu — because a swapchain presents one frame per display refresh, and that
 pacing is what makes a scroll read as smooth; the software path presents a
 frame whenever an event has been handled, at whatever moment that falls in the
 refresh. When no adapter can present to the window — a VM without a GPU, a
-remote desktop, a board without a driver — the app says so on stderr and
-starts itself again in software. winit allows one event loop per process, so
+remote desktop, a board without a driver, or a Linux machine with neither a
+Vulkan loader nor EGL installed — the app says so on stderr and starts itself
+again in software. winit allows one event loop per process, so
 the fallback is a second process with the same arguments rather than a second
 window in this one. `CTAIL_PRESENT=software` chooses the rasteriser outright,
 which is how the two are compared. Every secondary window draws the way the

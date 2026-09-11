@@ -3,6 +3,11 @@
 //! software rasteriser where there is no GPU to draw with, the log engine from
 //! `ctail-core` underneath, and no webview.
 
+// A release build on Windows is a GUI program, so starting it from the Start
+// menu or Explorer does not open a console window beside it. Debug builds keep
+// the console, because that is where their panics and `eprintln!`s go.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod assistant;
 mod fonts;
@@ -23,7 +28,14 @@ use denise_winit::{run_with, Error, Present, WindowConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() == Some("--snapshot") {
+    let first = args.next();
+    // Before any window or config is touched: this is what a package manager's
+    // smoke test and a bug report ask, and neither has a display to offer.
+    if matches!(first.as_deref(), Some("--version" | "-V")) {
+        println!("ctail {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if first.as_deref() == Some("--snapshot") {
         let what = args.next().unwrap_or_else(|| "settings".into());
         let path = args.next().unwrap_or_else(|| format!("{what}.ppm"));
         let scale: f32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(2.0);
@@ -59,7 +71,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let open = move |size, scale| app::App::new(size, scale, files, present);
     match run_with(config(present), open) {
-        Err(Error::Gpu(reason)) if present == Present::Gpu => {
+        // No adapter that can present is `Gpu`; a machine with no GPU backend
+        // at all — no Vulkan loader and no EGL to open — fails one step
+        // earlier, making the surface, and that comes back as `Present`.
+        // Either way the software rasteriser can still draw the window.
+        Err(Error::Gpu(reason) | Error::Present(reason)) if present == Present::Gpu => {
             eprintln!("ctail: cannot draw through the GPU ({reason}); drawing in software");
             run_again_in_software()
         }
