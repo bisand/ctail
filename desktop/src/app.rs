@@ -344,6 +344,8 @@ pub struct App {
     resized_at: Option<Instant>,
     /// Off for an offscreen snapshot, whose debug file is not a session.
     saves_session: bool,
+    /// `CTAIL_DEBUG_MENU_CYCLE`: toggles left, and when the next one is due.
+    debug_menu_cycle: Option<(u32, Instant)>,
     scale: f32,
     title: String,
     started: Instant,
@@ -521,6 +523,7 @@ impl App {
             saved_session: None,
             resized_at: None,
             saves_session: true,
+            debug_menu_cycle: None,
             exit: false,
         };
         if files.is_empty() {
@@ -560,8 +563,9 @@ impl App {
     /// `CTAIL_DEBUG_SEARCH_FILTER` starts it in filter mode, and
     /// `CTAIL_DEBUG_SETTINGS` / `CTAIL_DEBUG_PROFILES` open those windows,
     /// `CTAIL_DEBUG_SCROLL_Y` scrolls the log by those pixels, one per frame,
-    /// and `CTAIL_DEBUG_SCROLL_TRACE` is a file to log scroll events and
-    /// painted frames to (see `trace.rs`).
+    /// `CTAIL_DEBUG_SCROLL_TRACE` is a file to log scroll events and painted
+    /// frames to (see `trace.rs`), and `CTAIL_DEBUG_MENU_CYCLE` opens and
+    /// closes the File menu that many times, printing the footprint.
     fn debug_hooks(&mut self) {
         self.debug_scroll_x = std::env::var("CTAIL_DEBUG_SCROLL_X")
             .ok()
@@ -570,6 +574,14 @@ impl App {
             .ok()
             .map(|v| v.split(',').filter_map(|d| d.trim().parse().ok()).collect())
             .unwrap_or_default();
+        // From three seconds in — the window up and drawn — the File menu
+        // opens and closes once a second, this many times, and the footprint
+        // is printed before each: what a menu costs, measured on the real
+        // surface rather than an offscreen one.
+        self.debug_menu_cycle = std::env::var("CTAIL_DEBUG_MENU_CYCLE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .map(|n| (n, Instant::now() + Duration::from_secs(3)));
         if std::env::var_os("CTAIL_DEBUG_SETTINGS").is_some() {
             self.open_settings();
         }
@@ -632,6 +644,11 @@ impl App {
             },
         );
         tailer.start();
+        // The first read lands in a moment; the memory figure should follow
+        // it then rather than at the next two-second tick.
+        self.memory_at = self
+            .memory_at
+            .min(Instant::now() + Duration::from_millis(250));
         self.config.add_recent_file(&path, 15);
         let saved = self
             .config
@@ -1633,9 +1650,28 @@ impl App {
             return;
         }
         self.memory_at = Instant::now() + MEMORY_INTERVAL;
-        let text = crate::memory::footprint()
-            .map(crate::memory::format)
-            .unwrap_or_default();
+        // What the open files hold, not what the process does: each tab's
+        // window of lines and its engine's line index, and the matches the
+        // find bar is holding. The rest of the process — the window, and on
+        // the GPU path a driver cache that comes and goes by 160 MB while
+        // frames are drawn — says nothing about the files.
+        let text = if self.tabs.is_empty() {
+            String::new()
+        } else {
+            let tabs: u64 = self
+                .tabs
+                .iter()
+                .map(|tab| {
+                    let lines = self
+                        .ui
+                        .widget::<LogView<Msg>>(tab.view)
+                        .map_or(0, |view| view.memory_bytes() as u64);
+                    lines + tab.tailer.counters().index_bytes()
+                })
+                .sum();
+            let bytes = tabs + self.file_search.memory_bytes() as u64;
+            format!("Files {}", crate::memory::format(bytes))
+        };
         let changed = self
             .ui
             .widget_mut::<StatusBar<Msg>>(self.status)
@@ -1643,6 +1679,13 @@ impl App {
         if changed {
             self.ui.invalidate(self.status);
         }
+    }
+
+    /// Reads the files' memory now rather than at the next tick, for an
+    /// offscreen snapshot that is over before one comes round.
+    pub(crate) fn debug_refresh_memory(&mut self) {
+        self.memory_at = Instant::now();
+        self.tick_memory();
     }
 
     /// Status line + follow box reflect the active tab.
@@ -1999,6 +2042,28 @@ impl DeniseApp for App {
         }
         if self.saves_session {
             self.keep_session();
+        }
+        if let Some((left, due)) = self.debug_menu_cycle {
+            if Instant::now() >= due {
+                let was = if self.ui.popup_open() {
+                    "open"
+                } else {
+                    "closed"
+                };
+                eprintln!(
+                    "menu {was}: {}",
+                    crate::memory::footprint()
+                        .map(crate::memory::format)
+                        .unwrap_or_default()
+                );
+                if self.ui.popup_open() {
+                    self.close_menu();
+                } else {
+                    self.open_menu(0);
+                }
+                self.debug_menu_cycle =
+                    (left > 1).then(|| (left - 1, Instant::now() + Duration::from_secs(1)));
+            }
         }
         self.sync_menubar();
         if self.ui.needs_paint() {

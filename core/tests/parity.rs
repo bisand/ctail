@@ -382,6 +382,28 @@ fn a_file_at_rest_when_opened_shows_its_unterminated_line_at_once() {
 }
 
 #[test]
+fn the_counters_say_what_the_line_index_holds() {
+    let dir = TempDir::new();
+    let file = dir.file("app.log");
+    let body: String = (1..=50).map(|i| format!("line {i}\n")).collect();
+    write(&file, &body);
+    let opts = TailerOptions {
+        index_stride: 10,
+        ..small_opts()
+    };
+    let (mut t, _rec) = engine(&file, opts);
+    let counters = t.counters();
+    assert_eq!(counters.index_bytes(), 0, "nothing indexed before a read");
+    t.perform_initial_read();
+    // Lines 1, 11, 21, 31 and 41 are checkpoints: an offset of eight bytes each.
+    assert!(
+        counters.index_bytes() >= 5 * 8,
+        "{} bytes for five checkpoints",
+        counters.index_bytes()
+    );
+}
+
+#[test]
 fn index_file_dense_sparse_partial_and_cancel() {
     let dir = TempDir::new();
     let file = dir.file("idx.log");

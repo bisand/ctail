@@ -297,6 +297,29 @@ impl<M: 'static> LogView<M> {
         self.total_lines
     }
 
+    /// Bytes this view holds for its file: the lines in the window, their
+    /// highlighting, and the rows a search or filter picked out. Summed when
+    /// asked — every two seconds, over a window of ten thousand lines by
+    /// default — rather than kept current everywhere lines come and go.
+    pub fn memory_bytes(&self) -> usize {
+        use std::mem::size_of;
+        let lines = self.lines.capacity() * size_of::<LogLine>()
+            + self.lines.iter().map(|l| l.text.capacity()).sum::<usize>();
+        let styled = self.styled.borrow();
+        let highlighting = styled.capacity() * (size_of::<i64>() + size_of::<Rc<Styled>>())
+            + styled
+                .values()
+                .map(|s| {
+                    // An `Rc`'s allocation carries its two counts beside the value.
+                    2 * size_of::<usize>()
+                        + size_of::<Styled>()
+                        + s.runs.capacity() * size_of::<(usize, usize, Option<u32>)>()
+                })
+                .sum::<usize>();
+        let search = (self.filtered.capacity() + self.matches.capacity()) * size_of::<usize>();
+        lines + highlighting + search
+    }
+
     pub fn first_number(&self) -> Option<i64> {
         self.lines.front().map(|l| l.number)
     }
@@ -1473,6 +1496,25 @@ mod tests {
     /// Width of `n` characters of the built-in font, which is fixed-width.
     fn cols(text: &mut TextEngine, style: TextStyle, n: i32) -> i32 {
         text.measure_line(style, "0") * n
+    }
+
+    #[test]
+    fn the_memory_a_view_reports_covers_the_lines_it_holds() {
+        let texts = [
+            "first line",
+            "a second, rather longer line of text",
+            "third",
+        ];
+        let (v, _, _) = view(&texts);
+        let text: usize = texts.iter().map(|t| t.len()).sum();
+        let slots = texts.len() * std::mem::size_of::<LogLine>();
+        assert!(
+            v.memory_bytes() >= text + slots,
+            "{} bytes reported for {text} bytes of text in {slots} bytes of slots",
+            v.memory_bytes()
+        );
+        let (empty, _, _) = view(&[]);
+        assert!(empty.memory_bytes() < v.memory_bytes());
     }
 
     #[test]

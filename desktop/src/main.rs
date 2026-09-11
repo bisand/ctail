@@ -239,6 +239,8 @@ fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
             }
         }
     }
+    // The memory figure ticks every two seconds, and a snapshot is over in one.
+    app.debug_refresh_memory();
     paint(&mut app, &mut pixels);
     // A run of scrolling frames, each painted *incrementally* into the same
     // buffer — the rows moved, the strip drawn — and then the same state

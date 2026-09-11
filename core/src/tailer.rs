@@ -39,7 +39,7 @@
 use memchr::{memchr, memchr_iter, memrchr};
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -340,6 +340,7 @@ fn pread(file: &File, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
 pub struct Counters {
     total_lines: AtomicI64,
     indexing_complete: AtomicBool,
+    index_bytes: AtomicU64,
 }
 
 impl Counters {
@@ -348,6 +349,12 @@ impl Counters {
     }
     pub fn indexing_complete(&self) -> bool {
         self.indexing_complete.load(Ordering::Acquire)
+    }
+    /// Bytes the line index holds for this file: the offsets of every
+    /// checkpoint, head and tail. The engine's only lasting cost per file —
+    /// lines themselves are read from disk on demand and handed on.
+    pub fn index_bytes(&self) -> u64 {
+        self.index_bytes.load(Ordering::Acquire)
     }
 }
 
@@ -584,6 +591,11 @@ impl Engine {
         self.counters
             .indexing_complete
             .store(self.base_known, Ordering::Release);
+        let checkpoints = self.head_checkpoints.capacity() + self.tail_checkpoints.capacity();
+        self.counters.index_bytes.store(
+            (checkpoints * std::mem::size_of::<i64>()) as u64,
+            Ordering::Release,
+        );
     }
 
     fn emit_lines(&self, lines: Vec<LogLine>) {

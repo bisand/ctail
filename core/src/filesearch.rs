@@ -137,6 +137,15 @@ impl FileSearch {
         }
     }
 
+    /// Bytes held by the answer in hand: a line number per match.
+    pub fn memory_bytes(&self) -> usize {
+        let state = self.state.lock().unwrap();
+        state
+            .ready
+            .as_ref()
+            .map_or(0, |(_, matches)| std::mem::size_of_val(matches.as_slice()))
+    }
+
     /// The matching line numbers, for a front end that lists them.
     pub fn matches(&self, query: &FileSearchQuery) -> Vec<i64> {
         let state = self.state.lock().unwrap();

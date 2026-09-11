@@ -88,6 +88,7 @@ ctail uses a sliding window buffer to keep memory usage low. A configurable numb
 - **Scrolling up** loads earlier lines from the file when you reach the upper portion of the buffer.
 - **Scrolling down** loads later lines when you reach the lower portion.
 - The status bar shows your current position in the file (e.g., "Lines 1,200 – 1,700 of 50,000").
+- In the Linux and Windows app, the status bar also shows how much memory the open files hold (e.g., "Files 3 MB"): the lines in each tab's buffer and their highlighting, the index ctail keeps to find lines in the file, and the matches of a search. It is not the size of the whole program, and it does not grow with the size of the files.
 - The scroll buffer size is configurable in Settings (100–5,000 lines).
 
 ### Horizontal Scrolling

@@ -1,10 +1,16 @@
-//! This process's memory footprint, for the status bar.
+//! Byte counts for the status bar, and this process's memory footprint.
 //!
-//! The macOS app shows the figure Activity Monitor calls "Memory", and a log
-//! viewer is a program people watch the memory of — a window over a 10 GB file
-//! is only honest if it can be seen not to be holding the file. Each platform
-//! has its own name for "what this process is actually costing", so each gets
-//! its own reading rather than a lowest common denominator.
+//! The status bar shows what the open files hold — see `App::tick_memory` —
+//! because a log viewer is a program people watch the memory of, and a window
+//! over a 10 GB file is only honest if it can be seen not to be holding the
+//! file. The whole process is a poor stand-in for that on the GPU path: the
+//! graphics driver keeps a cache of its own while frames are being drawn,
+//! 160 MB of it on a Mac, and gives it back when drawing stops.
+//!
+//! The footprint is still here, for the debug hooks that measure the process
+//! itself. Each platform has its own name for "what this process is actually
+//! costing", so each gets its own reading rather than a lowest common
+//! denominator.
 
 /// Bytes this process occupies, or `None` where the platform has no answer.
 #[cfg(target_os = "macos")]
@@ -61,14 +67,18 @@ pub fn footprint() -> Option<u64> {
     None
 }
 
-/// The status bar's rendering of a byte count: whole megabytes until it takes
-/// four digits to say, then gigabytes to two decimals.
+/// The status bar's rendering of a byte count: kilobytes under a megabyte —
+/// a few small logs hold less than that — whole megabytes until it takes four
+/// digits to say, then gigabytes to two decimals.
 pub fn format(bytes: u64) -> String {
-    let mb = bytes as f64 / (1024.0 * 1024.0);
+    let kb = bytes as f64 / 1024.0;
+    let mb = kb / 1024.0;
     if mb >= 1024.0 {
         format!("{:.2} GB", mb / 1024.0)
-    } else {
+    } else if mb >= 1.0 {
         format!("{mb:.0} MB")
+    } else {
+        format!("{kb:.0} KB")
     }
 }
 
@@ -77,7 +87,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn megabytes_until_it_takes_four_digits() {
+    fn kilobytes_then_megabytes_until_it_takes_four_digits() {
+        assert_eq!(format(0), "0 KB");
+        assert_eq!(format(512 * 1024), "512 KB");
         assert_eq!(format(128 * 1024 * 1024), "128 MB");
         assert_eq!(format(1023 * 1024 * 1024), "1023 MB");
         assert_eq!(format(1024 * 1024 * 1024), "1.00 GB");
@@ -87,7 +99,7 @@ mod tests {
     #[test]
     fn the_process_can_read_its_own_footprint() {
         // Every platform this ships on answers; the fallback exists for the
-        // ones it does not, and there the status bar simply shows nothing.
+        // ones it does not.
         if cfg!(any(target_os = "macos", target_os = "linux", windows)) {
             assert!(footprint().is_some_and(|b| b > 0));
         }
