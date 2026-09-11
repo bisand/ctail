@@ -232,7 +232,7 @@ Open the Settings panel (gear icon or **View → Toggle Settings**) to configure
 | **Word Wrap** | Wrap long lines instead of horizontal scrolling | Off |
 | **Restore Tabs** | Reopen previously open files on startup | On |
 | **Theme** | Color theme (21 built-in themes + custom) | Catppuccin |
-| **Theme Mode** | Dark or Light variant of the selected theme | Dark |
+| **Theme Mode** | System (follow the operating system), Light or Dark variant of the selected theme | System |
 
 ### Linux-Only Settings
 
@@ -256,7 +256,7 @@ The application window position, size, and maximised state are automatically sav
 
 ## Themes
 
-ctail includes 21 built-in color themes, each with dark and light variants. Switch themes in **Settings → Theme** and choose dark or light mode with the **Theme Mode** dropdown.
+ctail includes 21 built-in color themes, each with dark and light variants. Switch themes in **Settings → Theme** and choose the variant with the **Theme Mode** dropdown.
 
 ### Built-In Themes
 
@@ -276,9 +276,9 @@ You can create custom themes by adding a JSON file to the themes directory:
 
 Custom themes appear alongside built-in themes in the theme picker. See the [Custom Themes Guide](custom-themes.md) for the full JSON format, color property reference, and tips on creating or adapting themes.
 
-### Toggle Theme
+### System, Light or Dark
 
-Use **View → Toggle Theme** from the menu bar to quickly switch between dark and light mode for the current theme.
+Use **View → Theme** from the menu bar to pick the variant of the current theme. **System**, the default, follows the operating system's light or dark appearance and switches when it does; **Light** and **Dark** keep that variant whatever the system shows.
 
 ## Menu Bar
 
@@ -294,7 +294,7 @@ ctail includes a native menu bar:
 | | Select All | Ctrl+A | Select all text in the log view |
 | | Find | Ctrl+F | Open the search bar |
 | **View** | Settings | Ctrl+, | Show/hide the settings panel |
-| | Toggle Theme | | Switch between dark and light themes |
+| | Theme ▸ | | System, Light or Dark variant of the current theme |
 | **Tools** | AI Assistant... | Ctrl+Shift+A | Open the AI assistant dialog |
 | **Help** | Check for Updates | | Check GitHub for a newer release |
 | | About ctail | | Show version, license, and links |

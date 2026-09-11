@@ -48,6 +48,18 @@ pub fn resolve_palette(name: &str, mode: &str, custom_dir: Option<&Path>) -> The
     theme.palette(mode).clone()
 }
 
+/// The variant a theme mode draws. "light" and "dark" are themselves;
+/// "system" — the default, and what anything unrecognised is taken for — is
+/// whichever the operating system is showing.
+pub fn effective_theme_mode(mode: &str, system_dark: bool) -> &'static str {
+    match mode {
+        "light" => "light",
+        "dark" => "dark",
+        _ if system_dark => "dark",
+        _ => "light",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +83,19 @@ mod tests {
         assert_eq!(
             resolve_palette("does-not-exist", "dark", None).bg_primary,
             "#1e1e2e"
+        );
+    }
+
+    #[test]
+    fn theme_mode_follows_the_system() {
+        assert_eq!(effective_theme_mode("light", true), "light");
+        assert_eq!(effective_theme_mode("dark", false), "dark");
+        assert_eq!(effective_theme_mode("system", true), "dark");
+        assert_eq!(effective_theme_mode("system", false), "light");
+        assert_eq!(
+            effective_theme_mode("sepia", true),
+            "dark",
+            "unknown = system"
         );
     }
 

@@ -85,7 +85,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         for v in [themePopup, modePopup, newTabPopup, aiProviderPopup] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
-        modePopup.addItems(withTitles: ["dark", "light"])
+        modePopup.addItems(withTitles: ["system", "light", "dark"])
         newTabPopup.addItems(withTitles: ["end", "afterActive"])
         // CLI tools (claude/codex) only run outside the App Sandbox, so hide them
         // in the App Store build.

@@ -197,6 +197,7 @@ enum SelfTest {
         let store2 = ConfigStore(root: tmp.appendingPathComponent("empty"))
         eq(store2.loadSettings().bufferSize, 10_000, "default bufferSize")
         eq(store2.loadSettings().activeProfile, "Common Logs", "default activeProfile")
+        eq(store2.loadSettings().themeMode, "system", "default themeMode follows the system")
 
         // lenient decode
         let json = #"{"bufferSize": 500, "theme": "dracula", "unknownKey": true}"#

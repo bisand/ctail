@@ -171,7 +171,7 @@ impl Default for AppSettings {
             scroll_speed: 1,
             smooth_scroll: false,
             theme: "catppuccin".into(),
-            theme_mode: "dark".into(),
+            theme_mode: "system".into(),
             font_size: 14,
             show_line_numbers: true,
             word_wrap: false,
@@ -407,6 +407,7 @@ mod tests {
         assert_eq!(s.buffer_size, 500);
         assert_eq!(s.theme, "dracula");
         assert_eq!(s.font_size, 14, "missing keys default");
+        assert_eq!(s.theme_mode, "system", "a fresh install follows the system");
         assert_eq!(settings_from_json("not json"), AppSettings::default());
     }
 

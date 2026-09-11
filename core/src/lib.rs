@@ -35,5 +35,5 @@ pub use tailer::{
     index_file, split_lines, CancelToken, Counters, Engine, HeadScan, IndexResult, LogLine,
     SplitResult, Tailer, TailerEvents, TailerOptions,
 };
-pub use themes::{all_themes, built_in_themes, resolve_palette};
+pub use themes::{all_themes, built_in_themes, effective_theme_mode, resolve_palette};
 pub use update::{check_for_update, compare_versions, UpdateCheck};

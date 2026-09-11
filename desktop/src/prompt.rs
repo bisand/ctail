@@ -3,7 +3,7 @@
 //! NSAlert with a text field does on the Mac.
 
 use crate::theme;
-use ctail_core::{resolve_palette, ConfigStore};
+use ctail_core::ConfigStore;
 use denise::{
     BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Pen, Rect, Role, Size,
 };
@@ -48,13 +48,7 @@ impl PromptWindow {
     ) -> Self {
         let config = ConfigStore::new(None);
         let settings = config.load_settings();
-        let palette = resolve_palette(
-            &settings.theme,
-            &settings.theme_mode,
-            Some(config.themes_dir()),
-        );
-        let theme =
-            theme::from_palette(&settings.theme, &settings.theme_mode, &palette).scaled(scale);
+        let theme = theme::for_settings(&settings, config.themes_dir()).scaled(scale);
         let mut ui: Ui<Msg> = Ui::new(size, theme);
         // Every platform this runs on draws the pointer itself. Denise's own
         // sprite would be a second arrow a frame behind the real one, drawn

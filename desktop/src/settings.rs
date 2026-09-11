@@ -9,7 +9,7 @@
 //! to the main window, which persists them and applies what it can live.
 
 use crate::theme;
-use ctail_core::{all_themes, resolve_palette, AppSettings, ConfigStore};
+use ctail_core::{all_themes, AppSettings, ConfigStore};
 use denise::{
     BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Pen, Rect, Role, Size,
 };
@@ -44,6 +44,10 @@ const AI_PROVIDERS: [&str; 8] = [
     "claude-cli",
     "codex-cli",
 ];
+
+/// The theme modes, in the order the picker shows them: the system's, then
+/// the two a reader can fix it to.
+const THEME_MODES: [&str; 3] = ["system", "light", "dark"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
@@ -117,13 +121,7 @@ impl SettingsWindow {
     pub fn new(size: Size, scale: f32, tx: Sender<Option<AppSettings>>) -> Self {
         let config = ConfigStore::new(None);
         let settings = config.load_settings();
-        let palette = resolve_palette(
-            &settings.theme,
-            &settings.theme_mode,
-            Some(config.themes_dir()),
-        );
-        let theme =
-            theme::from_palette(&settings.theme, &settings.theme_mode, &palette).scaled(scale);
+        let theme = theme::for_settings(&settings, config.themes_dir()).scaled(scale);
         let mut ui: Ui<Msg> = Ui::new(size, theme);
         // Every platform this runs on draws the pointer itself. Denise's own
         // sprite would be a second arrow a frame behind the real one, drawn
@@ -175,8 +173,8 @@ impl SettingsWindow {
         let mode_sel = ui
             .add(
                 root,
-                Select::new(["dark", "light"], Msg::OpenList(Field::Mode))
-                    .with_selected(Some(usize::from(settings.theme_mode == "light")))
+                Select::new(THEME_MODES, Msg::OpenList(Field::Mode))
+                    .with_selected(THEME_MODES.iter().position(|m| *m == settings.theme_mode))
                     .with_style(TextStyle::built_in(body)),
                 c,
             )
@@ -402,7 +400,9 @@ impl SettingsWindow {
                 set_selected(&mut self.ui, self.theme_sel, index);
             }
             Field::Mode => {
-                self.settings.theme_mode = if index == 1 { "light" } else { "dark" }.into();
+                if let Some(mode) = THEME_MODES.get(index) {
+                    self.settings.theme_mode = (*mode).into();
+                }
                 set_selected(&mut self.ui, self.mode_sel, index);
             }
             Field::NewTabPosition => {
@@ -422,16 +422,10 @@ impl SettingsWindow {
     /// The window shows the theme it is editing, so a choice is visible at once.
     fn retheme(&mut self) {
         let config = ConfigStore::new(None);
-        let palette = resolve_palette(
-            &self.settings.theme,
-            &self.settings.theme_mode,
-            Some(config.themes_dir()),
-        );
         // Keeping the metrics means keeping the display scale the window was
         // built at; only the colours change.
         let metrics = self.ui.theme().metrics;
-        let mut theme =
-            theme::from_palette(&self.settings.theme, &self.settings.theme_mode, &palette);
+        let mut theme = theme::for_settings(&self.settings, config.themes_dir());
         theme.metrics = metrics;
         self.ui.set_theme(theme);
     }

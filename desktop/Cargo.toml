@@ -16,6 +16,10 @@ denise-ui = { version = "0.21", features = ["std", "truetype"] }
 denise-winit = { version = "0.21", features = ["gpu"] }
 arboard = { version = "3", default-features = false }
 rfd = "0.15"
+# Whether the system is dark, and word when that changes: the appearance
+# setting on macOS, the registry on Windows, the desktop portal on Linux, where
+# winit cannot tell. The portal speaks D-Bus through the zbus rfd already has.
+dark-light = { version = "3", default-features = false }
 
 # The status bar's memory readout: each platform names "what this process costs"
 # differently, and none of them is a portable library call.

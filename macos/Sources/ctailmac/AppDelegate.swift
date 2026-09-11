@@ -35,6 +35,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         buildMenu()
         buildWindow()
         tabs.onTabsChanged = { [weak self] in self?.persistSession() }
+        // A theme following the system rebuilds when macOS switches — by hand, or
+        // on its own under Auto. Setting the appearance ourselves notifies too;
+        // `drawnDark` makes that a no-op.
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.appearanceChanged() }
+        }
         debugHooks()
 
         // StoreKit: load Pro entitlement and keep the menu in sync.
@@ -71,7 +77,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         // Defensive gate: a Pro theme only applies when Pro is unlocked (covers a
         // hand-edited settings.json too).
         let name = Pro.themeAllowed(settings.theme) ? settings.theme : Pro.fallbackTheme
-        return ThemeCatalog.palette(name: name, mode: settings.themeMode, custom: config.themesDir)
+        return ThemeCatalog.palette(name: name, mode: applyAppearance(), custom: config.themesDir)
+    }
+
+    /// Points the app's appearance at the theme mode and returns the variant to
+    /// draw: "light" and "dark" pin it, "system" clears the override so macOS
+    /// decides. Title bars, menus and the secondary windows follow the same
+    /// appearance, so a light theme never sits under dark chrome.
+    private func applyAppearance() -> String {
+        switch settings.themeMode {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: NSApp.appearance = nil
+        }
+        drawnDark = Self.appearanceIsDark()
+        return drawnDark ? "dark" : "light"
+    }
+
+    private static func appearanceIsDark() -> Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    /// Whether the content was last built in the dark variant.
+    private var drawnDark = true
+    private var appearanceObservation: NSKeyValueObservation?
+
+    /// The effective appearance changed; only a change of variant rebuilds.
+    private func appearanceChanged() {
+        guard tabs != nil, Self.appearanceIsDark() != drawnDark else { return }
+        rebuildContent()
     }
 
     // MARK: - Window
@@ -132,10 +166,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
 
     private func installController() {
         window.backgroundColor = palette.background
-        // Match the system chrome (title bars, secondary windows, menus) to the theme
-        // mode; otherwise a light theme under a dark system appearance gets white
-        // title text on a light window and dark Settings/Profiles windows.
-        NSApp.appearance = NSAppearance(named: settings.themeMode == "light" ? .aqua : .darkAqua)
         tabs?.shutdown()        // stop the outgoing controller's tailers before replacing it
         tabs = TabController(config: config, settings: settings, palette: palette, bookmarks: bookmarks)
         tabs.onActiveFileChanged = { [weak self] path in
@@ -160,13 +190,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
 
     func findInLog() { tabs.openSearch() }
 
-    func toggleTheme() {
-        updateSettings { $0.themeMode = ($0.themeMode == "light") ? "dark" : "light" }
+    /// View ▸ Theme ▸ System / Light / Dark; the item carries its mode.
+    @objc private func setThemeMode(_ sender: NSMenuItem) {
+        guard let mode = sender.representedObject as? String else { return }
+        updateSettings { $0.themeMode = mode }
         rebuildContent()
+        syncViewMenu()
     }
 
     /// Rebuilds the content (new palette/font/intervals) while preserving the
-    /// open files and active tab. Used by Toggle Theme and Settings.
+    /// open files and active tab. Used by the Theme menu, Settings and a system
+    /// appearance change.
     private func rebuildContent() {
         let paths = tabs.openPaths
         let activeIdx = tabs.active
@@ -465,7 +499,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         wrap.target = self
         lineNumbersItem = lineNums; wordWrapItem = wrap
         viewMenu.addItem(.separator())
-        viewMenu.addItem(withTitle: "Toggle Theme", action: #selector(toggleTheme), keyEquivalent: "")
+        let themeItem = viewMenu.addItem(withTitle: "Theme", action: nil, keyEquivalent: "")
+        let themeMenu = NSMenu(title: "Theme")
+        for (title, mode) in [("System", "system"), ("Light", "light"), ("Dark", "dark")] {
+            let item = themeMenu.addItem(withTitle: title, action: #selector(setThemeMode(_:)), keyEquivalent: "")
+            item.representedObject = mode
+            item.target = self
+            themeModeItems.append(item)
+        }
+        themeItem.submenu = themeMenu
         viewMenu.addItem(withTitle: "Profiles & Rules…", action: #selector(showProfiles), keyEquivalent: "")
         viewItem.submenu = viewMenu
 
@@ -492,11 +534,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
 
     private var lineNumbersItem: NSMenuItem?
     private var wordWrapItem: NSMenuItem?
+    private var themeModeItems: [NSMenuItem] = []
 
     /// Checkmarks mirror the persisted settings; called after any change to them.
     private func syncViewMenu() {
         lineNumbersItem?.state = settings.showLineNumbers ? .on : .off
         wordWrapItem?.state = settings.wordWrap ? .on : .off
+        for item in themeModeItems {
+            item.state = (item.representedObject as? String) == settings.themeMode ? .on : .off
+        }
     }
 
     @objc private func toggleLineNumbers() {

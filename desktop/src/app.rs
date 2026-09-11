@@ -13,9 +13,9 @@ use crate::statusbar::StatusBar;
 use crate::tabbar::{TabBar, TabItem};
 use crate::theme;
 use ctail_core::{
-    check_for_update, resolve_palette, AppSettings, ConfigStore, Counters, FileSearch,
-    FileSearchEvents, FileSearchQuery, FileSearchStatus, LogLine, Rule, SearchMatcher, TabState,
-    Tailer, TailerEvents, TailerOptions, UpdateCheck,
+    check_for_update, AppSettings, ConfigStore, Counters, FileSearch, FileSearchEvents,
+    FileSearchQuery, FileSearchStatus, LogLine, Rule, SearchMatcher, TabState, Tailer,
+    TailerEvents, TailerOptions, UpdateCheck,
 };
 use denise::{
     BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Modifiers, Pen, Point,
@@ -99,7 +99,8 @@ enum Action {
     Find,
     ToggleLineNumbers,
     ToggleWordWrap,
-    ToggleTheme,
+    /// View ▸ Theme: "system", "light" or "dark".
+    ThemeMode(&'static str),
     Profiles,
     Settings,
     CheckUpdates,
@@ -324,6 +325,10 @@ pub struct App {
     title: String,
     started: Instant,
     clipboard: Option<arboard::Clipboard>,
+    /// Word from the operating system when it switches between light and
+    /// dark, so a window following the system switches with it. `None` where
+    /// nothing can be watched.
+    system_theme: Option<dark_light::Watcher>,
     exit: bool,
 }
 
@@ -332,13 +337,7 @@ impl App {
         let config = ConfigStore::new(None);
         config.ensure_default_profile();
         let settings = config.load_settings();
-        let palette = resolve_palette(
-            &settings.theme,
-            &settings.theme_mode,
-            Some(config.themes_dir()),
-        );
-        let theme =
-            theme::from_palette(&settings.theme, &settings.theme_mode, &palette).scaled(scale);
+        let theme = theme::for_settings(&settings, config.themes_dir()).scaled(scale);
         let px = |v: f32| (v * scale + 0.5) as u16;
         let s = |v: i32| (v as f32 * scale + 0.5) as i32;
 
@@ -495,6 +494,7 @@ impl App {
             title: "ctail".into(),
             started: Instant::now(),
             clipboard: arboard::Clipboard::new().ok(),
+            system_theme: dark_light::subscribe().ok(),
             exit: false,
         };
         if files.is_empty() {
@@ -932,10 +932,16 @@ impl App {
                     Action::ToggleWordWrap,
                 );
                 e.rule();
-                e.item(
-                    MenuItem::new("Light Theme").checked(settings.theme_mode == "light"),
-                    Action::ToggleTheme,
-                );
+                e.submenu("Theme", |e| {
+                    for (label, mode) in
+                        [("System", "system"), ("Light", "light"), ("Dark", "dark")]
+                    {
+                        e.item(
+                            MenuItem::new(label).checked(settings.theme_mode == mode),
+                            Action::ThemeMode(mode),
+                        );
+                    }
+                });
                 e.rule();
                 e.item(
                     MenuItem::new("Profiles & Rules…").with_shortcut("Cmd+R"),
@@ -1261,12 +1267,7 @@ impl App {
         self.config.save_settings(&new);
 
         if new.theme != old.theme || new.theme_mode != old.theme_mode {
-            let palette =
-                resolve_palette(&new.theme, &new.theme_mode, Some(self.config.themes_dir()));
-            let metrics = self.ui.theme().metrics;
-            let mut theme = theme::from_palette(&new.theme, &new.theme_mode, &palette);
-            theme.metrics = metrics;
-            self.ui.set_theme(theme);
+            self.retheme(&new);
         }
         if new.font_size != old.font_size {
             self.mono.size_px = (new.font_size.max(6) as f32 * self.scale + 0.5) as u16;
@@ -1290,6 +1291,15 @@ impl App {
         }
         self.ui.invalidate_all();
         self.sync_chrome();
+    }
+
+    /// Recolours the window for `settings`, keeping the metrics — and with
+    /// them the display scale — it was built at.
+    fn retheme(&mut self, settings: &AppSettings) {
+        let metrics = self.ui.theme().metrics;
+        let mut theme = theme::for_settings(settings, self.config.themes_dir());
+        theme.metrics = metrics;
+        self.ui.set_theme(theme);
     }
 
     // --- the update check ----------------------------------------------
@@ -1381,14 +1391,9 @@ impl App {
                 s.word_wrap = !s.word_wrap;
                 self.apply_settings(s);
             }
-            Action::ToggleTheme => {
+            Action::ThemeMode(mode) => {
                 let mut s = self.config.load_settings();
-                s.theme_mode = if s.theme_mode == "light" {
-                    "dark"
-                } else {
-                    "light"
-                }
-                .into();
+                s.theme_mode = mode.into();
                 self.apply_settings(s);
             }
             Action::Profiles => self.open_profiles(),
@@ -1883,6 +1888,15 @@ impl DeniseApp for App {
         let answers: Vec<(UpdateCheck, bool)> = self.updates_rx.try_iter().collect();
         for (check, manual) in answers {
             self.show_update_check(check, manual);
+        }
+        // The system switched between light and dark. A window following it
+        // recolours; one with a mode of its own comes out as it was.
+        if let Some(watcher) = &self.system_theme {
+            if watcher.try_iter().count() > 0 {
+                let settings = self.config.load_settings();
+                self.retheme(&settings);
+                self.ui.invalidate_all();
+            }
         }
         if !self.debug_scroll_y.is_empty() {
             let dy = self.debug_scroll_y[self.debug_frame % self.debug_scroll_y.len()];

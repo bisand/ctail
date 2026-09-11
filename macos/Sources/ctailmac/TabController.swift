@@ -605,7 +605,6 @@ enum MemoryFootprint {
 @objc protocol AppActions {
     func openFileDialog()
     func findInLog()
-    func toggleTheme()
     func showAbout()
     func showSettings()
     func showProfiles()

@@ -12,7 +12,7 @@
 use crate::theme;
 use crate::widgets::TextBlock;
 use ctail_core::ai::{self, copilot, AiError, AiMessage};
-use ctail_core::{resolve_palette, AppSettings, ConfigStore, Profile};
+use ctail_core::{AppSettings, ConfigStore, Profile};
 use denise::{
     BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Pen, Rect, Role, Size,
 };
@@ -93,13 +93,7 @@ impl AssistantWindow {
     pub fn new(size: Size, scale: f32, log: String, tx: Sender<AssistantEvent>) -> Self {
         let config = ConfigStore::new(None);
         let settings = config.load_settings();
-        let palette = resolve_palette(
-            &settings.theme,
-            &settings.theme_mode,
-            Some(config.themes_dir()),
-        );
-        let theme =
-            theme::from_palette(&settings.theme, &settings.theme_mode, &palette).scaled(scale);
+        let theme = theme::for_settings(&settings, config.themes_dir()).scaled(scale);
         let mut ui: Ui<Msg> = Ui::new(size, theme);
         // Every platform this runs on draws the pointer itself. Denise's own
         // sprite would be a second arrow a frame behind the real one, drawn

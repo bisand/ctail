@@ -9,7 +9,7 @@
 use crate::prompt::PromptWindow;
 use crate::theme;
 use crate::widgets::{Preview, Swatch};
-use ctail_core::{resolve_palette, ConfigStore, Profile, Rule};
+use ctail_core::{ConfigStore, Profile, Rule};
 use denise::{
     BufferAge, DamageTracker, ElementState, Frame, InputEvent, KeyCode, Pen, Rect, Role, Size,
 };
@@ -116,13 +116,7 @@ impl ProfilesWindow {
         let config = ConfigStore::new(None);
         config.ensure_default_profile();
         let settings = config.load_settings();
-        let palette = resolve_palette(
-            &settings.theme,
-            &settings.theme_mode,
-            Some(config.themes_dir()),
-        );
-        let theme =
-            theme::from_palette(&settings.theme, &settings.theme_mode, &palette).scaled(scale);
+        let theme = theme::for_settings(&settings, config.themes_dir()).scaled(scale);
         let mut ui: Ui<Msg> = Ui::new(size, theme);
         // Every platform this runs on draws the pointer itself. Denise's own
         // sprite would be a second arrow a frame behind the real one, drawn
