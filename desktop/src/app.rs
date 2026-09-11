@@ -155,6 +155,18 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// How often the status bar re-reads the process's memory footprint.
 const MEMORY_INTERVAL: Duration = Duration::from_secs(2);
 
+/// How long a new window size must hold before it is saved.
+const RESIZE_SETTLE: Duration = Duration::from_millis(500);
+
+/// The part of the settings a session owns: the open tabs with their names
+/// and colours, which one is showing, and the window's size.
+#[derive(PartialEq)]
+struct Session {
+    tabs: Vec<(String, String, String)>,
+    active: usize,
+    window: Size,
+}
+
 /// The colours a tab can be marked with, matching the macOS app's set.
 const TAB_COLORS: [(&str, &str); 6] = [
     ("Red", "#f38ba8"),
@@ -321,6 +333,17 @@ pub struct App {
     closed: Vec<String>,
     /// The window's size, kept current so it can be saved on the way out.
     window: Size,
+    /// The session as last written to settings. Anything that changes it —
+    /// a tab opened, closed, moved, renamed or coloured, another tab chosen,
+    /// the window resized — is saved as it happens, because the way out is
+    /// not always ours to see: ⌘Q on macOS goes to the system's own Quit,
+    /// which ends the process without a close request.
+    saved_session: Option<Session>,
+    /// When the window's size last moved away from the saved one; a resize
+    /// is saved once the drag has come to rest rather than once per event.
+    resized_at: Option<Instant>,
+    /// Off for an offscreen snapshot, whose debug file is not a session.
+    saves_session: bool,
     scale: f32,
     title: String,
     started: Instant,
@@ -495,6 +518,9 @@ impl App {
             started: Instant::now(),
             clipboard: arboard::Clipboard::new().ok(),
             system_theme: dark_light::subscribe().ok(),
+            saved_session: None,
+            resized_at: None,
+            saves_session: true,
             exit: false,
         };
         if files.is_empty() {
@@ -1149,6 +1175,47 @@ impl App {
             .map(|t| t.path.clone())
             .unwrap_or_default();
         self.config.save_settings(&s);
+        self.saved_session = Some(self.session());
+        self.resized_at = None;
+    }
+
+    /// What [`persist`](Self::persist) writes, to compare against the last
+    /// write.
+    fn session(&self) -> Session {
+        Session {
+            tabs: self
+                .tabs
+                .iter()
+                .map(|t| (t.path.clone(), t.label.clone(), t.color.clone()))
+                .collect(),
+            active: self.active,
+            window: self.window,
+        }
+    }
+
+    /// Leaves the saved session alone, for an offscreen snapshot.
+    pub fn without_saving_session(&mut self) {
+        self.saves_session = false;
+    }
+
+    /// Saves the session when it has changed since it was last saved: tabs at
+    /// once, a window size once it has held still for a moment.
+    fn keep_session(&mut self) {
+        let now = self.session();
+        let Some(saved) = &self.saved_session else {
+            self.persist();
+            return;
+        };
+        if *saved == now {
+            self.resized_at = None;
+        } else if saved.tabs != now.tabs || saved.active != now.active {
+            self.persist();
+        } else {
+            let since = *self.resized_at.get_or_insert_with(Instant::now);
+            if since.elapsed() >= RESIZE_SETTLE {
+                self.persist();
+            }
+        }
     }
 
     // --- tabs ------------------------------------------------------------
@@ -1262,8 +1329,14 @@ impl App {
 
     /// Takes settings back from the Settings window: persists them, then
     /// applies live everything that does not need a restart.
-    fn apply_settings(&mut self, new: AppSettings) {
+    fn apply_settings(&mut self, mut new: AppSettings) {
         let old = self.config.load_settings();
+        // The form edited a copy taken when it opened; the session has moved
+        // on since — tabs opened and closed, files recently used.
+        new.tabs = old.tabs.clone();
+        new.last_active_tab_path = old.last_active_tab_path.clone();
+        new.recent_files = old.recent_files.clone();
+        new.window = old.window.clone();
         self.config.save_settings(&new);
 
         if new.theme != old.theme || new.theme_mode != old.theme_mode {
@@ -1923,6 +1996,9 @@ impl DeniseApp for App {
         let messages: Vec<Msg> = self.ui.drain_messages().collect();
         for m in messages {
             self.handle_message(m);
+        }
+        if self.saves_session {
+            self.keep_session();
         }
         self.sync_menubar();
         if self.ui.needs_paint() {

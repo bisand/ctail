@@ -221,6 +221,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
                 // default and prompts the paywall.
                 let pickedLockedTheme = !Pro.themeAllowed(new.theme)
                 if pickedLockedTheme { new.theme = Pro.fallbackTheme }
+                // The form edited a copy taken when it opened; the session has
+                // moved on since — tabs opened and closed, files recently used.
+                let current = config.loadSettings()
+                new.tabs = current.tabs
+                new.lastActiveTabPath = current.lastActiveTabPath
+                new.recentFiles = current.recentFiles
+                new.window = current.window
                 config.saveSettings(new)
                 self.settings = new
                 self.rebuildContent()

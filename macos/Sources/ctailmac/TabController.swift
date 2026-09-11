@@ -203,7 +203,7 @@ final class TabController: NSObject {
         tab.logView.removeFromSuperview()
         tabs.remove(at: index)
 
-        if tabs.isEmpty { active = -1; onActiveFileChanged?(nil); reloadBar(); statusLabel.stringValue = ""; return }
+        if tabs.isEmpty { active = -1; onActiveFileChanged?(nil); reloadBar(); statusLabel.stringValue = ""; onTabsChanged?(); return }
         active = min(index, tabs.count - 1)
         showActiveContent()
     }
@@ -307,6 +307,7 @@ final class TabController: NSObject {
         tabs.insert(t, at: to)
         active = tabs.firstIndex(where: { $0.id == moving.id }) ?? to
         reloadBar()
+        onTabsChanged?()
     }
 
     // MARK: - Background optimization (issue #16)
@@ -351,6 +352,7 @@ final class TabController: NSObject {
         if alert.runModal() == .alertFirstButtonReturn {
             tab.label = field.stringValue
             reloadBar()
+            onTabsChanged?()
         }
     }
 
@@ -358,6 +360,7 @@ final class TabController: NSObject {
         guard tabs.indices.contains(index) else { return }
         tabs[index].color = hex
         reloadBar()
+        onTabsChanged?()
     }
 
     // MARK: - Context menus (issue #12)
@@ -421,6 +424,7 @@ final class TabController: NSObject {
         panel.message = "Point this tab at a different file"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let pos = ctxIndex
+        bookmarks.save(url)
         close(pos)
         open(path: url.path)
     }

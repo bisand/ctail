@@ -165,6 +165,9 @@ fn snapshot_main(path: &str, scale: f32) -> std::io::Result<()> {
     let size = Size::new((1200.0 * scale + 0.5) as u32, (760.0 * scale + 0.5) as u32);
     let files: Vec<String> = std::env::var("CTAIL_DEBUG_FILE").into_iter().collect();
     let mut app = app::App::new(size, scale, files, Present::Software);
+    // A picture is not a session: the debug file must not replace the tabs
+    // the user has saved.
+    app.without_saving_session();
     let mut damage = DamageTracker::new(size);
     let mut pixels = vec![0u32; (size.width * size.height) as usize];
     let paint = |app: &mut app::App, pixels: &mut Vec<u32>| {
