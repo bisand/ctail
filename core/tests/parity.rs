@@ -293,6 +293,94 @@ fn error_reported_once_and_ready_on_recovery() {
 
 // --- sparse offset indexer --------------------------------------------------
 
+/// Backdates a file's modification time, so it reads as written long before it
+/// was opened.
+fn backdate(path: &Path) {
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+}
+
+#[test]
+fn an_unterminated_last_line_is_committed_once_the_file_is_at_rest() {
+    let dir = TempDir::new();
+    let file = dir.file("doc.xml");
+    let doc = r#"<?xml version="1.0"?><a><b/></a>"#;
+    write(&file, doc);
+    // A long interval, so a file system that keeps modification times to the
+    // second cannot make a file written just now look long at rest.
+    let opts = TailerOptions {
+        poll_interval: Duration::from_secs(10),
+        ..Default::default()
+    };
+    let (mut t, rec) = engine(&file, opts);
+
+    // Written a moment ago, it may still be being written.
+    t.perform_initial_read();
+    assert_eq!(t.total_lines(), 0, "a line just written waits for a poll");
+    assert!(rec.take().is_empty());
+
+    // A poll that finds the file no bigger finds it at rest.
+    t.perform_poll();
+    assert_eq!(rec.texts(), [doc], "the one-line document shows");
+    assert_eq!(t.total_lines(), 1);
+    assert_eq!(texts(&t.read_range(1, 1)), [doc], "and pages back in");
+
+    // Resting polls do not commit it twice.
+    t.perform_poll();
+    assert!(rec.take().is_empty(), "nothing new, nothing emitted");
+
+    // The newline arriving later ends that line; it does not open an empty one.
+    append(&file, "\r\nnext\n");
+    t.perform_poll();
+    assert_eq!(rec.texts(), ["next"], "no empty line for the late newline");
+    assert_eq!(t.total_lines(), 2);
+    assert_eq!(texts(&t.read_range(1, 2)), [doc, "next"]);
+
+    // A line still growing between polls is not committed half-written.
+    append(&file, "grow");
+    t.perform_poll();
+    append(&file, "ing");
+    t.perform_poll();
+    assert!(rec.take().is_empty(), "a growing line waits");
+    t.perform_poll();
+    assert_eq!(rec.texts(), ["growing"], "then shows whole once it rests");
+}
+
+#[test]
+fn a_file_at_rest_when_opened_shows_its_unterminated_line_at_once() {
+    let dir = TempDir::new();
+    let file = dir.file("doc.json");
+    write(&file, "{\n  \"a\": 1\n}");
+    backdate(&file);
+    let (mut t, rec) = engine(&file, small_opts());
+    t.perform_initial_read();
+    assert_eq!(rec.texts(), ["{", "  \"a\": 1", "}"]);
+    assert_eq!(t.total_lines(), 3);
+
+    // The same through the tail-first path, with the head counted behind it.
+    let big = dir.file("big.log");
+    let body: String = (1..=20).map(|i| format!("line{i:02}\n")).collect();
+    write(&big, &format!("{body}last"));
+    backdate(&big);
+    let opts = TailerOptions {
+        tail_first_threshold: 64,
+        tail_seek_back: 32,
+        index_stride: 2,
+        ..small_opts()
+    };
+    let (mut t, rec) = engine(&big, opts);
+    let scan = t.perform_initial_read().expect("opens tail-first");
+    assert_eq!(rec.texts().last().map(String::as_str), Some("last"));
+    let counted = scan.run();
+    t.apply_head_count(&scan.token, counted.checkpoints, counted.total);
+    assert_eq!(t.total_lines(), 21);
+    assert_eq!(texts(&t.read_range(20, 2)), ["line20", "last"]);
+}
+
 #[test]
 fn index_file_dense_sparse_partial_and_cancel() {
     let dir = TempDir::new();

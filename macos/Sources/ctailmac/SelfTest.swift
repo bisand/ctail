@@ -496,14 +496,16 @@ enum SelfTest {
         eq(received.last?.text, "line4", "appended text")
         eq(received.last?.number, 4, "appended number")
 
-        // Partial line not committed until its newline arrives.
+        // A last line left without its newline shows once the file is at rest
+        // (a one-line XML document is exactly that), and the newline arriving
+        // later does not add an empty line after it.
         appendText("partial-no-newline")
-        settle(0.25)
-        eq(received.count, 4, "partial line not delivered yet")
-        eq(t.totalLines, 4, "partial line not counted yet")
+        check(pump { received.count == 5 }, "an unterminated last line shows once the file is at rest")
+        eq(received.last?.text, "partial-no-newline", "unterminated line text")
+        eq(t.totalLines, 5, "unterminated line is counted")
         appendText("\n")
-        check(pump { received.count == 5 }, "partial completes on newline")
-        eq(received.last?.text, "partial-no-newline", "completed partial text")
+        settle(0.25)
+        eq(received.count, 5, "its late newline adds no empty line")
 
         // Truncation -> reset + re-read.
         received = []

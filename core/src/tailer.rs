@@ -7,8 +7,11 @@
 //!     mounts can't wedge the UI — every I/O op runs on a dedicated I/O thread
 //!     under a timeout, and a wedged op is abandoned rather than waited on.
 //!   - Inode-change detection for log rotation; truncation detection on shrink.
-//!   - Only *complete* lines (ending in `\n`) are committed; a trailing partial
-//!     is left until the next poll reads it whole.
+//!   - Lines are committed when their `\n` arrives; a trailing partial is left
+//!     until the next poll reads it whole. A last line that never gets one — a
+//!     one-line XML or JSON document, a file whose writer stopped mid-line — is
+//!     committed once the file is at rest: a poll finds it no bigger, or it was
+//!     last written more than a poll interval before it was opened.
 //!
 //! Instant tail (the important bit): for large files we seek near the end and
 //! show + live-follow the tail IMMEDIATELY, numbering those lines *locally*
@@ -40,7 +43,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// A single log line with its 1-based number.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -355,6 +358,8 @@ struct Stat {
     /// file (rotation). Never 0 for a file that exists, so 0 can mean "not
     /// yet known".
     identity: u64,
+    /// When the file was last written, where the file system says.
+    modified: Option<SystemTime>,
 }
 
 /// What a stat found: the file, or why not. Gone and unreachable are kept
@@ -403,6 +408,7 @@ fn probe_path(path: &Path) -> Probe {
     Probe::Found(Stat {
         size: md.len() as i64,
         identity: identity.max(1),
+        modified: md.modified().ok(),
     })
 }
 
@@ -502,6 +508,10 @@ pub struct Engine {
     /// The path answered "no such file" since the last successful stat, so
     /// the next file found there is a new one whatever its metadata says.
     unlinked: bool,
+    /// `offset` sits just past a last line that was committed without its
+    /// newline, so a newline arriving there ends that line rather than
+    /// starting an empty one.
+    tail_committed: bool,
     tail_start: i64,            // byte offset where tail reading began
     base: i64,                  // complete lines before tail_start (absolute offset)
     base_known: bool,           // false while the background count runs
@@ -532,6 +542,7 @@ impl Engine {
             identity: 0,
             in_error: false,
             unlinked: false,
+            tail_committed: false,
             tail_start: 0,
             base: 0,
             base_known: true,
@@ -597,6 +608,13 @@ impl Engine {
         self.base = 0;
         self.head_checkpoints.clear();
         self.tail_checkpoints.clear();
+        self.tail_committed = false;
+        // Untouched for longer than a poll, the file is at rest already: its
+        // unterminated last line need not wait for the first poll to show.
+        let at_rest = st
+            .modified
+            .and_then(|m| m.elapsed().ok())
+            .is_some_and(|age| age >= self.opts.poll_interval);
 
         if st.size > self.opts.tail_first_threshold {
             // Instant tail: show the last chunk now (numbered locally), follow live,
@@ -604,7 +622,7 @@ impl Engine {
             let seek = (st.size - self.opts.tail_seek_back).max(0);
             self.tail_start = self.align_to_line_boundary(seek);
             self.base_known = false;
-            let (lines, consumed) = self.read_new_lines(self.tail_start, st.size, true);
+            let (lines, consumed) = self.read_new_lines(self.tail_start, st.size, true, at_rest);
             self.offset = consumed;
             self.emit_lines(lines);
             let token = CancelToken::new();
@@ -619,7 +637,7 @@ impl Engine {
             // Small file: read it all from the top; numbers are absolute immediately.
             self.tail_start = 0;
             self.base_known = true;
-            let (lines, consumed) = self.read_new_lines(0, st.size, true);
+            let (lines, consumed) = self.read_new_lines(0, st.size, true, at_rest);
             self.offset = consumed;
             self.emit_lines(lines);
             None
@@ -668,7 +686,10 @@ impl Engine {
         if st.size == self.offset {
             return None; // nothing new
         }
-        self.pump(self.offset, st.size, true);
+        // The size the last poll found: what lies past the last newline has
+        // stopped growing, and is a line of its own.
+        let at_rest = st.size == self.file_size;
+        self.pump(self.offset, st.size, true, at_rest);
         self.file_size = st.size;
         None
     }
@@ -723,8 +744,19 @@ impl Engine {
         let Some(data) = self.read_bytes(from_byte, to_byte) else {
             return Vec::new();
         };
+        let split = split_lines(&data, 0, 0);
+        let mut lines = split.lines;
+        // A last line committed without its newline is a line here as well.
+        let rest = split.consumed as usize;
+        if rest < data.len() && from_byte + data.len() as i64 <= self.offset {
+            let end = data.len() - usize::from(data.ends_with(b"\r"));
+            lines.push(LogLine {
+                number: 0,
+                text: decode(&data[rest..end.max(rest)]),
+            });
+        }
         let mut out = Vec::with_capacity((last_line - start + 1) as usize);
-        for (i, line) in split_lines(&data, 0, 0).lines.into_iter().enumerate() {
+        for (i, line) in lines.into_iter().enumerate() {
             let num = line_at_byte + i as i64;
             if num > last_line {
                 break;
@@ -754,16 +786,23 @@ impl Engine {
     /// re-read whole from the next chunk (`consumed` lands on a line boundary);
     /// a single line longer than a chunk — pathological for a log — falls back
     /// to one full read so it's never split.
-    fn pump(&mut self, from: i64, to: i64, build_tail_index: bool) {
+    /// `at_rest` lets the last chunk commit an unterminated line at `to`.
+    fn pump(&mut self, from: i64, to: i64, build_tail_index: bool, at_rest: bool) {
         let mut cursor = from;
         while cursor < to {
             let chunk_end = to.min(cursor + self.opts.max_read_chunk);
-            let (lines, consumed) = self.read_new_lines(cursor, chunk_end, build_tail_index);
+            let (lines, consumed) = self.read_new_lines(
+                cursor,
+                chunk_end,
+                build_tail_index,
+                at_rest && chunk_end == to,
+            );
             if consumed <= cursor {
                 // No complete line in this chunk.
                 if chunk_end < to {
                     // An over-long line spans past the cap — read it whole.
-                    let (rest, rest_consumed) = self.read_new_lines(cursor, to, build_tail_index);
+                    let (rest, rest_consumed) =
+                        self.read_new_lines(cursor, to, build_tail_index, at_rest);
                     self.offset = rest_consumed;
                     self.emit_lines(rest);
                 }
@@ -782,6 +821,7 @@ impl Engine {
         self.file_size = new_size;
         self.identity = 0;
         self.unlinked = false;
+        self.tail_committed = false;
         self.tail_start = 0;
         self.base = 0;
         self.base_known = true;
@@ -830,6 +870,7 @@ impl Engine {
         from: i64,
         to: i64,
         build_tail_index: bool,
+        at_rest: bool,
     ) -> (Vec<LogLine>, i64) {
         let Some(data) = self.read_bytes(from, to) else {
             return (Vec::new(), from);
@@ -837,7 +878,40 @@ impl Engine {
         if data.is_empty() {
             return (Vec::new(), from);
         }
-        let split = split_lines(&data, self.base + self.line_num, from);
+        // The newline that ends a line already committed without one belongs
+        // to that line: skip it rather than show an empty line after it.
+        let mut skip = 0;
+        if self.tail_committed {
+            if data == b"\r" {
+                return (Vec::new(), from); // its LF is still to come
+            }
+            skip = if data.starts_with(b"\r\n") {
+                2
+            } else {
+                usize::from(data[0] == b'\n')
+            };
+            self.tail_committed = false;
+        }
+        let body = &data[skip..];
+        let body_start = from + skip as i64;
+        let mut split = split_lines(body, self.base + self.line_num, body_start);
+        // At rest, what is left past the last newline is the last line.
+        let rest = (split.consumed - body_start) as usize;
+        if at_rest && rest < body.len() {
+            let end = body.len() - usize::from(body.ends_with(b"\r"));
+            let number = split
+                .lines
+                .last()
+                .map_or(self.base + self.line_num, |l| l.number)
+                + 1;
+            split.offsets.push(split.consumed);
+            split.lines.push(LogLine {
+                number,
+                text: decode(&body[rest..end.max(rest)]),
+            });
+            split.consumed = from + data.len() as i64;
+            self.tail_committed = true;
+        }
         if let Some(last) = split.lines.last() {
             self.line_num = last.number - self.base; // absolute -> local
             if build_tail_index {
