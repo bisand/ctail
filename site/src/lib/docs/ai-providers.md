@@ -18,7 +18,7 @@ The **Fetch** button next to the model field lists the models your provider offe
 ## Anthropic
 
 1. Create a key in the Anthropic console.
-2. Select **Anthropic** and paste the key. The default endpoint is `https://api.anthropic.com`.
+2. Select **Anthropic** and paste the key. The default endpoint is `https://api.anthropic.com/v1/messages`.
 
 ## GitHub Models
 
@@ -35,10 +35,11 @@ Copilot uses the standard device flow. The token is stored locally and exchanged
 
 ## Custom and local models
 
-Any server that speaks the OpenAI chat completions API works. ctail appends `/v1/chat/completions` to the endpoint unless you already included it.
+Any server that speaks the OpenAI chat completions API works. The endpoint is the full URL requests go to, used exactly as typed, ending in `/chat/completions`. **Fetch** lists models from the `/models` URL beside it.
 
-- **Ollama:** endpoint `http://localhost:11434`, model such as `llama3.2`. Pull the model first with `ollama pull llama3.2`.
-- **LM Studio:** endpoint `http://localhost:1234`, start the server in the app.
+- **OpenRouter:** endpoint `https://openrouter.ai/api/v1/chat/completions`, with your OpenRouter key.
+- **Ollama:** endpoint `http://localhost:11434/v1/chat/completions`, model such as `llama3.2`. Pull the model first with `ollama pull llama3.2`.
+- **LM Studio:** endpoint `http://localhost:1234/v1/chat/completions`, start the server in the app.
 - Leave the API key empty for local servers that do not need one.
 
 ## Troubleshooting

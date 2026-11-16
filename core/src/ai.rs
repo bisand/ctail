@@ -71,10 +71,10 @@ pub const CLI_PROVIDERS: [&str; 2] = ["claude-cli", "codex-cli"];
 
 pub fn default_endpoint(provider: &str) -> String {
     match provider {
-        "openai" => "https://api.openai.com",
-        "github" => "https://models.inference.ai.azure.com",
-        "copilot" => "https://api.githubcopilot.com",
-        "anthropic" => "https://api.anthropic.com",
+        "openai" => "https://api.openai.com/v1/chat/completions",
+        "github" => "https://models.inference.ai.azure.com/chat/completions",
+        "copilot" => "https://api.githubcopilot.com/chat/completions",
+        "anthropic" => "https://api.anthropic.com/v1/messages",
         _ => "",
     }
     .into()
@@ -96,59 +96,21 @@ pub fn is_sandboxed() -> bool {
     std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
 }
 
-fn trimmed(endpoint: &str) -> &str {
-    endpoint.trim_end_matches('/')
+/// The endpoint is the full URL requests go to, used as typed; empty means the provider's default.
+fn endpoint_for(settings: &AppSettings) -> String {
+    match settings.ai_endpoint.trim() {
+        "" => default_endpoint(&settings.ai_provider),
+        e => e.to_string(),
+    }
 }
 
-/// The API root of an OpenAI-compatible endpoint: a pasted chat route
-/// (`…/v1/chat/completions`, or `…/v1/chat/` as OpenRouter's docs read) is cut back to `…/v1`.
-fn api_root(endpoint: &str) -> &str {
-    let base = trimmed(endpoint);
-    let base = base.strip_suffix("/completions").unwrap_or(base);
-    base.strip_suffix("/chat").unwrap_or(base)
-}
-
-fn is_github_style(base: &str) -> bool {
-    // Copilot and GitHub Models expose their routes without a /v1.
-    base.contains("githubcopilot")
-        || base.contains("models.inference")
-        || base.contains("models.github")
-}
-
-/// The chat-completions URL for an OpenAI-compatible base (mirrors
-/// `client.go`'s `completionsURL`). A URL that is already the full route is
-/// left alone, so a user who pasted one is not second-guessed.
-pub fn completions_url(endpoint: &str) -> String {
-    let base = api_root(endpoint);
-    if base.ends_with("/v1") || is_github_style(base) {
-        return format!("{base}/chat/completions");
-    }
-    format!("{base}/v1/chat/completions")
-}
-
-/// The Messages URL for an Anthropic base.
-pub fn messages_url(endpoint: &str) -> String {
-    let base = trimmed(endpoint);
-    if base.ends_with("/v1/messages") {
-        return base.into();
-    }
-    if base.ends_with("/v1") {
-        return format!("{base}/messages");
-    }
-    format!("{base}/v1/messages")
-}
-
-/// The model-list URL for an OpenAI-compatible base.
-pub fn models_url(endpoint: &str) -> String {
-    let base = trimmed(endpoint);
-    if base.ends_with("/models") {
-        return base.into();
-    }
-    let base = api_root(base);
-    if base.ends_with("/v1") || is_github_style(base) {
-        return format!("{base}/models");
-    }
-    format!("{base}/v1/models")
+/// The model-list URL next to a full chat URL: `…/chat/completions` or `…/messages` becomes `…/models`.
+pub fn models_url(endpoint: &str) -> Option<String> {
+    let base = endpoint.trim_end_matches('/');
+    let root = base
+        .strip_suffix("/chat/completions")
+        .or_else(|| base.strip_suffix("/messages"))?;
+    Some(format!("{root}/models"))
 }
 
 // --- prompts ----------------------------------------------------------------
@@ -235,13 +197,7 @@ pub fn chat(
     } else {
         settings.ai_model.clone()
     };
-    let endpoint = || {
-        if settings.ai_endpoint.is_empty() {
-            default_endpoint(provider)
-        } else {
-            settings.ai_endpoint.clone()
-        }
-    };
+    let endpoint = || endpoint_for(settings);
     match provider {
         "anthropic" => chat_anthropic(&endpoint(), &settings.ai_key, &model, messages),
         "claude-cli" | "codex-cli" => {
@@ -283,7 +239,7 @@ pub fn chat_openai(
         headers.push(("Authorization", &auth));
     }
     headers.extend_from_slice(extra_headers);
-    let reply = net::post_json(&completions_url(endpoint), &headers, &body, CHAT_TIMEOUT)
+    let reply = net::post_json(endpoint, &headers, &body, CHAT_TIMEOUT)
         .map_err(AiError::Message)?;
     parse_openai_reply(reply.status, &reply.body)
 }
@@ -354,7 +310,7 @@ pub fn chat_anthropic(
     })
     .map_err(|e| AiError::Message(e.to_string()))?;
     let reply = net::post_json(
-        &messages_url(endpoint),
+        endpoint,
         &[("x-api-key", api_key), ("anthropic-version", "2023-06-01")],
         &body,
         CHAT_TIMEOUT,
@@ -548,14 +504,15 @@ pub fn list_models(
         "codex-cli" => return err("The codex CLI has no model list — type the model name."),
         _ => {}
     }
-    let base = if settings.ai_endpoint.is_empty() {
-        default_endpoint(provider)
-    } else {
-        settings.ai_endpoint.clone()
+    let endpoint = endpoint_for(settings);
+    let models = || {
+        models_url(&endpoint).ok_or_else(|| {
+            AiError::Message("Set the endpoint to the full chat URL, ending in /chat/completions (or /messages for Anthropic).".into())
+        })
     };
     let reply = match provider {
         "anthropic" => net::get(
-            &format!("{}/v1/models", trimmed(&base)),
+            &models()?,
             &[
                 ("x-api-key", &settings.ai_key),
                 ("anthropic-version", "2023-06-01"),
@@ -575,16 +532,17 @@ pub fn list_models(
             )
         }
         _ => {
-            if base.is_empty() {
+            if endpoint.is_empty() {
                 return err("Set an endpoint first.");
             }
+            let url = models()?;
             let auth = format!("Bearer {}", settings.ai_key);
             let headers: Vec<(&str, &str)> = if settings.ai_key.is_empty() {
                 Vec::new()
             } else {
                 vec![("Authorization", &auth)]
             };
-            net::get(&models_url(&base), &headers, LIST_TIMEOUT)
+            net::get(&url, &headers, LIST_TIMEOUT)
         }
     }
     .map_err(AiError::Message)?;
@@ -768,71 +726,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn urls_are_completed_but_never_second_guessed() {
-        assert_eq!(
-            completions_url("https://api.openai.com"),
-            "https://api.openai.com/v1/chat/completions"
-        );
-        assert_eq!(
-            completions_url("https://api.githubcopilot.com"),
-            "https://api.githubcopilot.com/chat/completions"
-        );
-        assert_eq!(
-            completions_url("http://localhost:11434/v1"),
-            "http://localhost:11434/v1/chat/completions"
-        );
-        assert_eq!(
-            completions_url("https://x/v1/chat/completions"),
-            "https://x/v1/chat/completions"
-        );
-        assert_eq!(
-            completions_url("https://x/v1/chat/completions/"),
-            "https://x/v1/chat/completions"
-        );
+    fn the_endpoint_is_used_as_typed_and_models_sit_beside_it() {
+        let mut s = AppSettings { ai_provider: "openai".into(), ..Default::default() };
+        assert_eq!(endpoint_for(&s), "https://api.openai.com/v1/chat/completions");
+        s.ai_endpoint = " https://openrouter.ai/api/v1/chat/completions ".into();
+        assert_eq!(endpoint_for(&s), "https://openrouter.ai/api/v1/chat/completions");
 
         assert_eq!(
-            messages_url("https://api.anthropic.com"),
-            "https://api.anthropic.com/v1/messages"
+            models_url("https://openrouter.ai/api/v1/chat/completions").as_deref(),
+            Some("https://openrouter.ai/api/v1/models")
         );
         assert_eq!(
-            messages_url("https://proxy/v1"),
-            "https://proxy/v1/messages"
+            models_url("https://models.inference.ai.azure.com/chat/completions").as_deref(),
+            Some("https://models.inference.ai.azure.com/models")
         );
         assert_eq!(
-            messages_url("https://proxy/v1/messages"),
-            "https://proxy/v1/messages"
+            models_url("https://api.anthropic.com/v1/messages/").as_deref(),
+            Some("https://api.anthropic.com/v1/models")
         );
-
-        assert_eq!(
-            models_url("https://api.openai.com"),
-            "https://api.openai.com/v1/models"
-        );
-        assert_eq!(
-            models_url("http://localhost:11434/v1"),
-            "http://localhost:11434/v1/models"
-        );
-        assert_eq!(
-            models_url("https://models.inference.ai.azure.com"),
-            "https://models.inference.ai.azure.com/models"
-        );
-        assert_eq!(models_url("https://x/v1/models"), "https://x/v1/models");
-
-        // OpenRouter, however its URL is pasted.
-        for e in [
-            "https://openrouter.ai/api/v1",
-            "https://openrouter.ai/api/v1/",
-            "https://openrouter.ai/api/v1/chat/",
-            "https://openrouter.ai/api/v1/chat/completions",
-        ] {
-            assert_eq!(completions_url(e), "https://openrouter.ai/api/v1/chat/completions", "{e}");
-            assert_eq!(models_url(e), "https://openrouter.ai/api/v1/models", "{e}");
+        assert_eq!(models_url("https://openrouter.ai/api/v1"), None);
+        for p in API_PROVIDERS.iter().filter(|p| **p != "custom") {
+            assert!(models_url(&default_endpoint(p)).is_some(), "{p}");
         }
     }
 
     #[test]
-    fn providers_have_the_go_apps_defaults() {
-        assert_eq!(default_endpoint("openai"), "https://api.openai.com");
-        assert_eq!(default_endpoint("anthropic"), "https://api.anthropic.com");
+    fn providers_have_full_default_urls() {
+        assert_eq!(default_endpoint("openai"), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(default_endpoint("anthropic"), "https://api.anthropic.com/v1/messages");
         assert_eq!(default_endpoint("custom"), "");
         assert_eq!(default_model("anthropic"), "claude-sonnet-4-6");
         assert_eq!(default_model("claude-cli"), "");
@@ -916,7 +837,7 @@ mod tests {
         let (url, server) =
             net::testing::serve_once(200, r#"{"choices":[{"message":{"content":"Hi"}}]}"#);
         let answer = chat_openai(
-            &url,
+            &format!("{}/v1/chat/completions", url.trim_end_matches('/')),
             "sk-test",
             "m",
             &[("X-Extra", "1")],
@@ -941,7 +862,7 @@ mod tests {
             net::testing::serve_once(200, r#"{"content":[{"type":"text","text":"Yo"}]}"#);
         let messages = [AiMessage::new("system", "S"), AiMessage::new("user", "U")];
         assert_eq!(
-            chat_anthropic(&url, "ak", "claude", &messages).unwrap(),
+            chat_anthropic(&format!("{}/v1/messages", url.trim_end_matches('/')), "ak", "claude", &messages).unwrap(),
             "Yo"
         );
         let request = server.join().unwrap();

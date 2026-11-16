@@ -367,23 +367,11 @@ enum SelfTest {
     // MARK: - AI suite (network-free parts, through the engine)
 
     static func aiSuite() {
-        // Endpoint resolution per provider/base.
-        eq(aiCompletionsUrl(endpoint: "https://api.openai.com"),
-           "https://api.openai.com/v1/chat/completions", "openai endpoint")
-        eq(aiCompletionsUrl(endpoint: "https://api.githubcopilot.com"),
-           "https://api.githubcopilot.com/chat/completions", "copilot endpoint")
-        eq(aiCompletionsUrl(endpoint: "http://localhost:11434/v1"),
-           "http://localhost:11434/v1/chat/completions", "ollama /v1 endpoint")
-        eq(aiCompletionsUrl(endpoint: "https://x/v1/chat/completions"),
-           "https://x/v1/chat/completions", "already-full endpoint untouched")
-        eq(AIService.defaultEndpoint(for: "openai"), "https://api.openai.com", "default openai endpoint")
-
-        // Anthropic provider: endpoint/model defaults + /v1/messages URL building.
-        eq(AIService.defaultEndpoint(for: "anthropic"), "https://api.anthropic.com", "default anthropic endpoint")
+        // The endpoint is a full URL, used as typed; the defaults are full URLs too.
+        eq(AIService.defaultEndpoint(for: "openai"), "https://api.openai.com/v1/chat/completions", "default openai endpoint")
+        eq(AIService.defaultEndpoint(for: "anthropic"), "https://api.anthropic.com/v1/messages", "default anthropic endpoint")
+        eq(AIService.defaultEndpoint(for: "custom"), "", "custom has no default endpoint")
         eq(AIService.defaultModel(for: "anthropic"), "claude-sonnet-4-6", "default anthropic model")
-        eq(aiMessagesUrl(endpoint: "https://api.anthropic.com"), "https://api.anthropic.com/v1/messages", "anthropic messages URL")
-        eq(aiMessagesUrl(endpoint: "https://proxy/v1"), "https://proxy/v1/messages", "anthropic /v1 endpoint")
-        eq(aiMessagesUrl(endpoint: "https://proxy/v1/messages"), "https://proxy/v1/messages", "anthropic already-full endpoint untouched")
 
         // The CLI providers exist and are hidden only in the sandbox.
         eq(AIService.cliProviders, ["claude-cli", "codex-cli"], "cli providers")

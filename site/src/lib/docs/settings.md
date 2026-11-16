@@ -48,7 +48,7 @@ App Store installs are updated by the App Store; the check is mainly useful for 
 | Setting | Description |
 |---|---|
 | Provider | OpenAI, Anthropic, GitHub Models, GitHub Copilot, Custom, or none |
-| Endpoint | Server URL. Leave empty for the provider default |
+| Endpoint | Full URL requests go to, such as `https://api.openai.com/v1/chat/completions`. Leave empty for the provider default |
 | API key | Key or token. Hidden for Copilot, which signs in with GitHub |
 | Model | Model name. **Fetch** lists what the provider offers |
 

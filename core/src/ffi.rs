@@ -410,16 +410,6 @@ pub fn ai_extract_rules(text: String) -> Option<Vec<Rule>> {
 }
 
 #[uniffi::export]
-pub fn ai_completions_url(endpoint: String) -> String {
-    ai::completions_url(&endpoint)
-}
-
-#[uniffi::export]
-pub fn ai_messages_url(endpoint: String) -> String {
-    ai::messages_url(&endpoint)
-}
-
-#[uniffi::export]
 pub fn ai_combined_prompt(messages: Vec<AiMessage>) -> String {
     ai::combined_prompt(&messages)
 }

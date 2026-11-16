@@ -161,6 +161,9 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         aiEndpointRow?.isHidden = isCLI || isNone               // CLI runs a local binary
         aiKeyRow?.isHidden = isCLI || isNone || provider == "copilot"  // Copilot uses OAuth
         aiModelRow?.isHidden = isNone
+        // The endpoint is the full URL requests go to; empty uses the provider's default.
+        let fallback = AIService.defaultEndpoint(for: provider)
+        aiEndpointField.placeholderString = fallback.isEmpty ? "https://host/v1/chat/completions" : fallback
     }
 
     /// Fetches the provider's model list into the combo box (keeping the current
