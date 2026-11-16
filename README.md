@@ -1,8 +1,28 @@
-# ctail — color tail
+<p align="center">
+  <a href="https://bisand.github.io/ctail/"><img src="site/static/logo-256.png" alt="ctail" width="128" height="128"></a>
+</p>
+
+<h1 align="center">ctail — color tail</h1>
+
+<p align="center">
+  <a href="https://github.com/bisand/ctail/actions/workflows/ci.yml"><img src="https://github.com/bisand/ctail/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/bisand/ctail/actions/workflows/site.yml"><img src="https://github.com/bisand/ctail/actions/workflows/site.yml/badge.svg?branch=main" alt="Website"></a>
+  <a href="https://github.com/bisand/ctail/releases/latest"><img src="https://img.shields.io/github/v/release/bisand/ctail?sort=semver" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/bisand/ctail" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-informational" alt="macOS, Linux and Windows">
+</p>
+
+<p align="center">
+  <a href="https://bisand.github.io/ctail/"><b>Website</b></a> ·
+  <a href="https://bisand.github.io/ctail/docs/">User guide</a> ·
+  <a href="https://bisand.github.io/ctail/download/">Download</a> ·
+  <a href="https://github.com/bisand/ctail/issues">Issues</a>
+</p>
 
 **ctail** is a desktop log viewer: `tail -f` with regex colour highlighting,
 tabs, instant opening of multi-gigabyte files, search/filter, profiles, themes
-and an optional AI assistant. Website and user docs: see [`site/`](site/).
+and an optional AI assistant. The website and user guide live at
+**[bisand.github.io/ctail](https://bisand.github.io/ctail/)**; their source is in [`site/`](site/).
 
 ## Repository layout
 
