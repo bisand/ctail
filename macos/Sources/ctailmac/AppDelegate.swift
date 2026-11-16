@@ -243,11 +243,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     }
     private var settingsWindow: SettingsWindowController?
 
+    /// Makes `name` the profile that colours the logs, from the View menu, the
+    /// Profiles window or the AI assistant.
+    private func applyProfile(_ name: String) {
+        updateSettings { $0.activeProfile = name }
+        rebuildContent()      // apply the newly active profile's rules
+        profilesWindow?.reload(active: name)
+    }
+
+    @objc private func selectProfile(_ sender: NSMenuItem) {
+        if let name = sender.representedObject as? String { applyProfile(name) }
+    }
+
     func showProfiles() {
-        let controller = ProfilesWindowController(config: config, palette: palette) { [weak self] name in
-            guard let self else { return }
-            self.updateSettings { $0.activeProfile = name }
-            self.rebuildContent()      // apply the newly active profile's rules
+        let controller = ProfilesWindowController(config: config, palette: palette,
+                                                  activeProfile: settings.activeProfile) { [weak self] name in
+            self?.applyProfile(name)
         }
         profilesWindow = controller
         controller.showWindow(nil)
@@ -306,11 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         let controller = AIAssistantWindowController(
             settings: config.loadSettings(), config: config,
             logProvider: { [weak self] in self?.tabs.activeLogContext() ?? "" },
-            onProfileGenerated: { [weak self] name in
-                guard let self else { return }
-                self.updateSettings { $0.activeProfile = name }
-                self.rebuildContent()
-            })
+            onProfileGenerated: { [weak self] name in self?.applyProfile(name) })
         aiWindow = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
@@ -353,6 +360,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         unlockProItem?.isHidden = Pro.isUnlocked
         restoreItem?.isHidden = Pro.isUnlocked
         proActiveItem?.isHidden = !Pro.isUnlocked
+        // Launch resolves the theme before StoreKit has answered, so a Pro theme
+        // falls back to the free one until here; redraw it now that Pro is known.
+        if !Pro.freeThemes.contains(settings.theme) { rebuildContent() }
     }
     private weak var unlockProItem: NSMenuItem?
     private weak var restoreItem: NSMenuItem?
@@ -524,6 +534,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
             themeModeItems.append(item)
         }
         themeItem.submenu = themeMenu
+        let profileItem = viewMenu.addItem(withTitle: "Profile", action: nil, keyEquivalent: "")
+        let profileMenu = NSMenu(title: "Profile")
+        profileMenu.delegate = self                // listed on open, so new profiles appear
+        profileItem.submenu = profileMenu
+        self.profileMenu = profileMenu
         viewMenu.addItem(withTitle: "Profiles & Rules…", action: #selector(showProfiles), keyEquivalent: "")
         viewItem.submenu = viewMenu
 
@@ -580,9 +595,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         syncViewMenu()
     }
 
-    /// Repopulate Open Recent each time it opens.
+    private weak var profileMenu: NSMenu?
+
+    /// Repopulate View ▸ Profile and Open Recent each time they open.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if menu === profileMenu {
+            for name in config.listProfiles() {
+                let item = menu.addItem(withTitle: name, action: #selector(selectProfile(_:)), keyEquivalent: "")
+                item.representedObject = name
+                item.target = self
+                item.state = name == settings.activeProfile ? .on : .off
+            }
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Profiles & Rules…", action: #selector(showProfiles), keyEquivalent: "").target = self
+            return
+        }
         let recents = config.recentFiles()
         if recents.isEmpty {
             menu.addItem(withTitle: "(empty)", action: nil, keyEquivalent: "").isEnabled = false

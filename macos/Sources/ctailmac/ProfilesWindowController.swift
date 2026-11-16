@@ -27,8 +27,10 @@ final class ProfilesWindowController: NSWindowController {
     private let enabledCheck = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
     private let preview = NSTextField(labelWithString: "")
 
-    init(config: ConfigStore, palette: ThemeColors, onActiveProfileChanged: @escaping (String) -> Void) {
+    init(config: ConfigStore, palette: ThemeColors, activeProfile: String,
+         onActiveProfileChanged: @escaping (String) -> Void) {
         self.config = config
+        self.activeProfile = activeProfile
         self.palette = palette
         self.onActiveProfileChanged = onActiveProfileChanged
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
@@ -37,7 +39,16 @@ final class ProfilesWindowController: NSWindowController {
         super.init(window: window)
         window.contentView = buildContent()
         window.center()
-        reloadProfiles()
+        reloadProfiles(select: activeProfile)
+    }
+
+    /// The profile colouring the logs; it carries a checkmark in the chooser.
+    private var activeProfile: String
+
+    /// Picks up a profile made or activated elsewhere (View menu, AI assistant).
+    func reload(active: String) {
+        activeProfile = active
+        reloadProfiles(select: profilePopup.titleOfSelectedItem)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -159,7 +170,8 @@ final class ProfilesWindowController: NSWindowController {
         profileNames = config.listProfiles()
         profilePopup.removeAllItems()
         profilePopup.addItems(withTitles: profileNames)
-        let target = select ?? profileNames.first
+        for item in profilePopup.itemArray { item.state = item.title == activeProfile ? .on : .off }
+        let target = select.flatMap { profileNames.contains($0) ? $0 : nil } ?? profileNames.first
         if let target { profilePopup.selectItem(withTitle: target); loadProfile(target) }
     }
 
@@ -185,6 +197,7 @@ final class ProfilesWindowController: NSWindowController {
         guard let old = profilePopup.titleOfSelectedItem,
               let new = prompt("Rename Profile", "New name:", old), !new.isEmpty, new != old else { return }
         config.renameProfile(old, to: new)
+        if old == activeProfile { onActiveProfileChanged(new) }   // the logs keep their colours
         reloadProfiles(select: new)
     }
 
@@ -195,7 +208,7 @@ final class ProfilesWindowController: NSWindowController {
     }
 
     @objc private func setActive() {
-        if let name = profilePopup.titleOfSelectedItem { onActiveProfileChanged(name) }
+        if let name = profilePopup.titleOfSelectedItem { onActiveProfileChanged(name) }  // calls reload(active:)
     }
 
     @objc private func saveProfile() {
