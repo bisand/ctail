@@ -100,6 +100,14 @@ fn trimmed(endpoint: &str) -> &str {
     endpoint.trim_end_matches('/')
 }
 
+/// The API root of an OpenAI-compatible endpoint: a pasted chat route
+/// (`…/v1/chat/completions`, or `…/v1/chat/` as OpenRouter's docs read) is cut back to `…/v1`.
+fn api_root(endpoint: &str) -> &str {
+    let base = trimmed(endpoint);
+    let base = base.strip_suffix("/completions").unwrap_or(base);
+    base.strip_suffix("/chat").unwrap_or(base)
+}
+
 fn is_github_style(base: &str) -> bool {
     // Copilot and GitHub Models expose their routes without a /v1.
     base.contains("githubcopilot")
@@ -111,10 +119,7 @@ fn is_github_style(base: &str) -> bool {
 /// `client.go`'s `completionsURL`). A URL that is already the full route is
 /// left alone, so a user who pasted one is not second-guessed.
 pub fn completions_url(endpoint: &str) -> String {
-    let base = trimmed(endpoint);
-    if base.ends_with("/chat/completions") {
-        return base.into();
-    }
+    let base = api_root(endpoint);
     if base.ends_with("/v1") || is_github_style(base) {
         return format!("{base}/chat/completions");
     }
@@ -139,6 +144,7 @@ pub fn models_url(endpoint: &str) -> String {
     if base.ends_with("/models") {
         return base.into();
     }
+    let base = api_root(base);
     if base.ends_with("/v1") || is_github_style(base) {
         return format!("{base}/models");
     }
@@ -810,6 +816,17 @@ mod tests {
             "https://models.inference.ai.azure.com/models"
         );
         assert_eq!(models_url("https://x/v1/models"), "https://x/v1/models");
+
+        // OpenRouter, however its URL is pasted.
+        for e in [
+            "https://openrouter.ai/api/v1",
+            "https://openrouter.ai/api/v1/",
+            "https://openrouter.ai/api/v1/chat/",
+            "https://openrouter.ai/api/v1/chat/completions",
+        ] {
+            assert_eq!(completions_url(e), "https://openrouter.ai/api/v1/chat/completions", "{e}");
+            assert_eq!(models_url(e), "https://openrouter.ai/api/v1/models", "{e}");
+        }
     }
 
     #[test]
