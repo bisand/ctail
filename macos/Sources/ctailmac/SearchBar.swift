@@ -9,7 +9,7 @@ final class SearchBar: NSView {
     var onPrev: (() -> Void)?
     var onClose: (() -> Void)?
 
-    let field = NSTextField()
+    let field = NSTextField(string: "")
     private let counter = NSTextField(labelWithString: "")
     private let caseBtn = NSButton()
     private let wordBtn = NSButton()

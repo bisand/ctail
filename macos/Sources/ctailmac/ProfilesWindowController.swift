@@ -16,8 +16,8 @@ final class ProfilesWindowController: NSWindowController {
 
     private let profilePopup = NSPopUpButton()
     private let rulesTable = NSTableView()
-    private let nameField = NSTextField()
-    private let patternField = NSTextField()
+    private let nameField = NSTextField(string: "")
+    private let patternField = NSTextField(string: "")
     private let patternError = NSTextField(labelWithString: "")
     private let matchPopup = NSPopUpButton()
     private let fgWell = NSColorWell()

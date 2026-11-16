@@ -10,7 +10,7 @@ final class AIAssistantWindowController: NSWindowController {
     private let onProfileGenerated: (String) -> Void
 
     private let answerView = NSTextView()
-    private let questionField = NSTextField()
+    private let questionField = NSTextField(string: "")
     private let status = NSTextField(labelWithString: "")
     private let askButton = NSButton()
     private let genButton = NSButton()
