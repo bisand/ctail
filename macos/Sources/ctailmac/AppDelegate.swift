@@ -117,6 +117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = "ctail"
+        // We hold it strongly; AppKit's release-on-close would leave that reference dangling,
+        // and quitting after the last window closes reads its frame to save the session.
+        window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         // Restore saved geometry, else center.
         let w = settings.window
