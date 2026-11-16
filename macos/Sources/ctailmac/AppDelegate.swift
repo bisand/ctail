@@ -255,8 +255,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
     }
     private var profilesWindow: ProfilesWindowController?
 
-    @objc func copySelection() { tabs.copyActiveSelection() }
-    @objc func selectAllLines() { tabs.selectAllActive() }
+    // Standard actions sent to the first responder, so a focused text field handles them before the log does.
+    @objc func copy(_ sender: Any?) { tabs.copyActiveSelection() }
+    @objc func selectAll(_ sender: Any?) { tabs.selectAllActive() }
     @objc private func closeActiveTab() { tabs.close(tabs.active) }
     @objc private func reopenTab() { tabs.reopenClosed() }
     @objc private func clearRecent() { config.clearRecentFiles() }
@@ -491,8 +492,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions, NSMenuDele
         // Edit menu.
         let editItem = NSMenuItem(); main.addItem(editItem)
         let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Copy", action: #selector(copySelection), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Select All", action: #selector(selectAllLines), keyEquivalent: "a")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "Find…", action: #selector(findInLog), keyEquivalent: "f")
         editItem.submenu = editMenu
