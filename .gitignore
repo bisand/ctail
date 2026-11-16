@@ -19,3 +19,4 @@ macos/Sources/CtailCore/
 .swiftpm/
 .build/
 DerivedData/
+.env
