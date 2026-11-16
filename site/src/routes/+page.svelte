@@ -162,7 +162,7 @@
 		</div>
 		<p class="mt-6 text-center text-sm text-base-content/60">Plus Catppuccin (Latte, Frappé, Macchiato, Mocha), Ayu, Night Owl, Cobalt2, GitHub, Palenight and Zenburn. <a href="{base}/docs/themes/" class="link">See all themes</a>.</p>
 		<h3 class="mt-14 text-center text-xl font-semibold">Every theme has a light variant</h3>
-		<p class="mx-auto mt-2 max-w-2xl text-center text-sm text-base-content/60">Toggle with <strong>View ▸ Toggle Theme</strong>. The window chrome follows along.</p>
+		<p class="mx-auto mt-2 max-w-2xl text-center text-sm text-base-content/60">Pick it with <strong>View ▸ Theme</strong>, or let it follow macOS. The window chrome follows along.</p>
 		<div class="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
 			{#each lightThemes as [id, name]}
 				<figure>

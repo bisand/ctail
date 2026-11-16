@@ -8,7 +8,7 @@ ctail ships with 21 colour themes. Every theme has a dark and a light variant.
 
 ## Switching themes
 
-- **View ▸ Toggle Theme** flips between the dark and light variant of the current theme.
+- **View ▸ Theme** picks the variant: **System** follows macOS light or dark mode, including Auto, while **Light** and **Dark** keep one variant.
 - Open **ctail ▸ Settings…** (<kbd>⌘,</kbd>) and use the **Theme** and **Mode** menus to pick a different theme and variant.
 
 Theme changes apply instantly and are remembered. The window chrome switches between the light and dark system appearance to match.

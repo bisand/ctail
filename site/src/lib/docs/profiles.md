@@ -6,7 +6,7 @@ Open **View ▸ Profiles & Rules…**. The list on the left shows every profile.
 
 - **Add** a profile with the **+** button and give it a name.
 - **Delete** a profile with **−**. At least one profile must remain.
-- **Activate** a profile by selecting it and saving. The active profile applies to all open tabs and is remembered between launches.
+- **Activate** a profile from **View ▸ Profile**, which checks the active one, or with **Set Active** in Profiles & Rules. The active profile applies to all open tabs and is remembered between launches.
 
 ## Where profiles live
 

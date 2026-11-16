@@ -11,7 +11,7 @@ Open Settings with **ctail ▸ Settings…** or <kbd>⌘,</kbd>. Changes apply w
 | Setting | Description | Default |
 |---|---|---|
 | Theme | One of the 21 built-in themes, or a custom theme | Catppuccin |
-| Mode | Dark or Light | Dark |
+| Mode | System, Light or Dark. System follows macOS | System |
 | Font size | Log text size in points | 13 |
 | Show line numbers | Gutter with line numbers | On |
 | Word wrap | Wrap long lines instead of scrolling horizontally | Off |

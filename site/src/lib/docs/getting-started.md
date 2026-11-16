@@ -29,7 +29,7 @@ The window has four parts:
 2. Scroll up to look at history. Following pauses on its own; scroll to the bottom and it resumes.
 3. <kbd>⌘F</kbd> searches. The filter toggle in the search bar hides every line that does not match.
 4. **View ▸ Profiles & Rules…** opens the rule editor where you change colours and patterns.
-5. **View ▸ Toggle Theme** switches between the dark and light variant of the current theme.
+5. **View ▸ Theme** picks System, Light or Dark. System follows macOS.
 
 ## Free and Pro
 
