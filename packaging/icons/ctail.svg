@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a2575"/><stop offset="1" stop-color="#120c2c"/></linearGradient>
+<radialGradient id="halo"><stop offset="0" stop-color="#ffffff"/><stop offset=".3" stop-color="#e9dcff"/><stop offset=".55" stop-color="#cba6f7" stop-opacity=".55"/><stop offset="1" stop-color="#cba6f7" stop-opacity="0"/></radialGradient>
+<radialGradient id="amb" cx=".68" cy=".64" r=".6"><stop offset="0" stop-color="#cba6f7" stop-opacity=".22"/><stop offset="1" stop-color="#cba6f7" stop-opacity="0"/></radialGradient>
+<linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="170" y1="0" x2="640" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".75" stop-color="#fff" stop-opacity="1"/></linearGradient>
+<mask id="m"><rect x="-400" y="-400" width="2000" height="2000" fill="url(#fade)"/></mask>
+<clipPath id="clip"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath><linearGradient id="l0" gradientUnits="userSpaceOnUse" x1="170" y1="0" x2="620" y2="0"><stop offset="0" stop-color="#cba6f7" stop-opacity="0"/><stop offset=".7" stop-color="#cba6f7"/></linearGradient><linearGradient id="l1" gradientUnits="userSpaceOnUse" x1="230" y1="0" x2="560" y2="0"><stop offset="0" stop-color="#7f849c" stop-opacity="0"/><stop offset=".7" stop-color="#7f849c"/></linearGradient><linearGradient id="l2" gradientUnits="userSpaceOnUse" x1="330" y1="0" x2="585" y2="0"><stop offset="0" stop-color="#a6e3a1" stop-opacity="0"/><stop offset=".7" stop-color="#a6e3a1"/></linearGradient><linearGradient id="l3" gradientUnits="userSpaceOnUse" x1="170" y1="0" x2="500" y2="0"><stop offset="0" stop-color="#585b70" stop-opacity="0"/><stop offset=".7" stop-color="#585b70"/></linearGradient><linearGradient id="l4" gradientUnits="userSpaceOnUse" x1="390" y1="0" x2="560" y2="0"><stop offset="0" stop-color="#f38ba8" stop-opacity="0"/><stop offset=".7" stop-color="#f38ba8"/></linearGradient><linearGradient id="l5" gradientUnits="userSpaceOnUse" x1="260" y1="0" x2="440" y2="0"><stop offset="0" stop-color="#45475a" stop-opacity="0"/><stop offset=".7" stop-color="#45475a"/></linearGradient></defs>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+<g clip-path="url(#clip)">
+<rect x="100" y="100" width="824" height="824" fill="url(#amb)"/>
+<g fill="#ffffff"><circle cx="760" cy="250" r="7" opacity=".7"/><circle cx="650" cy="330" r="4" opacity=".45"/><circle cx="830" cy="420" r="5" opacity=".5"/><circle cx="300" cy="790" r="5" opacity=".4"/><circle cx="520" cy="860" r="4" opacity=".35"/><circle cx="235" cy="300" r="4" opacity=".3"/></g>
+<g transform="translate(10,50)"><g transform="rotate(33 680 650)" stroke-linecap="round">
+<path d="M170 650H620" stroke="url(#l0)" stroke-width="46"/>
+<path d="M230 578H560" stroke="url(#l1)" stroke-width="34"/>
+<path d="M330 722H585" stroke="url(#l2)" stroke-width="34"/>
+<path d="M170 506H500" stroke="url(#l3)" stroke-width="30"/>
+<path d="M390 794H560" stroke="url(#l4)" stroke-width="30"/>
+<path d="M260 434H440" stroke="url(#l5)" stroke-width="26"/>
+</g>
+<circle cx="680" cy="650" r="175" fill="url(#halo)"/>
+<circle cx="680" cy="650" r="58" fill="#ffffff"/></g>
+</g>
+<rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#ffffff" stroke-opacity=".10" stroke-width="3"/>
+</svg>

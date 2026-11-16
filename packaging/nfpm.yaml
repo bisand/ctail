@@ -70,8 +70,8 @@ contents:
 
   # The Mac app's icon set, at the sizes the hicolor theme names. It has no
   # 48 px image, which is the size most launchers ask for first, so that one
-  # is packaging/icons/ctail-48.png: the 256 px image scaled down
-  # (`sips -z 48 48 icon_128@2x.png`), kept beside this file so the build needs
+  # is packaging/icons/ctail-48.png, rendered from ctail-small.svg by
+  # macos/scripts/render-icons.sh and kept beside this file so the build needs
   # no image tools.
   - src: macos/Assets.xcassets/AppIcon.appiconset/icon_16.png
     dst: /usr/share/icons/hicolor/16x16/apps/ctail.png
