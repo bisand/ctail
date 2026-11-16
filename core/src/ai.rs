@@ -239,8 +239,8 @@ pub fn chat_openai(
         headers.push(("Authorization", &auth));
     }
     headers.extend_from_slice(extra_headers);
-    let reply = net::post_json(endpoint, &headers, &body, CHAT_TIMEOUT)
-        .map_err(AiError::Message)?;
+    let reply =
+        net::post_json(endpoint, &headers, &body, CHAT_TIMEOUT).map_err(AiError::Message)?;
     parse_openai_reply(reply.status, &reply.body)
 }
 
@@ -727,10 +727,19 @@ mod tests {
 
     #[test]
     fn the_endpoint_is_used_as_typed_and_models_sit_beside_it() {
-        let mut s = AppSettings { ai_provider: "openai".into(), ..Default::default() };
-        assert_eq!(endpoint_for(&s), "https://api.openai.com/v1/chat/completions");
+        let mut s = AppSettings {
+            ai_provider: "openai".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            endpoint_for(&s),
+            "https://api.openai.com/v1/chat/completions"
+        );
         s.ai_endpoint = " https://openrouter.ai/api/v1/chat/completions ".into();
-        assert_eq!(endpoint_for(&s), "https://openrouter.ai/api/v1/chat/completions");
+        assert_eq!(
+            endpoint_for(&s),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
 
         assert_eq!(
             models_url("https://openrouter.ai/api/v1/chat/completions").as_deref(),
@@ -752,8 +761,14 @@ mod tests {
 
     #[test]
     fn providers_have_full_default_urls() {
-        assert_eq!(default_endpoint("openai"), "https://api.openai.com/v1/chat/completions");
-        assert_eq!(default_endpoint("anthropic"), "https://api.anthropic.com/v1/messages");
+        assert_eq!(
+            default_endpoint("openai"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            default_endpoint("anthropic"),
+            "https://api.anthropic.com/v1/messages"
+        );
         assert_eq!(default_endpoint("custom"), "");
         assert_eq!(default_model("anthropic"), "claude-sonnet-4-6");
         assert_eq!(default_model("claude-cli"), "");
@@ -862,7 +877,13 @@ mod tests {
             net::testing::serve_once(200, r#"{"content":[{"type":"text","text":"Yo"}]}"#);
         let messages = [AiMessage::new("system", "S"), AiMessage::new("user", "U")];
         assert_eq!(
-            chat_anthropic(&format!("{}/v1/messages", url.trim_end_matches('/')), "ak", "claude", &messages).unwrap(),
+            chat_anthropic(
+                &format!("{}/v1/messages", url.trim_end_matches('/')),
+                "ak",
+                "claude",
+                &messages
+            )
+            .unwrap(),
             "Yo"
         );
         let request = server.join().unwrap();
